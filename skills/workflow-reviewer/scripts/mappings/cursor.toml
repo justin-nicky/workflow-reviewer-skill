@@ -1,0 +1,23 @@
+# Cursor agent-transcript mapping (unofficial format). No tokens, timestamps, tool results or ids.
+host = "cursor"
+tested_versions = "unverified (forum-reported format)"
+type_path = "role"
+
+[capabilities]
+has_tokens = false
+has_timestamps = false
+has_tool_results = false
+has_ids = false
+
+[[records]]
+match = { role = "user" }
+role = "user"
+text = ["message.content[type=text].text", "message.content"]
+
+[[records]]
+match = { role = "assistant" }
+role = "assistant"
+text = ["message.content[type=text].text"]
+calls = "message.content[type=tool_use]"
+call_name = "name"
+call_input = "input"

@@ -1,0 +1,55 @@
+# Codex rollout mapping. Data only: dotted paths, [] wildcards, [k=v] filters.
+host = "codex"
+tested_versions = "0.1xx (rollout format; verify on a real file)"
+type_path = "payload.type"
+
+[capabilities]
+has_tokens = true
+has_timestamps = true
+has_tool_results = true
+has_ids = false
+
+[fields]
+timestamp = "timestamp"
+
+[[records]]
+match = { type = "response_item", "payload.type" = "message", "payload.role" = "user" }
+role = "user"
+text = ["payload.content[].text"]
+
+[[records]]
+match = { type = "response_item", "payload.type" = "message", "payload.role" = "assistant" }
+role = "assistant"
+text = ["payload.content[].text"]
+
+[[records]]
+match = { type = "response_item", "payload.type" = ["function_call", "custom_tool_call", "local_shell_call"] }
+role = "assistant"
+calls = "payload"
+call_name = "name"
+call_input = "arguments"
+call_id = "call_id"
+
+[[records]]
+match = { type = "response_item", "payload.type" = ["function_call_output", "custom_tool_call_output"] }
+role = "user"
+results = "payload"
+result_id = "call_id"
+result_exit_code = "output.metadata.exit_code"
+result_text = "output.output"
+
+[[records]]
+match = { type = "event_msg", "payload.type" = "token_count" }
+role = "meta"
+usage_input = "payload.info.last_token_usage.input_tokens"
+usage_output = "payload.info.last_token_usage.output_tokens"
+usage_cache_read = "payload.info.last_token_usage.cached_input_tokens"
+usage_input_includes_cache = true
+
+[[records]]
+match = { type = ["session_meta", "turn_context", "event_msg", "compacted"] }
+role = "ignore"
+
+[[records]]
+match = { type = "response_item", "payload.type" = ["reasoning", "web_search_call", "ghost_snapshot"] }
+role = "ignore"

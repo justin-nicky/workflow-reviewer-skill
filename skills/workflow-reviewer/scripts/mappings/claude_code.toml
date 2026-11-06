@@ -1,0 +1,43 @@
+# Claude Code transcript mapping. Data only: dotted paths, [] wildcards, [k=v] filters.
+host = "claude-code"
+tested_versions = "2.1.x"
+type_path = "type"
+
+[capabilities]
+has_tokens = true
+has_timestamps = true
+has_tool_results = true
+has_ids = true
+
+[fields]
+timestamp = "timestamp"
+event_id = "uuid"
+msg_id = "message.id"
+model = "message.model"
+version = "version"
+
+[[records]]
+match = { type = "user" }
+role = "user"
+text = ["message.content", "message.content[type=text].text"]
+results = "message.content[type=tool_result]"
+result_id = "tool_use_id"
+result_error = "is_error"
+result_text = "content"
+
+[[records]]
+match = { type = "assistant" }
+role = "assistant"
+text = ["message.content[type=text].text"]
+usage_input = "message.usage.input_tokens"
+usage_output = "message.usage.output_tokens"
+usage_cache_read = "message.usage.cache_read_input_tokens"
+usage_cache_write = "message.usage.cache_creation_input_tokens"
+calls = "message.content[type=tool_use]"
+call_name = "name"
+call_input = "input"
+call_id = "id"
+
+[[records]]
+match = { type = ["summary", "system", "file-history-snapshot", "queue-operation", "attachment", "progress", "last-prompt", "custom-title", "agent-name", "permission-mode", "pr-link"] }
+role = "ignore"
