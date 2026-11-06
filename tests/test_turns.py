@@ -176,3 +176,36 @@ def test_hosts_without_a_known_marker_say_so(cli, tmp_path):
     from fixtures.builders import cu_user
     _, out = cli.json(write_jsonl(tmp_path / "c.jsonl", [cu_user("go")]), "--host", "cursor")
     assert "not_measurable" in out["interruptions"]
+
+
+def test_prompts_that_mention_the_skill_path_are_not_invocations(cli, tmp_path):
+    records = [
+        cc_user("task one", 0), cc_assistant("m1", 10, usage=usage(1, 100)),
+        cc_user("symlink skills/workflow-reviewer into ~/.claude/skills and check it", 100),
+        cc_assistant("m2", 110, usage=usage(1, 200)),
+        cc_user("task three", 200), cc_assistant("m3", 210, usage=usage(1, 300)),
+    ]
+    _, out = cli.json(write_jsonl(tmp_path / "s.jsonl", records), "--host", "claude-code")
+    assert out["window"]["reviewer_invocation_found"] is False
+    assert out["tokens"]["output"] == 600
+
+
+def test_a_mention_does_not_move_the_default_window_start(cli, tmp_path):
+    records = [
+        cc_user("task one", 0), cc_assistant("m1", 10, usage=usage(1, 100)),
+        cc_user("copy skills/workflow-reviewer somewhere", 100), cc_assistant("m2", 110, usage=usage(1, 200)),
+        cc_user("/workflow-reviewer", 200), cc_assistant("m3", 210, usage=usage(1, 999)),
+    ]
+    _, out = cli.json(write_jsonl(tmp_path / "s.jsonl", records), "--host", "claude-code")
+    assert out["window"]["from_turn"] == 1
+    assert out["coverage"]["window_note"] is None
+    assert out["tokens"]["output"] == 300
+
+
+def test_codex_dollar_syntax_invocation_ends_the_window(cli, tmp_path):
+    from fixtures.builders import cx_meta, cx_tokens, cx_user
+    records = [cx_meta("i", cli.repo), cx_user("real task", 1), cx_tokens(1, 0, 100, 2),
+               cx_user("$workflow-reviewer", 50), cx_tokens(1, 0, 999, 51)]
+    _, out = cli.json(write_jsonl(tmp_path / "rollout-x.jsonl", records), "--host", "codex")
+    assert out["window"]["reviewer_invocation_found"] is True
+    assert out["tokens"]["output"] == 100

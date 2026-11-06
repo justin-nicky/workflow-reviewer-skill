@@ -483,8 +483,8 @@ def analyse(events, stats, mapping, custom_patterns=()):
 
 # ---- window, time, turns ---------------------------------------------------------------
 
-REVIEWER_RE = re.compile(
-    r"^\s*/workflow-reviewer\b|<command-(?:name|message)>/?workflow-reviewer|skills[/\\]workflow-reviewer", re.I)
+REVIEWER_RE = re.compile(    # the invocation itself: /workflow-reviewer or $workflow-reviewer starting a prompt
+    r"^\s*[/$]workflow-reviewer\b|<command-(?:name|message)>/?workflow-reviewer", re.I)
 LAG_SECONDS = 30
 MAX_EVENTS = 100
 MAX_INTERRUPTION_TURNS = 50
