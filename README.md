@@ -26,7 +26,7 @@ Copy or symlink `skills/workflow-reviewer/` into your host's skill folder, or us
 | Claude Code | `~/.claude/skills/` or `.claude/skills/` | `disable-model-invocation: true` keeps it explicit-only |
 | Codex | `.agents/skills/` or `~/.agents/skills/` | `agents/openai.yaml` sets `allow_implicit_invocation: false` |
 | Cursor | `.cursor/skills/` | Install here, not `.agents/skills/`: a forum report says the explicit-only field is ignored there. Reduced capabilities: no tokens, timestamps or tool results |
-| Kiro | `.kiro/skills/` | Degraded mode (git history and repo records only). Explicit-only is not documented for Kiro, so it may occasionally trigger on its own |
+| Kiro | `.kiro/skills/` | Degraded mode (working tree and repo records only). Explicit-only is not documented for Kiro, so it may occasionally trigger on its own |
 
 ## Example
 
@@ -53,7 +53,7 @@ Hosts change their internal transcript formats. Each mapping in `skills/workflow
 
 - Subagents are read from Claude Code's `<session>/subagents/` folder and attached to turns by timestamp. Linking by spawning call (Claude Code), brief and time (Cursor) and parent id (Codex) is not implemented yet.
 - `context_at_invocation` is the last API call's input plus cache tokens inside the window; tool time sums overlapping parallel calls.
-- Degraded mode reports git file history and repo records, not a diff. `.zst` rollouts are only reported when passed explicitly.
+- Degraded mode reports the working tree (git status and diff stats) and repo records. `.zst` rollouts are only reported when passed explicitly.
 
 ## Development
 
