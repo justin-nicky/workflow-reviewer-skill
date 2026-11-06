@@ -1,6 +1,6 @@
 # Codex rollout mapping. Data only: dotted paths, [] wildcards, [k=v] filters.
 host = "codex"
-tested_versions = "0.1xx (rollout format; verify on a real file)"
+tested_versions = "rollouts observed 2026-11 (phase 0)"
 type_path = "payload.type"
 
 [capabilities]
@@ -12,10 +12,16 @@ has_ids = false
 [fields]
 timestamp = "timestamp"
 
+# A real user turn is an event_msg user_message. The user-role response items Codex
+# injects (environment context, instructions) are not turns.
 [[records]]
-match = { type = "response_item", "payload.type" = "message", "payload.role" = "user" }
+match = { type = "event_msg", "payload.type" = "user_message" }
 role = "user"
-text = ["payload.content[].text"]
+text = ["payload.message"]
+
+[[records]]
+match = { type = "response_item", "payload.type" = "message", "payload.role" = ["user", "developer"] }
+role = "ignore"
 
 [[records]]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "assistant" }
@@ -36,7 +42,8 @@ role = "user"
 results = "payload"
 result_id = "call_id"
 result_exit_code = "output.metadata.exit_code"
-result_text = "output.output"
+result_exit_code_regex = "Process exited with code (-?\\d+)"
+result_text = ["output.output", "output"]
 
 [[records]]
 match = { type = "event_msg", "payload.type" = "token_count" }
@@ -45,6 +52,7 @@ usage_input = "payload.info.last_token_usage.input_tokens"
 usage_output = "payload.info.last_token_usage.output_tokens"
 usage_cache_read = "payload.info.last_token_usage.cached_input_tokens"
 usage_input_includes_cache = true
+usage_dedupe_key = "payload.info.total_token_usage"
 
 [[records]]
 match = { type = ["session_meta", "turn_context", "event_msg", "compacted"] }

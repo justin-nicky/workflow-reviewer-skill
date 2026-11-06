@@ -76,25 +76,36 @@ def cx_meta(session_id, cwd, t=0):
 
 
 def cx_user(text, t):
+    """A real user turn: Codex records it as an event_msg user_message."""
+    return cx_line("event_msg", {"type": "user_message", "message": text}, t)
+
+
+def cx_injected_user(text, t):
+    """Context Codex injects as a user-role response item; not a user turn."""
     return cx_line("response_item", {"type": "message", "role": "user",
                                      "content": [{"type": "input_text", "text": text}]}, t)
 
 
+def cx_developer(text, t):
+    return cx_line("response_item", {"type": "message", "role": "developer",
+                                     "content": [{"type": "input_text", "text": text}]}, t)
+
+
 def cx_call(command, call_id, t):
-    args = json.dumps({"command": ["bash", "-lc", command]})
-    return cx_line("response_item", {"type": "function_call", "name": "shell",
+    args = json.dumps({"cmd": command, "workdir": "/repo", "max_output_tokens": 1000})
+    return cx_line("response_item", {"type": "function_call", "name": "exec_command",
                                      "arguments": args, "call_id": call_id}, t)
 
 
 def cx_output(call_id, text, exit_code, t):
-    out = json.dumps({"output": text, "metadata": {"exit_code": exit_code}})
-    return cx_line("response_item", {"type": "function_call_output",
-                                     "call_id": call_id, "output": out}, t)
+    out = (f"Chunk ID: ab12cd\nWall time: 1.2 seconds\nProcess exited with code {exit_code}\n"
+           f"Original token count: 5\nOutput:\n{text}")
+    return cx_line("response_item", {"type": "function_call_output", "call_id": call_id, "output": out}, t)
 
 
-def cx_tokens(inp, cached, out, t):
-    info = {"last_token_usage": {"input_tokens": inp, "cached_input_tokens": cached,
-                                 "output_tokens": out}}
+def cx_tokens(inp, cached, out, t, total=None):
+    usage = {"input_tokens": inp, "cached_input_tokens": cached, "output_tokens": out}
+    info = {"last_token_usage": usage, "total_token_usage": total or usage}
     return cx_line("event_msg", {"type": "token_count", "info": info}, t)
 
 
@@ -108,3 +119,7 @@ def cu_assistant(text=None, calls=()):
     content = [{"type": "text", "text": text}] if text else []
     content += [{"type": "tool_use", "name": n, "input": i} for n, i in calls]
     return {"role": "assistant", "message": {"content": content}}
+
+
+def cu_turn_ended():
+    return {"type": "turn_ended", "status": "success"}

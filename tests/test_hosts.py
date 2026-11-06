@@ -1,7 +1,8 @@
 import json
 import re
 
-from fixtures.builders import (cc_assistant, cc_user, cu_assistant, cu_user, cx_call, cx_meta,
+from fixtures.builders import (at, cc_assistant, cc_user, cu_assistant, cu_turn_ended, cu_user, cx_call,
+                               cx_developer, cx_injected_user, cx_meta,
                                cx_output, cx_tokens, cx_user, usage, write_jsonl)
 
 
@@ -181,3 +182,85 @@ def test_cursor_subagent_that_also_appears_as_its_own_session_is_counted_once(cl
         _, out = cli.json(*order, "--host", "cursor")
         assert out["verify"]["total"] == 1
         assert out["tools"]["by_category"] == {"shell": 1}
+
+
+# ---- phase 0: structures observed in real transcripts (reproduced synthetically) ----------
+
+def test_claude_code_housekeeping_record_types_do_not_count_as_drift(cli, tmp_path):
+    extras = [{"type": t, "sessionId": "s1", "timestamp": at(1)}
+              for t in ("api-request", "api-request-blob", "api-request-shape", "mode", "cost-state",
+                        "atis-latch", "bridge-session", "file-history-delta")]
+    path = write_jsonl(tmp_path / "s.jsonl", [
+        cc_user("go", 0), *extras, *extras, cc_assistant("m", 5, usage=usage(1, 1))])
+    code, out = cli.json(path, "--host", "claude-code")
+    assert code == 0, out["coverage"]["drift"]
+    assert out["coverage"]["drift"]["unseen_types"] == {}
+
+
+def test_codex_counts_real_user_turns_not_injected_context(cli, tmp_path):
+    path = write_jsonl(tmp_path / "rollout-x.jsonl", [
+        cx_meta("i", cli.repo),
+        cx_developer("system rules", 1),
+        cx_injected_user("<environment_context>cwd</environment_context>", 1),
+        cx_user("first task", 2), cx_tokens(10, 0, 5, 3),
+        cx_user("second task", 50), cx_tokens(10, 0, 5, 53),
+    ])
+    code, out = cli.json(path, "--host", "codex")
+    assert code == 0, out["coverage"]["drift"]
+    assert [t["preview"] for t in out["turns"]] == ["first task", "second task"]
+
+
+def test_codex_exit_code_is_read_from_the_output_text(cli, tmp_path):
+    path = write_jsonl(tmp_path / "rollout-x.jsonl", [
+        cx_meta("i", cli.repo), cx_user("go", 1),
+        cx_call("pytest -x", "k1", 2), cx_output("k1", "boom", 1, 3),
+        cx_call("pytest -x", "k2", 4), cx_output("k2", "boom", 1, 5),
+        cx_call("ls", "k3", 6), cx_output("k3", "fine", 0, 7),
+    ])
+    _, out = cli.json(path, "--host", "codex")
+    assert out["tools"]["errors"] == 2
+    assert out["tools"]["retried_failures"] == [{"command": "pytest -x", "times": 2}]
+
+
+def test_codex_repeated_token_count_events_are_counted_once(cli, tmp_path):
+    total1 = {"input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 10}
+    total2 = {"input_tokens": 300, "cached_input_tokens": 0, "output_tokens": 30}
+    path = write_jsonl(tmp_path / "rollout-x.jsonl", [
+        cx_meta("i", cli.repo), cx_user("go", 1),
+        cx_tokens(100, 0, 10, 2, total=total1),
+        cx_tokens(100, 0, 10, 3, total=total1),          # same cumulative total re-emitted
+        cx_tokens(200, 0, 20, 4, total=total2),
+    ])
+    _, out = cli.json(path, "--host", "codex")
+    assert out["tokens"]["fresh_input"] == 300
+    assert out["tokens"]["output"] == 30
+    assert out["tokens"]["api_calls"] == 2
+
+
+def test_cursor_turn_ended_rows_and_strreplace_edits(cli, tmp_path):
+    path = write_jsonl(tmp_path / "c.jsonl", [
+        cu_user("edit it"),
+        cu_assistant(calls=[("StrReplace", {"path": "a.py"}), ("Write", {"path": "b.py"})]),
+        cu_turn_ended(),
+    ])
+    code, out = cli.json(path, "--host", "cursor")
+    assert code == 0, out["coverage"]["drift"]
+    assert out["tools"]["by_category"] == {"edit": 2}
+    assert out["tools"]["edits_per_file"] == {"a.py": 1, "b.py": 1}
+
+
+def test_cursor_subagents_beside_the_transcript_are_found_and_attached_by_brief(cli, tmp_path):
+    sid = tmp_path / "abc123"
+    main = write_jsonl(sid / "abc123.jsonl", [
+        cu_user("first task"), cu_assistant("ok"),
+        cu_user("second task"),
+        cu_assistant(calls=[("Task", {"prompt": "run the checks please", "description": "checks"})]),
+    ])
+    write_jsonl(sid / "subagents" / "sub-1.jsonl", [
+        cu_user("run the checks please"), cu_assistant(calls=[("Shell", {"command": "npm test"})])])
+    _, out = cli.json(main, "--host", "cursor")
+    assert [a["actor"] for a in out["actors"]] == ["main", "subagent:sub-1"]
+    by_turn = {t["turn"]: t for t in out["turns"]}
+    assert by_turn[1]["tool_calls"] == 0
+    assert by_turn[2]["tool_calls"] == 2            # the Task call plus the subagent's shell call
+    assert by_turn[2]["verify_runs"] == 1

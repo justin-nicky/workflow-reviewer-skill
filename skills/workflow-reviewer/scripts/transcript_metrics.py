@@ -128,7 +128,7 @@ def _int(v):
 def parse_lines(lines, mapping, actor="main"):
     """Return (events, stats). Each line is classified by the first matching rule."""
     fields = mapping.get("fields", {})
-    events = []
+    events, last_total = [], None
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "truncated_last_line": False, "version": None}
     lines = [ln.strip() for ln in lines if ln.strip()]
     for n, raw in enumerate(lines):
@@ -173,9 +173,12 @@ def parse_lines(lines, mapping, actor="main"):
         if "results" in rule:
             for r in get_all(obj, rule["results"]):
                 code = get_first(r, rule.get("result_exit_code"))
+                text = get_text(r, rule["result_text"]) if "result_text" in rule else ""
+                if code is None and rule.get("result_exit_code_regex"):
+                    m = re.search(rule["result_exit_code_regex"], text)
+                    code = int(m.group(1)) if m else None
                 err = bool(get_first(r, rule.get("result_error"))) or (
                     isinstance(code, (int, float)) and code != 0)
-                text = get_text(r, rule["result_text"]) if "result_text" in rule else ""
                 ev["results"].append({"id": get_first(r, rule.get("result_id")), "error": err,
                                       "bytes": len(text.encode("utf-8"))})
         if "usage_output" in rule or "usage_input" in rule:
@@ -183,6 +186,11 @@ def parse_lines(lines, mapping, actor="main"):
                  ("input", "output", "cache_read", "cache_write")}
             if rule.get("usage_input_includes_cache"):
                 u["input"] = max(0, u["input"] - u["cache_read"])
+            key = rule.get("usage_dedupe_key")
+            total = json.dumps(get_first(obj, key), sort_keys=True) if key else None
+            if total is not None and total == last_total:
+                u = dict.fromkeys(u, 0)               # the same cumulative total re-emitted
+            last_total = total if total is not None else last_total
             if any(u.values()):
                 ev["usage"] = u
         events.append(ev)
@@ -358,7 +366,7 @@ def command_text(tool_input):
 CATEGORIES = {
     "read": {"read", "notebookread", "view", "read_file"},
     "search": {"grep", "glob", "search", "codebase_search", "grep_search", "file_search", "list_dir", "websearch"},
-    "edit": {"edit", "write", "multiedit", "notebookedit", "apply_patch", "edit_file", "str_replace_editor", "create_file"},
+    "edit": {"edit", "write", "strreplace", "multiedit", "notebookedit", "apply_patch", "edit_file", "str_replace_editor", "create_file"},
     "shell": {"bash", "shell", "exec_command", "shell_command", "local_shell", "run_terminal_cmd", "powershell"},
     "agent": {"task", "agent", "spawn_agent"},
     "skill": {"skill"},
@@ -623,8 +631,36 @@ def discover(args, repo):
 
 
 def expand_subagents(path):
-    sub = path.with_suffix("") / "subagents"
-    return sorted(sub.glob("*.jsonl")) if sub.is_dir() else []
+    """Claude Code keeps them in <session>/subagents/, Cursor beside <id>/<id>.jsonl."""
+    dirs = [path.with_suffix("") / "subagents"]
+    if path.stem == path.parent.name:
+        dirs.append(path.parent / "subagents")
+    return sorted(f for d in dirs if d.is_dir() for f in d.glob("*.jsonl"))
+
+
+def spawn_text(call):
+    inp = call["input"]
+    return " ".join(v for v in inp.values() if isinstance(v, str)) if isinstance(inp, dict) else ""
+
+
+def place_subagents(events):
+    """Without timestamps, put each subagent's events right after the call that spawned it (matched by brief)."""
+    out = [e for e in events if e["actor"] == "main"]
+    subs = {}
+    for e in events:
+        if e["actor"] != "main":
+            subs.setdefault(e["actor"], []).append(e)
+    for evs in subs.values():
+        brief = next((e["text"] for e in evs if e["role"] == "user" and e["text"].strip()), "")[:80]
+        pos = next((k for k, e in enumerate(out) if e["actor"] == "main" and brief and any(
+            categorise(c["name"]) == "agent" and brief in spawn_text(c) for c in e["calls"])), None)
+        if pos is None:
+            out += evs
+            continue
+        while pos + 1 < len(out) and out[pos + 1]["actor"] != "main":
+            pos += 1
+        out[pos + 1:pos + 1] = evs
+    return out
 
 
 def dedupe(events):
@@ -968,6 +1004,8 @@ def main(argv=None):
     events = dedupe(events)
     if events and all(e["ts"] is not None for e in events):
         events.sort(key=lambda e: e["ts"])
+    else:
+        events = place_subagents(events)
     for i, ev in enumerate(events):
         ev["i"] = i
     assign_turns(events)

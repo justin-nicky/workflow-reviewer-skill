@@ -1,6 +1,6 @@
 # Cursor agent-transcript mapping (unofficial format). No tokens, timestamps, tool results or ids.
 host = "cursor"
-tested_versions = "unverified (forum-reported format)"
+tested_versions = "transcripts observed 2026-11 (phase 0)"
 type_path = "role"
 
 [capabilities]
@@ -21,3 +21,7 @@ text = ["message.content[type=text].text"]
 calls = "message.content[type=tool_use]"
 call_name = "name"
 call_input = "input"
+
+[[records]]
+match = { type = "turn_ended" }
+role = "ignore"
