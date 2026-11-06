@@ -112,22 +112,46 @@ def test_markdown_report_is_compact(cli, tmp_path):
     assert len(proc.stdout) < 8000
 
 
-def test_degraded_mode_uses_git_when_there_is_no_transcript(cli):
+def git_repo_with_uncommitted_work(cli):
     def git(*a):
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=cli.repo,
                        check=True, capture_output=True)
     git("init", "-q")
-    (cli.repo / "a.py").write_text("1")
+    (cli.repo / "a.py").write_text("1\n")
+    (cli.repo / "old.py").write_text("x\n")
     git("add", "."); git("commit", "-q", "-m", "one")
-    (cli.repo / "a.py").write_text("2")
-    git("commit", "-q", "-am", "two")
+    (cli.repo / "a.py").write_text("2\n3\n")             # unstaged change
+    (cli.repo / "staged.py").write_text("s\n")
+    git("add", "staged.py")                               # staged new file
+    (cli.repo / "new.txt").write_text("n\n")             # untracked
+
+
+def test_kiro_degraded_report_uses_the_working_tree_not_history(cli):
+    git_repo_with_uncommitted_work(cli)
     code, out = cli.json("--host", "kiro")
     assert code == 0
     assert out["mode"] == "degraded"
     assert out["confidence_cap"] == "medium"
-    assert out["git"]["commits"] == 2
-    assert "a.py" in out["git"]["files"]
     assert "recollection" in out["evidence_rule"]
+    status = "\n".join(out["git"]["status"])
+    assert "a.py" in status and "staged.py" in status and "new.txt" in status
+    assert "old.py" not in status
+    assert "a.py" in out["git"]["unstaged_diff_stat"]
+    assert "staged.py" in out["git"]["staged_diff_stat"]
+    assert "commits" not in out["git"]
+    assert "searched" not in out
+
+
+def test_no_transcript_found_has_its_own_exit_code_and_says_where_it_looked(cli):
+    git_repo_with_uncommitted_work(cli)
+    code, out = cli.json()
+    assert code == 6
+    assert out["mode"] == "degraded"
+    assert out["transcript_found"] is False
+    assert any(".claude" in p for p in out["searched"])
+    assert any(".codex" in p for p in out["searched"])
+    assert any(".cursor" in p for p in out["searched"])
+    assert "a.py" in "\n".join(out["git"]["status"])
 
 
 def test_script_imports_no_network_modules(cli, tmp_path):

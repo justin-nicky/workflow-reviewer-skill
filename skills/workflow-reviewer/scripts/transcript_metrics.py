@@ -8,6 +8,7 @@ It never writes files and never touches the network.
 import sys
 
 EXIT_PYTHON_VERSION = 5
+EXIT_NO_TRANSCRIPT = 6
 if sys.version_info < (3, 11):
     sys.stderr.write("workflow-reviewer needs Python 3.11+, found %d.%d\n" % sys.version_info[:2])
     sys.exit(EXIT_PYTHON_VERSION)
@@ -841,23 +842,40 @@ def skills_summary(events, host, repo):
             "instruction_files": instruction_files(repo)}
 
 
-def degraded_report(host, repo):
-    git = None
+def _git(repo, *args):
     try:
-        proc = subprocess.run(["git", "log", "-n", "50", "--name-only", "--pretty=format:@@%h"], cwd=repo,
-                              capture_output=True, text=True, timeout=10)
-        if proc.returncode == 0:
-            lines = proc.stdout.splitlines()
-            git = {"commits": sum(1 for ln in lines if ln.startswith("@@")),
-                   "files": sorted({ln for ln in lines if ln and not ln.startswith("@@")})}
+        proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
-        pass
-    return {"mode": "degraded", "confidence_cap": "medium",
-            "evidence_rule": "No usable transcript. The agent's own recollection is never evidence; "
-                             "only git history, the diff and repo records below count.",
-            "git": git,
-            "skills": {"inventory": skill_inventory(host, repo),
-                       "instruction_files": instruction_files(repo)}}
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def working_tree_report(repo):
+    """What the task left in the working tree: same-session work is usually uncommitted."""
+    status = _git(repo, "status", "--porcelain")
+    if status is None:
+        return None
+    return {"status": status.splitlines(),
+            "unstaged_diff_stat": _git(repo, "diff", "--stat") or "",
+            "staged_diff_stat": _git(repo, "diff", "--cached", "--stat") or ""}
+
+
+def searched_locations(host, repo):
+    where = {"claude-code": claude_root() / slug(repo), "codex": codex_root(),
+             "cursor": Path.home() / ".cursor" / "projects" / slug(str(repo).lstrip("/\\")) / "agent-transcripts"}
+    return [str(where[h]) for h in (HOSTS if host == "auto" else [host]) if h in where]
+
+
+def degraded_report(host, repo, searched=None):
+    report = {"mode": "degraded", "confidence_cap": "medium",
+              "evidence_rule": "No usable transcript. The agent's own recollection is never evidence; "
+                               "only the working tree, the diff and repo records below count.",
+              "git": working_tree_report(repo),
+              "skills": {"inventory": skill_inventory(host if host != "auto" else "claude-code", repo),
+                         "instruction_files": instruction_files(repo)}}
+    if searched is not None:
+        report.update(transcript_found=False, searched=searched)
+    return report
 
 
 def load_config(repo):
@@ -919,8 +937,8 @@ def main(argv=None):
             emit(ambiguous, args.format, redact_on)
             return 3
     if not paths:
-        emit(degraded_report(args.host if args.host != "auto" else "claude-code", repo), args.format, redact_on)
-        return 0
+        emit(degraded_report(args.host, repo, searched_locations(args.host, repo)), args.format, redact_on)
+        return EXIT_NO_TRANSCRIPT
     first_lines = read_lines(paths[0])
     host = detect_host(first_lines, args.host)
     if args.mapping:

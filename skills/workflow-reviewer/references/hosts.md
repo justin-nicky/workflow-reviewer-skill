@@ -24,6 +24,7 @@ Windows transcript paths are **unverified** for all hosts. `CODEX_THREAD_ID` is 
 | 3 | Ambiguous session; list printed |
 | 4 | Unsupported input (`.zst`) |
 | 5 | Python older than 3.11; nothing was read |
+| 6 | No transcript found; the report lists where it looked and shows the working tree (`git status`, staged and unstaged `git diff --stat`) in degraded mode |
 
 ## Drift procedure
 
