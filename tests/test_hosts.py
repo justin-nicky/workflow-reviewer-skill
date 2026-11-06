@@ -170,3 +170,14 @@ def test_unknown_format_is_flagged_as_drift(cli, tmp_path):
     code, out = cli.json(path)
     assert code == 2
     assert out["coverage"]["drift"]["unseen_types"]
+
+
+def test_cursor_subagent_that_also_appears_as_its_own_session_is_counted_once(cli, tmp_path):
+    parent = write_jsonl(tmp_path / "p" / "p.jsonl", [cu_user("fix the bug"), cu_assistant("on it")])
+    sub = [cu_user("run the checks"), cu_assistant(calls=[("Shell", {"command": "npm test"})])]
+    write_jsonl(tmp_path / "p" / "p" / "subagents" / "sub1.jsonl", sub)       # listed under the parent
+    twin = write_jsonl(tmp_path / "sub1-session.jsonl", sub)                  # same run as its own session
+    for order in ([parent, twin], [twin, parent]):
+        _, out = cli.json(*order, "--host", "cursor")
+        assert out["verify"]["total"] == 1
+        assert out["tools"]["by_category"] == {"shell": 1}
