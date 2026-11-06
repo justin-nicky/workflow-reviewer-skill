@@ -444,14 +444,23 @@ def tool_summary(events, custom_patterns, has_results):
     outputs = sorted(({"bytes": r["bytes"], "call_id": k, "tool": calls_by_id.get(k, {}).get("name"),
                        "command": command_text(calls_by_id.get(k, {}).get("input"))[:80] or None}
                       for k, r in results.items()), key=lambda o: -o["bytes"])[:3]
-    return {
+    repeated, repeated_more = cap_counts({p: n for p, n in reads.items() if n > 1}, TOP_ITEMS)
+    edited, edited_more = cap_counts(edits, TOP_ITEMS)
+    retries = sorted(((c, n) for c, n in failed.items() if n > 1), key=lambda cn: (-cn[1], cn[0]))
+    summary = {
         "total": sum(by_cat.values()), "by_category": by_cat,
         "errors": errors if has_results else None,
-        "repeated_reads": {p: n for p, n in reads.items() if n > 1},
-        "edits_per_file": edits,
-        "retried_failures": [{"command": c, "times": n} for c, n in failed.items() if n > 1] if has_results else None,
+        "repeated_reads": repeated, "edits_per_file": edited,
+        "retried_failures": [{"command": c[:120], "times": n} for c, n in retries[:TOP_FAILURES]] if has_results else None,
         "largest_outputs": outputs if has_results else None,
-    }, {
+    }
+    if repeated_more:
+        summary["repeated_reads_more"] = {"files": repeated_more}
+    if edited_more:
+        summary["edits_per_file_more"] = {"files": edited_more}
+    if len(retries) > TOP_FAILURES:
+        summary["retried_failures_more"] = len(retries) - TOP_FAILURES
+    return summary, {
         "total": len(seq), "by_kind": kinds,
         "before_last_edit": sum(1 for i, _ in seq if i < last_edit),
     }
@@ -474,6 +483,8 @@ def analyse(events, stats, mapping, custom_patterns=()):
 REVIEWER_RE = re.compile(
     r"^\s*/workflow-reviewer\b|<command-(?:name|message)>/?workflow-reviewer|skills[/\\]workflow-reviewer", re.I)
 LAG_SECONDS = 30
+MAX_EVENTS = 100
+MAX_SAMPLE = 50
 
 
 def is_turn_start(ev):
@@ -545,10 +556,67 @@ def preview(text, n=80):
     return " ".join(text.split())[:n]
 
 
+# ---- output caps: the audit runs inside the session it audits, so keep output small --------
+
+TOP_ROWS = 5            # per-turn and per-actor rows shown before an "other" aggregate
+LIST_TURNS_SHOWN = 30
+TOP_ITEMS = 10          # repeated reads, edits per file, skills inventory
+TOP_FAILURES = 5
+TOP_LOADED_SKILLS = 15
+TOP_TYPES = 15
+
+
+def row_weight(row):
+    tokens = row["tokens"]
+    if "not_measurable" in tokens:
+        return row["tool_calls"]
+    return sum(tokens[k] for k in ("fresh_input", "output", "cache_read", "cache_write"))
+
+
+def merge_rows(rows, label):
+    merged = {"tool_calls": sum(r["tool_calls"] for r in rows), "verify_runs": sum(r["verify_runs"] for r in rows)}
+    if any("not_measurable" in r["tokens"] for r in rows):
+        merged["tokens"] = rows[0]["tokens"]
+    else:
+        keys = ("fresh_input", "output", "cache_read", "cache_write", "api_calls", "calls_without_id")
+        merged["tokens"] = {k: sum(r["tokens"][k] for r in rows) for k in keys}
+    return {**label, **merged}
+
+
+def cap_rows(rows, n, label_key, count_key, other_label, keep=None):
+    """Top n rows by weight (kept in original order) plus one aggregate row for the rest."""
+    if len(rows) <= n:
+        return rows
+    order = sorted(range(len(rows)), key=lambda i: -row_weight(rows[i]))
+    chosen = order[:n]
+    forced = next((i for i, r in enumerate(rows) if keep and r[label_key] == keep), None)
+    if forced is not None and forced not in chosen:
+        chosen[-1] = forced
+    chosen = sorted(chosen)
+    rest = [r for i, r in enumerate(rows) if i not in chosen]
+    return [rows[i] for i in chosen] + [merge_rows(rest, {label_key: other_label, count_key: len(rest)})]
+
+
+def cap_counts(counts, n):
+    """Largest n entries of a name -> count dict; returns (shown, how many were left out)."""
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return dict(ranked[:n]), max(0, len(ranked) - n)
+
+
+def with_other(counts, n):
+    shown, more = cap_counts(counts, n)
+    if more:
+        shown[f"(other {more} types)"] = sum(v for k, v in counts.items() if k not in shown)
+    return shown
+
+
 def turn_rows(events, mapping, custom):
     rows = []
-    for t in sorted({e["turn"] for e in events}):
-        evs = [e for e in events if e["turn"] == t]
+    by_turn = {}
+    for e in events:
+        by_turn.setdefault(e["turn"], []).append(e)
+    for t in sorted(by_turn):
+        evs = by_turn[t]
         first = next((e for e in evs if is_turn_start(e)), None)
         tools, verify = tool_summary(evs, custom, mapping["capabilities"].get("has_tool_results", False))
         rows.append({"turn": t, "preview": preview(first["text"]) if first else "",
@@ -744,7 +812,7 @@ def drift_report(mapping, stats, events, threshold):
     warning = None if ok else (f"\u26a0 {mapping.get('host')} mapping (tested on "
                                f"{mapping.get('tested_versions')}): " + "; ".join(parts))
     return {"ok": ok, "coverage_pct": round(pct, 1), "missing_fields": missing,
-            "unseen_types": unseen, "warning": warning}
+            "unseen_types": with_other(unseen, TOP_TYPES), "warning": warning}
 
 
 def not_measurable(mapping):
@@ -810,10 +878,14 @@ def _fmt(v):
 
 def render_md(out):
     lines = ["# workflow-reviewer metrics"]
+    if out.get("header"):
+        lines.append(out["header"])
     warning = out.get("coverage", {}).get("drift", {}).get("warning")
     if warning:
         lines.append(warning)
     for key, value in out.items():
+        if key == "header":
+            continue
         lines.append(f"## {key.replace('_', ' ').capitalize()}")
         if isinstance(value, dict):
             lines += [f"- {k}: {_fmt(v)}" for k, v in value.items()]
@@ -859,7 +931,7 @@ def skill_inventory(host, repo):
             if key in seen:
                 continue
             seen.add(key)
-            m = re.search(r"^description:\s*(.*)$", data.decode("utf-8", "replace"), re.M)
+            m = re.search(r"^description:[ \t]*(.*)$", data.decode("utf-8", "replace"), re.M)
             desc = m.group(1).strip().strip("\"'") if m else ""
             inventory.append({"name": md.parent.name, "description_chars": len(desc), "bytes": len(data)})
     return inventory
@@ -901,7 +973,11 @@ def skills_summary(events, host, repo):
     for entry in loaded.values():
         if entry["bytes"] is None:
             entry["bytes"] = sizes.get(entry["name"])
-    return {"loaded": list(loaded.values()), "inventory": inventory,
+    shown = inventory
+    if len(inventory) > TOP_ITEMS:       # keep the largest always-on descriptions
+        shown = sorted(inventory, key=lambda i: (-i["description_chars"], i["name"]))[:TOP_ITEMS]
+    return {"loaded": list(loaded.values())[:TOP_LOADED_SKILLS], "loaded_total": len(loaded),
+            "inventory": shown, "inventory_total": len(inventory),
             "instruction_files": instruction_files(repo)}
 
 
@@ -957,6 +1033,7 @@ def build_parser():
     p.add_argument("--format", default="md", choices=["md", "json"])
     p.add_argument("--verify-pattern", action="append", default=[], dest="verify_patterns")
     p.add_argument("--list-turns", action="store_true")
+    p.add_argument("--all", action="store_true", help="with --list-turns: list every turn")
     p.add_argument("--from-turn", type=int)
     p.add_argument("--to-turn", type=int)
     p.add_argument("--events")
@@ -1041,16 +1118,25 @@ def main(argv=None):
     cut = reviewer_cut(events)
     if args.events:
         lo, _, hi = args.events.partition(":")
-        out = {"events": [event_view(e) for e in events if int(lo) <= e["i"] <= int(hi or lo)]}
+        picked = [e for e in events if int(lo) <= e["i"] <= int(hi or lo)]
+        out = {"events": [event_view(e) for e in picked[:MAX_EVENTS]]}
+        if len(picked) > MAX_EVENTS:
+            out["truncated"] = f"showing {MAX_EVENTS} of {len(picked)} events; narrow the range"
     elif args.sample is not None:
-        out = {"sample": [ln[:300] for ln in raw if ln.strip()][:args.sample]}
+        out = {"sample": [ln[:300] for ln in raw if ln.strip()][:min(args.sample, MAX_SAMPLE)]}
     else:
         window = [e for e in events if cut is None or e["i"] < cut]
         if args.list_turns:
             rows = turn_rows(window, mapping, args.verify_patterns)
             firsts = {e["turn"]: e for e in window if is_turn_start(e)}
-            out = {"turns": [{"index": r["turn"], "time": iso(firsts[r["turn"]]["ts"]) if r["turn"] in firsts else None,
-                              "preview": r["preview"]} for r in rows]}
+            listed = [{"index": r["turn"], "time": iso(firsts[r["turn"]]["ts"]) if r["turn"] in firsts else None,
+                       "preview": r["preview"]} for r in rows]
+            if args.all or len(listed) <= LIST_TURNS_SHOWN:
+                header = f"showing all {len(listed)} turns"
+            else:
+                header = f"showing {LIST_TURNS_SHOWN} of {len(listed)} turns (use --all for every turn)"
+                listed = listed[-LIST_TURNS_SHOWN:]
+            out = {"header": header, "turns": listed}
         else:
             lo = args.from_turn or 1
             window = [e for e in window if e["turn"] >= lo and (args.to_turn is None or e["turn"] <= args.to_turn)]
@@ -1062,7 +1148,7 @@ def main(argv=None):
             drift = drift_report(mapping, stats, window, args.drift_threshold)
             out["coverage"] = {"host": host, "tested_versions": mapping.get("tested_versions"),
                                "mapping_source": source, "drift": drift,
-                               "ignored_types": stats["ignored_types"], "transcript_version": stats["version"], "not_measurable": not_measurable(mapping),
+                               "ignored_types": with_other(stats["ignored_types"], TOP_TYPES), "transcript_version": stats["version"], "not_measurable": not_measurable(mapping),
                                "capabilities": mapping["capabilities"], "last_record_ts": iso(last_ts),
                                "lag_note": lag, "truncated_last_line": stats["truncated_last_line"]}
             non_turn = {}
@@ -1074,8 +1160,11 @@ def main(argv=None):
                              "from_turn": lo, "to_turn": args.to_turn}
             out["time"] = time_summary(window, args.idle_threshold) if mapping["capabilities"].get("has_timestamps") \
                 else {"not_measurable": "host records no timestamps"}
-            out["turns"] = turn_rows(window, mapping, args.verify_patterns)
-            out["actors"] = actor_rows(window, mapping, args.verify_patterns)
+            all_turns = turn_rows(window, mapping, args.verify_patterns)
+            out["window"]["turns_total"] = len(all_turns)
+            out["turns"] = cap_rows(all_turns, TOP_ROWS, "turn", "turns", "other")
+            out["actors"] = cap_rows(actor_rows(window, mapping, args.verify_patterns), TOP_ROWS,
+                                     "actor", "actors", "other", keep="main")
             out["skills"] = skills_summary(window, host, repo)
     emit(out, args.format, redact_on)
     return 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
