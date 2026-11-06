@@ -55,6 +55,10 @@ Hosts change their internal transcript formats. Each mapping in `skills/workflow
 - `context_at_invocation` is the last API call's input plus cache tokens inside the window; tool time sums overlapping parallel calls.
 - Degraded mode reports the working tree (git status and diff stats) and repo records. `.zst` rollouts are only reported when passed explicitly.
 
+- Injected Claude Code user records are excluded from turns by flag (`isMeta`, `isCompactSummary`, `isVisibleInTranscriptOnly`) and by a prefix list in the mapping (`not_a_turn_prefixes`, which includes user `!` shell input). New injected kinds will count as turns until added; `window.non_turn_user_records` shows what was excluded.
+- Ignored record types are listed in `coverage.ignored_types`. Claude Code's `cost-state` records carry cumulative per-model token totals (input, output, thinking, cache) that are not read; per-message usage is used instead.
+- Codex rollouts and Cursor transcripts were checked against one real file each; Cursor has no version marker, so its `tested_versions` is "unknown".
+
 ## Development
 
 ```bash
