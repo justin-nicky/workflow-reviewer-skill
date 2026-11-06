@@ -1,7 +1,7 @@
 # Codex rollout mapping. Data only: dotted paths, [] wildcards, [k=v] filters.
 host = "codex"
-tested_versions = "rollouts observed 2026-11 (phase 0)"
-type_path = "payload.type"
+tested_versions = "0.137.0-alpha.4 to 0.142.2 (cli_version)"
+type_path = ["type", "payload.type"]
 
 [capabilities]
 has_tokens = true
@@ -11,6 +11,7 @@ has_ids = false
 
 [fields]
 timestamp = "timestamp"
+version = "payload.cli_version"
 
 # A real user turn is an event_msg user_message. The user-role response items Codex
 # injects (environment context, instructions) are not turns.

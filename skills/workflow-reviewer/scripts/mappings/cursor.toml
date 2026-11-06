@@ -1,7 +1,7 @@
 # Cursor agent-transcript mapping (unofficial format). No tokens, timestamps, tool results or ids.
 host = "cursor"
-tested_versions = "transcripts observed 2026-11 (phase 0)"
-type_path = "role"
+tested_versions = "unknown (no version marker in transcripts)"
+type_path = ["role", "type"]
 
 [capabilities]
 has_tokens = false

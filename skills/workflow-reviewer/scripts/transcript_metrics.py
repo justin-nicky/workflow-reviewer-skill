@@ -93,9 +93,20 @@ def _matches(obj, match):
     for path, want in match.items():
         got = get_first(obj, path)
         wants = want if isinstance(want, list) else [want]
-        if got is None or str(got) not in [str(w) for w in wants]:
+        if got is None or _norm(got) not in [_norm(w) for w in wants]:
             return False
     return True
+
+
+def _norm(v):
+    return str(v).lower() if isinstance(v, bool) else str(v)
+
+
+def type_key(obj, type_path):
+    """Record type for reporting; type_path may be a list, joined with '/'."""
+    paths = type_path if isinstance(type_path, list) else [type_path]
+    parts = [str(v) for v in (get_first(obj, p) for p in paths) if v is not None]
+    return "/".join(parts) if parts else "<missing>"
 
 
 def load_mapping(name=None, text=None):
@@ -129,7 +140,9 @@ def parse_lines(lines, mapping, actor="main"):
     """Return (events, stats). Each line is classified by the first matching rule."""
     fields = mapping.get("fields", {})
     events, last_total = [], None
-    stats = {"lines": 0, "classified": 0, "unseen_types": {}, "truncated_last_line": False, "version": None}
+    stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
+             "truncated_last_line": False, "version": None}
+    prefixes = mapping.get("not_a_turn_prefixes", [])
     lines = [ln.strip() for ln in lines if ln.strip()]
     for n, raw in enumerate(lines):
         try:
@@ -146,19 +159,26 @@ def parse_lines(lines, mapping, actor="main"):
         rule = next((r for r in mapping.get("records", [])
                      if _matches(obj, r.get("match", {}))), None)
         if rule is None:
-            t = get_first(obj, mapping.get("type_path", "type"))
-            key = str(t) if t is not None else "<missing>"
+            key = type_key(obj, mapping.get("type_path", "type"))
             stats["unseen_types"][key] = stats["unseen_types"].get(key, 0) + 1
             continue
         stats["classified"] += 1
         if rule["role"] == "ignore":
+            key = type_key(obj, mapping.get("type_path", "type"))
+            stats["ignored_types"][key] = stats["ignored_types"].get(key, 0) + 1
             continue
         ev = {"actor": actor, "role": rule["role"], "text": get_text(obj, rule["text"]) if "text" in rule else "",
               "msg_id": get_first(obj, rule.get("msg_id", fields.get("msg_id"))),
               "model": get_first(obj, rule.get("model", fields.get("model"))),
               "usage": None, "calls": [], "results": [],
               "ts": parse_ts(get_first(obj, rule.get("timestamp", fields.get("timestamp")))),
-              "event_id": get_first(obj, fields.get("event_id"))}
+              "event_id": get_first(obj, fields.get("event_id")), "non_turn": None}
+        if ev["role"] == "user":
+            if rule.get("turn") is False:
+                ev["non_turn"] = rule.get("non_turn_reason", "rule")
+            else:
+                head = ev["text"].lstrip()
+                ev["non_turn"] = next((f"prefix:{p}" for p in prefixes if head.startswith(p)), None)
         if "calls" in rule:
             for c in get_all(obj, rule["calls"]):
                 inp = get_first(c, rule.get("call_input"))
@@ -451,8 +471,14 @@ def analyse(events, stats, mapping, custom_patterns=()):
 
 # ---- window, time, turns ---------------------------------------------------------------
 
-REVIEWER_RE = re.compile(r"(?:^|[\s>])/workflow-reviewer\b|skills[/\\]workflow-reviewer", re.I)
+REVIEWER_RE = re.compile(
+    r"^\s*/workflow-reviewer\b|<command-(?:name|message)>/?workflow-reviewer|skills[/\\]workflow-reviewer", re.I)
 LAG_SECONDS = 30
+
+
+def is_turn_start(ev):
+    """A real prompt from the human to the main agent (injected records are not turns)."""
+    return ev["actor"] == "main" and ev["role"] == "user" and bool(ev["text"].strip()) and not ev["non_turn"]
 
 
 def assign_turns(events):
@@ -460,7 +486,7 @@ def assign_turns(events):
     turn = 1
     started = False
     for ev in events:
-        if ev["actor"] == "main" and ev["role"] == "user" and ev["text"].strip():
+        if is_turn_start(ev):
             if started:
                 turn += 1
             started = True
@@ -469,7 +495,7 @@ def assign_turns(events):
 
 def reviewer_cut(events):
     for ev in reversed(events):
-        if ev["actor"] == "main" and ev["role"] == "user" and REVIEWER_RE.search(ev["text"]):
+        if is_turn_start(ev) and REVIEWER_RE.search(ev["text"]):
             return ev["i"]
     return None
 
@@ -503,11 +529,12 @@ def time_summary(events, idle):
     waiting, prev = 0.0, None
     tool = tool_seconds([e for e in stamped if e["actor"] == "main"])
     for e in stamped:
-        if e["actor"] == "main" and e["role"] == "user" and e["text"].strip() and prev is not None:
+        if is_turn_start(e) and prev is not None:
             gap = e["ts"] - prev
             if gap > idle:
                 waiting += gap
-        prev = e["ts"]
+        if not (e["role"] == "user" and e["non_turn"]):      # injected records are not agent activity
+            prev = e["ts"]
     return {"wall_s": round(wall), "waiting_s": round(waiting), "tool_s": round(tool),
             "active_s": round(max(0.0, wall - waiting - tool)),
             "tool_note": "main agent only, overlapping calls merged; may include permission prompts; "
@@ -522,7 +549,7 @@ def turn_rows(events, mapping, custom):
     rows = []
     for t in sorted({e["turn"] for e in events}):
         evs = [e for e in events if e["turn"] == t]
-        first = next((e for e in evs if e["actor"] == "main" and e["role"] == "user" and e["text"].strip()), None)
+        first = next((e for e in evs if is_turn_start(e)), None)
         tools, verify = tool_summary(evs, custom, mapping["capabilities"].get("has_tool_results", False))
         rows.append({"turn": t, "preview": preview(first["text"]) if first else "",
                      "tokens": tokens_for(evs, mapping), "tool_calls": tools["total"],
@@ -714,7 +741,7 @@ def drift_report(mapping, stats, events, threshold):
         parts.append("new types: " + ", ".join(unseen))
     if stats.get("version"):
         parts.append(f"transcript version {stats['version']}")
-    warning = None if ok else (f"\u26a0 {mapping.get('host')} mapping (tested up to "
+    warning = None if ok else (f"\u26a0 {mapping.get('host')} mapping (tested on "
                                f"{mapping.get('tested_versions')}): " + "; ".join(parts))
     return {"ok": ok, "coverage_pct": round(pct, 1), "missing_fields": missing,
             "unseen_types": unseen, "warning": warning}
@@ -984,7 +1011,8 @@ def main(argv=None):
     else:
         mapping, source = load_mapping(HOSTS[host]), "builtin"
     events, raw = [], []
-    stats = {"lines": 0, "classified": 0, "unseen_types": {}, "truncated_last_line": False, "version": None}
+    stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
+             "truncated_last_line": False, "version": None}
     for path in paths:
         for file in [path, *expand_subagents(path)]:
             actor = "main" if file is path else f"subagent:{file.stem}"
@@ -999,8 +1027,9 @@ def main(argv=None):
             stats["classified"] += st["classified"]
             stats["truncated_last_line"] |= st["truncated_last_line"]
             stats["version"] = stats["version"] or st["version"]
-            for k, v in st["unseen_types"].items():
-                stats["unseen_types"][k] = stats["unseen_types"].get(k, 0) + v
+            for bucket in ("unseen_types", "ignored_types"):
+                for k, v in st[bucket].items():
+                    stats[bucket][k] = stats[bucket].get(k, 0) + v
     events = dedupe(events)
     if events and all(e["ts"] is not None for e in events):
         events.sort(key=lambda e: e["ts"])
@@ -1019,7 +1048,7 @@ def main(argv=None):
         window = [e for e in events if cut is None or e["i"] < cut]
         if args.list_turns:
             rows = turn_rows(window, mapping, args.verify_patterns)
-            firsts = {e["turn"]: e for e in window if e["actor"] == "main" and e["role"] == "user" and e["text"].strip()}
+            firsts = {e["turn"]: e for e in window if is_turn_start(e)}
             out = {"turns": [{"index": r["turn"], "time": iso(firsts[r["turn"]]["ts"]) if r["turn"] in firsts else None,
                               "preview": r["preview"]} for r in rows]}
         else:
@@ -1032,10 +1061,16 @@ def main(argv=None):
                 lag = "latest turn may be incomplete: last record is under %ds old" % LAG_SECONDS
             drift = drift_report(mapping, stats, window, args.drift_threshold)
             out["coverage"] = {"host": host, "tested_versions": mapping.get("tested_versions"),
-                               "mapping_source": source, "drift": drift, "not_measurable": not_measurable(mapping),
+                               "mapping_source": source, "drift": drift,
+                               "ignored_types": stats["ignored_types"], "transcript_version": stats["version"], "not_measurable": not_measurable(mapping),
                                "capabilities": mapping["capabilities"], "last_record_ts": iso(last_ts),
                                "lag_note": lag, "truncated_last_line": stats["truncated_last_line"]}
+            non_turn = {}
+            for e in window:
+                if e["actor"] == "main" and e["role"] == "user" and e["non_turn"] and e["text"].strip():
+                    non_turn[e["non_turn"]] = non_turn.get(e["non_turn"], 0) + 1
             out["window"] = {"reviewer_invocation_found": cut is not None, "events": len(window),
+                             "non_turn_user_records": non_turn,
                              "from_turn": lo, "to_turn": args.to_turn}
             out["time"] = time_summary(window, args.idle_threshold) if mapping["capabilities"].get("has_timestamps") \
                 else {"not_measurable": "host records no timestamps"}

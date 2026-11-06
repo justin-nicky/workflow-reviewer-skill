@@ -22,10 +22,12 @@ def write_jsonl(path, records, truncate_last=False):
 
 # ---- Claude Code ----------------------------------------------------------
 
-def cc_user(text, t, uuid=None, session="s1"):
-    return {"type": "user", "uuid": uuid or f"u-{t}-{zlib.crc32(text.encode()) % 10**6}",
-            "sessionId": session, "timestamp": at(t),
-            "message": {"role": "user", "content": text}}
+def cc_user(text, t, uuid=None, session="s1", **extra):
+    rec = {"type": "user", "uuid": uuid or f"u-{t}-{zlib.crc32(text.encode()) % 10**6}",
+           "sessionId": session, "timestamp": at(t),
+           "message": {"role": "user", "content": text}}
+    rec.update(extra)          # e.g. isMeta=True, isCompactSummary=True
+    return rec
 
 
 def cc_assistant(msg_id, t, content=None, usage=None, model="claude-sonnet-x", uuid=None):
@@ -71,8 +73,12 @@ def cx_line(kind, payload, t):
     return {"timestamp": at(t), "type": kind, "payload": payload}
 
 
-def cx_meta(session_id, cwd, t=0):
-    return cx_line("session_meta", {"id": session_id, "cwd": str(cwd)}, t)
+def cx_meta(session_id, cwd, t=0, cli_version="0.142.2"):
+    return cx_line("session_meta", {"id": session_id, "cwd": str(cwd), "cli_version": cli_version}, t)
+
+
+def cx_event(kind, t):
+    return cx_line("event_msg", {"type": kind}, t)
 
 
 def cx_user(text, t):

@@ -2,7 +2,7 @@ import json
 import re
 
 from fixtures.builders import (at, cc_assistant, cc_user, cu_assistant, cu_turn_ended, cu_user, cx_call,
-                               cx_developer, cx_injected_user, cx_meta,
+                               cx_developer, cx_event, cx_injected_user, cx_meta,
                                cx_output, cx_tokens, cx_user, usage, write_jsonl)
 
 
@@ -89,7 +89,7 @@ def test_renamed_record_type_triggers_drift_warning_and_exit_code(cli, tmp_path)
     assert d["ok"] is False
     assert d["coverage_pct"] < 90
     assert d["unseen_types"] == {"assistant_v2": 7}
-    assert "2.1.x" in d["warning"]
+    assert "2.1.295 to 2.1.309" in d["warning"]
     assert out["tokens"]["api_calls"] == 0         # keeps going with what still parses
 
 
@@ -276,3 +276,43 @@ def test_unicode_line_separators_inside_a_record_do_not_split_it(cli, tmp_path):
     assert code == 0
     assert out["coverage"]["drift"]["coverage_pct"] == 100.0
     assert out["tokens"]["api_calls"] == 1
+
+
+# ---- ignored types stay visible; versions come from real transcripts ---------------------
+
+def test_ignored_record_types_are_reported_with_counts(cli, tmp_path):
+    housekeeping = [{"type": "mode", "sessionId": "s", "timestamp": at(1)}] * 3 + \
+                   [{"type": "api-request", "sessionId": "s", "timestamp": at(1)}] * 2
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0), *housekeeping,
+                                              cc_assistant("m", 5, usage=usage(1, 1))])
+    code, out = cli.json(path, "--host", "claude-code")
+    assert code == 0
+    assert out["coverage"]["ignored_types"] == {"mode": 3, "api-request": 2}
+
+
+def test_codex_and_cursor_ignored_types_name_their_record_kind(cli, tmp_path):
+    cx = write_jsonl(tmp_path / "rollout-x.jsonl", [
+        cx_meta("i", cli.repo), cx_event("task_started", 1), cx_event("task_started", 2),
+        cx_user("go", 3), cx_tokens(1, 0, 1, 4)])
+    _, out = cli.json(cx, "--host", "codex")
+    assert out["coverage"]["ignored_types"] == {"session_meta": 1, "event_msg/task_started": 2}
+    cu = write_jsonl(tmp_path / "c.jsonl", [cu_user("go"), cu_turn_ended(), cu_turn_ended()])
+    _, out = cli.json(cu, "--host", "cursor")
+    assert out["coverage"]["ignored_types"] == {"turn_ended": 2}
+
+
+def test_tested_versions_and_observed_version_per_host(cli, tmp_path):
+    cc_rec = cc_assistant("m", 5, usage=usage(1, 1))
+    cc_rec["version"] = "2.1.309"
+    cc = write_jsonl(tmp_path / "a.jsonl", [cc_user("go", 0), cc_rec])
+    _, out = cli.json(cc, "--host", "claude-code")
+    assert out["coverage"]["tested_versions"] == "2.1.295 to 2.1.309"
+    assert out["coverage"]["transcript_version"] == "2.1.309"
+    cx = write_jsonl(tmp_path / "rollout-x.jsonl", [cx_meta("i", cli.repo, cli_version="0.142.2"), cx_user("go", 1)])
+    _, out = cli.json(cx, "--host", "codex")
+    assert out["coverage"]["tested_versions"] == "0.137.0-alpha.4 to 0.142.2 (cli_version)"
+    assert out["coverage"]["transcript_version"] == "0.142.2"
+    cu = write_jsonl(tmp_path / "c.jsonl", [cu_user("go")])
+    _, out = cli.json(cu, "--host", "cursor")
+    assert out["coverage"]["tested_versions"] == "unknown (no version marker in transcripts)"
+    assert out["coverage"]["transcript_version"] is None

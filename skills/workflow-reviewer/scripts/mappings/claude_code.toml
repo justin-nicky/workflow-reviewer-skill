@@ -1,7 +1,14 @@
 # Claude Code transcript mapping. Data only: dotted paths, [] wildcards, [k=v] filters.
 host = "claude-code"
-tested_versions = "2.1.x"
+tested_versions = "2.1.295 to 2.1.309"
 type_path = "type"
+
+# User records that are not prompts from the human. Matched by prefix after the flag rules.
+not_a_turn_prefixes = [
+  "<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>",
+  "<bash-input>", "<bash-stdout>", "<bash-stderr>",
+  "<task-notification>", "<system-reminder>", "[Request interrupted by user",
+]
 
 [capabilities]
 has_tokens = true
@@ -15,6 +22,39 @@ event_id = "uuid"
 msg_id = "message.id"
 model = "message.model"
 version = "version"
+
+[[records]]
+match = { type = "user", isMeta = true }
+role = "user"
+turn = false
+non_turn_reason = "flag:isMeta"
+text = ["message.content", "message.content[type=text].text"]
+results = "message.content[type=tool_result]"
+result_id = "tool_use_id"
+result_error = "is_error"
+result_text = "content"
+
+[[records]]
+match = { type = "user", isCompactSummary = true }
+role = "user"
+turn = false
+non_turn_reason = "flag:isCompactSummary"
+text = ["message.content", "message.content[type=text].text"]
+results = "message.content[type=tool_result]"
+result_id = "tool_use_id"
+result_error = "is_error"
+result_text = "content"
+
+[[records]]
+match = { type = "user", isVisibleInTranscriptOnly = true }
+role = "user"
+turn = false
+non_turn_reason = "flag:isVisibleInTranscriptOnly"
+text = ["message.content", "message.content[type=text].text"]
+results = "message.content[type=tool_result]"
+result_id = "tool_use_id"
+result_error = "is_error"
+result_text = "content"
 
 [[records]]
 match = { type = "user" }
