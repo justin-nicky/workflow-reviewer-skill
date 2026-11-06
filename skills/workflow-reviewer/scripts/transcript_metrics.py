@@ -606,7 +606,7 @@ def find_by_id(host, session_id):
 
 
 def first_prompt(path, mapping):
-    events, _ = parse_lines(path.read_text(encoding="utf-8").splitlines(), mapping)
+    events, _ = parse_lines(read_lines(path), mapping)
     return next((preview(e["text"]) for e in events if e["role"] == "user" and e["text"].strip()), "")
 
 
@@ -943,7 +943,7 @@ def build_parser():
 
 
 def read_lines(path):
-    return path.read_text(encoding="utf-8").splitlines()
+    return path.read_text(encoding="utf-8").split("\n")      # JSONL: only \n ends a record
 
 
 def main(argv=None):

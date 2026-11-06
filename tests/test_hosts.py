@@ -264,3 +264,15 @@ def test_cursor_subagents_beside_the_transcript_are_found_and_attached_by_brief(
     assert by_turn[1]["tool_calls"] == 0
     assert by_turn[2]["tool_calls"] == 2            # the Task call plus the subagent's shell call
     assert by_turn[2]["verify_runs"] == 1
+
+
+def test_unicode_line_separators_inside_a_record_do_not_split_it(cli, tmp_path):
+    rec = cc_user("first second\x0cthird\x1dfourth", 0)
+    path = tmp_path / "s.jsonl"
+    path.write_text(json.dumps(rec, ensure_ascii=False) + "\n"
+                    + json.dumps(cc_assistant("m", 5, usage=usage(1, 1)), ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+    code, out = cli.json(path, "--host", "claude-code")
+    assert code == 0
+    assert out["coverage"]["drift"]["coverage_pct"] == 100.0
+    assert out["tokens"]["api_calls"] == 1
