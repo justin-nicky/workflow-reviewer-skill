@@ -46,7 +46,7 @@ Hosts change their internal transcript formats. Each mapping in `skills/workflow
 ## Status and verification
 
 - Claude Code mapping: written against the documented record shapes; confirm on real files.
-- Codex and Cursor mappings: drafted from known formats and **not yet verified on real transcripts** (see `docs/workflow-reviewer-plan.md`, section 16).
+- Codex and Cursor mappings: drafted from known formats and **not yet verified on real transcripts** (phase 0 in `docs/workflow-reviewer-plan.md`).
 - Windows transcript paths are unverified. CI runs pytest on macOS, Linux and Windows.
 
 ## Known gaps (v1)

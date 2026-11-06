@@ -2,7 +2,7 @@
 
 An open-source agent skill that audits **the coding-agent task you just finished**. It finds where tokens and time went without improving quality, and which process slips happened. It returns a report in chat, with findings and proposals. **The audit reports only:** it never edits code, skills or config, and it never writes the report to disk.
 
-Status: agreed after brainstorming and two grilling rounds (2026-11-06). Build starts after the open items in §16.
+Status: agreed after brainstorming and two grilling rounds (2026-11-06). Build starts after phase 0 (confirm formats on real transcripts).
 
 ---
 
@@ -95,7 +95,7 @@ session.jsonl
 - counted if spawned inside the window;
 - Claude Code: linked by the spawning call;
 - Cursor: matched by brief and time, each counted once;
-- Codex: linked by parent id if recorded, otherwise by time (to verify, §16).
+- Codex: linked by parent id if recorded, otherwise by time (to verify in phase 0).
 
 **Breakdown:** totals, per actor (main agent and each subagent) and per user turn.
 
@@ -361,25 +361,13 @@ workflow-reviewer/
 
 | Phase | Work | Done when |
 |---|---|---|
-| 0 | Clear the open items (§16): confirm formats on real Claude Code, Codex and Cursor files | Mappings drafted against real field paths; capability flags confirmed |
+| 0 | Confirm formats on real Claude Code, Codex and Cursor files | Mappings drafted against real field paths; capability flags confirmed |
 | 1 | Tests and fixtures, then the mapping engine, parser, shared code, analysis and redaction | All tests pass in the 3-OS CI matrix |
 | 2 | `SKILL.md`, references, template | `SKILL.md` about 120 lines or fewer; every reference linked from it |
 | 3 | README, issue templates, `examples/sample-report.md` | Quick start works on a clean install |
 | 4 | Dry run on one of your real sessions (in chat, never committed) | Report reviewed by you |
 | 5 | LinkedIn draft (under 150 words, one concrete finding, no hype) and a list of anything unverified | Delivered |
 | Later | `evals/`: synthetic scenarios with expected findings | — |
-
-## 16. Open items
-
-1. **Real data** (used only to confirm formats; nothing goes into the repo):
-   - access to one Codex rollout in `~/.codex/sessions`;
-   - one Cursor agent transcript in `~/.cursor/projects/…`, to confirm its reduced capabilities;
-   - one multi-turn Claude Code session that used subagents, copied with its `subagents/` folder to a reachable folder (e.g. `~/Downloads/wr-dryrun/`), since `~/.claude` is protected over the device link. This doubles as the phase 4 dry run.
-2. **Still to verify:**
-   - whether Claude Code compaction keeps writing to the same file;
-   - Codex subagent linking (parent id or time);
-   - Windows transcript paths for all three hosts;
-   - the Cursor forum report about `.agents/skills`.
 
 ## 17. Risks
 
