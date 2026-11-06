@@ -23,7 +23,8 @@ Run on a model at least as strong as the one that did the task; record both mode
 1. **Scope.** Find the session and set the window (see [hosts](references/hosts.md)).
    - Claude Code: pass `--session-id ${CLAUDE_SESSION_ID}`. Codex: the script reads `CODEX_THREAD_ID` (undocumented, may change). Otherwise it takes the newest transcript for the repo.
    - Exit code 3 means several recent transcripts: show the list (time, preview) to the user and ask which; never guess.
-   - If the session held more than one task, run `--list-turns`, pick the start, and pass `--from-turn N`.
+   - If the session held more than one task, run `--list-turns` (last 30 turns; `--all` for every turn), pick the start, and pass `--from-turn N`.
+   - If the session already holds an earlier `/workflow-reviewer` run, the default window starts after it; `coverage.window_note` says so. `--from-turn` overrides.
 2. **Detect the workflow.** Skim instruction files, skills, review records, PR templates, CI config, commit trailers and the verify commands (`Makefile`, `package.json`, `pyproject.toml`, `justfile`, CI). Summarise in five lines; ask only what cannot be inferred. Pass project-specific verify commands with `--verify-pattern`.
 3. **Measure.** Run `python3 <this skill's folder>/scripts/transcript_metrics.py --session-id <id> --format md` once. Exit code 2 means format drift: follow the drift procedure in [hosts](references/hosts.md). Exit code 5 means the interpreter is older than Python 3.11: retry with `python3.11`, `python3.12` or newer. Exit code 6 means no transcript was found: tell the user where the script looked and use the degraded report (working-tree status and diff stats). Exit code 4 means unsupported input (for example `.zst`); any degraded report (working tree and repo records only) has confidence capped at medium and coverage stated up front.
 4. **Confirm.** Check each candidate finding with a small `--events I:J` window and find the instruction text that causes it, or name the gap.
@@ -48,4 +49,4 @@ ID and category; evidence (numbers plus event indices or file:line); cause (quot
 
 ## Script flags
 
-`--session-id` `--host auto|claude-code|codex|cursor|kiro` `--list-turns` `--from-turn/--to-turn` `--events I:J` `--sample N` `--mapping FILE|-` `--verify-pattern RE` `--idle-threshold S` `--drift-threshold PCT` `--format md|json` `--no-redact`. Optional `.workflow-review.toml` in the repo holds `verify_patterns`, `idle_threshold`, `drift_threshold`; the script only reads it.
+`--session-id` `--host auto|claude-code|codex|cursor|kiro` `--list-turns [--all]` `--from-turn/--to-turn` `--events I:J` `--sample N` `--mapping FILE|-` `--verify-pattern RE` `--idle-threshold S` `--drift-threshold PCT` `--format md|json` `--no-redact`. Optional `.workflow-review.toml` in the repo holds `verify_patterns`, `idle_threshold`, `drift_threshold`; the script only reads it.

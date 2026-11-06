@@ -59,6 +59,9 @@ Hosts change their internal transcript formats. Each mapping in `skills/workflow
 - Ignored record types are listed in `coverage.ignored_types`. Claude Code's `cost-state` records carry cumulative per-model token totals (input, output, thinking, cache) that are not read; per-message usage is used instead.
 - Codex rollouts and Cursor transcripts were checked against one real file each; Cursor has no version marker, so its `tested_versions` is "unknown".
 
+- Output is capped so the audit stays cheap: per-turn and per-actor rows show the top 5 plus an "other" row, `--list-turns` shows the last 30 (`--all` for every turn), and file, failure, skill and type lists are truncated with a remainder count. On a real 361-turn session the Markdown summary is about 7k chars.
+- `interruptions` counts `[Request interrupted by user` markers (Claude Code only) with the turn of each; Codex `turn_aborted` events are not counted.
+
 ## Development
 
 ```bash

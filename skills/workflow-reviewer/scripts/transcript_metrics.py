@@ -446,12 +446,14 @@ def tool_summary(events, custom_patterns, has_results):
                       for k, r in results.items()), key=lambda o: -o["bytes"])[:3]
     repeated, repeated_more = cap_counts({p: n for p, n in reads.items() if n > 1}, TOP_ITEMS)
     edited, edited_more = cap_counts(edits, TOP_ITEMS)
+    repeated = {short_path(p): n for p, n in repeated.items()}
+    edited = {short_path(p): n for p, n in edited.items()}
     retries = sorted(((c, n) for c, n in failed.items() if n > 1), key=lambda cn: (-cn[1], cn[0]))
     summary = {
         "total": sum(by_cat.values()), "by_category": by_cat,
         "errors": errors if has_results else None,
         "repeated_reads": repeated, "edits_per_file": edited,
-        "retried_failures": [{"command": c[:120], "times": n} for c, n in retries[:TOP_FAILURES]] if has_results else None,
+        "retried_failures": [{"command": c[:80], "times": n} for c, n in retries[:TOP_FAILURES]] if has_results else None,
         "largest_outputs": outputs if has_results else None,
     }
     if repeated_more:
@@ -583,13 +585,25 @@ def row_weight(row):
     return sum(tokens[k] for k in ("fresh_input", "output", "cache_read", "cache_write"))
 
 
+ROW_TOKEN_KEYS = ("fresh_input", "output", "cache_read", "cache_write", "api_calls")
+
+
+def row_tokens(events, mapping):
+    """Token fields for a per-turn or per-actor row (the method note stays in the top-level summary)."""
+    tokens = tokens_for(events, mapping)
+    return tokens if "not_measurable" in tokens else {k: tokens[k] for k in ROW_TOKEN_KEYS}
+
+
+def short_path(path, n=60):
+    return path if len(path) <= n else "\u2026" + path[-(n - 1):]
+
+
 def merge_rows(rows, label):
     merged = {"tool_calls": sum(r["tool_calls"] for r in rows), "verify_runs": sum(r["verify_runs"] for r in rows)}
     if any("not_measurable" in r["tokens"] for r in rows):
         merged["tokens"] = rows[0]["tokens"]
     else:
-        keys = ("fresh_input", "output", "cache_read", "cache_write", "api_calls", "calls_without_id")
-        merged["tokens"] = {k: sum(r["tokens"][k] for r in rows) for k in keys}
+        merged["tokens"] = {k: sum(r["tokens"][k] for r in rows) for k in ROW_TOKEN_KEYS}
     return {**label, **merged}
 
 
@@ -630,7 +644,7 @@ def turn_rows(events, mapping, custom):
         first = next((e for e in evs if is_turn_start(e)), None)
         tools, verify = tool_summary(evs, custom, mapping["capabilities"].get("has_tool_results", False))
         rows.append({"turn": t, "preview": preview(first["text"]) if first else "",
-                     "tokens": tokens_for(evs, mapping), "tool_calls": tools["total"],
+                     "tokens": row_tokens(evs, mapping), "tool_calls": tools["total"],
                      "verify_runs": verify["total"]})
     return rows
 
@@ -643,7 +657,7 @@ def actor_rows(events, mapping, custom):
         first = next((e for e in evs if e["role"] == "user" and e["text"].strip()), None)
         rows.append({"actor": actor, "models": sorted({e["model"] for e in evs if e["model"]}),
                      "brief_bytes": len(first["text"].encode()) if first else 0,
-                     "tokens": tokens_for(evs, mapping), "tool_calls": tools["total"],
+                     "tokens": row_tokens(evs, mapping), "tool_calls": tools["total"],
                      "verify_runs": verify["total"],
                      "tool_s": round(tool_seconds(evs)) if mapping["capabilities"].get("has_timestamps") else None})
     return rows
