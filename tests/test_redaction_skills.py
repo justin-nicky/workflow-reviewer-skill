@@ -166,3 +166,25 @@ def test_windows_style_skill_paths_are_detected(cli, tmp_path):
     ])
     _, out = cli.json(path, "--host", "claude-code")
     assert [s["name"] for s in out["skills"]["loaded"]] == ["foo"]
+
+
+def test_low_entropy_secrets_in_key_value_and_url_credentials_are_masked(cli, tmp_path):
+    text = ("export PASSWORD=hunter2 and api_key: abc123 and MY_SECRET_TOKEN = 'tiny' "
+            "db postgres://admin:S3cretPass@db.internal:5432/app done")
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user(text, 0)])
+    proc = cli.run(path, "--host", "claude-code", "--events", "0:0")
+    for leaked in ("hunter2", "abc123", "tiny", "S3cretPass"):
+        assert leaked not in proc.stdout, leaked
+    assert "db.internal" in proc.stdout and "admin" in proc.stdout
+
+
+def test_redaction_keeps_the_json_report_valid(cli, tmp_path):
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0), cc_assistant("m", 1, usage=usage(1, 1))])
+    code, out = cli.json(path, "--host", "claude-code")
+    assert isinstance(out["tokens"], dict)
+
+
+def test_json_style_secret_fields_are_masked(cli, tmp_path):
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user('config {"password": "p4ss word", "ok": 1}', 0)])
+    proc = cli.run(path, "--host", "claude-code", "--events", "0:0")
+    assert "p4ss" not in proc.stdout

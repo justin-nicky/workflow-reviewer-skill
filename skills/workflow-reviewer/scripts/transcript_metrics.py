@@ -691,6 +691,11 @@ SECRET_PATTERNS = [
     r"AKIA[0-9A-Z]{16}", r"AIza[0-9A-Za-z_\-]{30,}", r"Bearer\s+[A-Za-z0-9._\-]{16,}",
     r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]*",
 ]
+SECRET_KEY = r"\w*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_KEY|ACCESS_KEY)\w*"
+KEY_VALUE_RE = re.compile(                      # KEY=value, KEY: value, KEY = 'value'
+    rf"(?i)({SECRET_KEY}\s*[=:]\s*\\?[\"']?)('[^']*'|[^\s\"',;&\\{{\[][^\s\"',;&\\]*)")
+JSON_KEY_RE = re.compile(rf"(?i)({SECRET_KEY}\\?[\"']\s*:\s*\\?[\"'])([^\"'\\]+)")   # "key": "value"
+URL_CREDS_RE = re.compile(r"(\b[a-z][a-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+(@)", re.I)
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 HOME_RE = re.compile(r"(?:/Users|/home)/[^/\s\"'\\]+")
 TOKEN_RE = re.compile(r"[A-Za-z0-9_+=\-]{24,}")
@@ -719,6 +724,9 @@ def redact(text):
         text = text.replace(home, "~")
     for pat in SECRET_PATTERNS:
         text = re.sub(pat, "[REDACTED]", text)
+    text = URL_CREDS_RE.sub(r"\1[REDACTED]\2", text)
+    text = KEY_VALUE_RE.sub(r"\1[REDACTED]", text)
+    text = JSON_KEY_RE.sub(r"\1[REDACTED]", text)
     text = EMAIL_RE.sub("[EMAIL]", text)
     text = HOME_RE.sub("~", text)
     return TOKEN_RE.sub(_mask_token, text)
