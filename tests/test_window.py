@@ -123,3 +123,15 @@ def test_sample_prints_n_raw_lines(cli, tmp_path):
     _, out = cli.json(three_turns(tmp_path), "--host", "claude-code", "--sample", "2")
     assert len(out["sample"]) == 2
     assert out["sample"][0].startswith("{")
+
+
+def test_an_earlier_prompt_that_merely_mentions_the_skill_does_not_cut_the_window(cli, tmp_path):
+    path = write_jsonl(tmp_path / "s1.jsonl", [
+        cc_user("improve the workflow-reviewer skill docs", 0),
+        cc_assistant("m1", 10, usage=usage(1, 100)),
+        cc_user("now add a test", 100),
+        cc_assistant("m2", 110, usage=usage(1, 200)),
+    ])
+    _, out = cli.json(path, "--host", "claude-code")
+    assert out["window"]["reviewer_invocation_found"] is False
+    assert out["tokens"]["output"] == 300

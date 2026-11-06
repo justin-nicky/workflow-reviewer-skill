@@ -148,3 +148,21 @@ def test_script_writes_nothing(cli, tmp_path):
     for extra in ([], ["--list-turns"], ["--events", "0:1"], ["--sample", "2"]):
         cli.run(path, "--host", "claude-code", *extra)
     assert snap() == before
+
+
+def test_tool_call_ids_survive_redaction_so_calls_can_be_tied_to_results(cli, tmp_path):
+    call_id = "toolu_01A9bC3dE5fG7hJ2kL4mN6pQ"
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0), *cc_bash_call("m", call_id, "ls", 5)])
+    proc = cli.run(path, "--host", "claude-code", "--events", "1:2")
+    assert call_id in proc.stdout
+
+
+def test_windows_style_skill_paths_are_detected(cli, tmp_path):
+    path = write_jsonl(tmp_path / "s.jsonl", [
+        cc_user("go", 0),
+        cc_assistant("m", 2, [tool_use("Read", {"file_path": "C:\\Users\\a\\.claude\\skills\\foo\\SKILL.md"}, "c1")],
+                     usage(1, 1)),
+        cc_tool_result("c1", "z" * 40, 3),
+    ])
+    _, out = cli.json(path, "--host", "claude-code")
+    assert [s["name"] for s in out["skills"]["loaded"]] == ["foo"]

@@ -1,5 +1,6 @@
 """Synthetic transcript builders. Fixtures are always synthetic, never real sessions."""
 import json
+import zlib
 from datetime import datetime, timedelta, timezone
 
 T0 = datetime(2026, 11, 1, 10, 0, 0, tzinfo=timezone.utc)
@@ -22,7 +23,7 @@ def write_jsonl(path, records, truncate_last=False):
 # ---- Claude Code ----------------------------------------------------------
 
 def cc_user(text, t, uuid=None, session="s1"):
-    return {"type": "user", "uuid": uuid or f"u-{t}-{abs(hash(text)) % 10**6}",
+    return {"type": "user", "uuid": uuid or f"u-{t}-{zlib.crc32(text.encode()) % 10**6}",
             "sessionId": session, "timestamp": at(t),
             "message": {"role": "user", "content": text}}
 

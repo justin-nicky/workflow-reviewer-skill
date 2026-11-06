@@ -47,6 +47,12 @@ Hosts change their internal transcript formats. Each mapping in `skills/workflow
 - Codex and Cursor mappings: drafted from known formats and **not yet verified on real transcripts** (see `docs/workflow-reviewer-plan.md`, section 16).
 - Windows transcript paths are unverified. CI runs pytest on macOS, Linux and Windows.
 
+## Known gaps (v1)
+
+- Subagents are read from Claude Code's `<session>/subagents/` folder and attached to turns by timestamp. Linking by spawning call (Claude Code), brief and time (Cursor) and parent id (Codex) is not implemented yet.
+- `context_at_invocation` is the last API call's input plus cache tokens inside the window; tool time sums overlapping parallel calls.
+- Degraded mode reports git file history and repo records, not a diff. `.zst` rollouts are only reported when passed explicitly.
+
 ## Development
 
 ```bash

@@ -87,3 +87,9 @@ def test_failing_command_retried_and_errors_and_largest_outputs(cli, tmp_path):
     assert out["tools"]["retried_failures"] == [{"command": "pytest -x", "times": 2}]
     assert out["tools"]["largest_outputs"][0]["bytes"] == 7000
     assert "text" not in out["tools"]["largest_outputs"][0]
+
+
+def test_largest_outputs_name_the_tool_and_command(cli, tmp_path):
+    out = run_session(cli, tmp_path, cc_bash_call("m1", "c1", "cat big.log", 10, "L" * 9000))
+    top = out["tools"]["largest_outputs"][0]
+    assert top["tool"] == "Bash" and top["command"] == "cat big.log"

@@ -404,8 +404,10 @@ def tool_summary(events, custom_patterns, has_results):
                 if res and res["error"]:
                     failed[cmd.strip()] = failed.get(cmd.strip(), 0) + 1
     errors = sum(1 for r in results.values() if r["error"])
-    outputs = sorted(({"bytes": r["bytes"], "call_id": k} for k, r in results.items()),
-                     key=lambda o: -o["bytes"])[:3]
+    calls_by_id = {c["id"]: c for ev in events for c in ev["calls"] if c["id"] is not None}
+    outputs = sorted(({"bytes": r["bytes"], "call_id": k, "tool": calls_by_id.get(k, {}).get("name"),
+                       "command": command_text(calls_by_id.get(k, {}).get("input"))[:80] or None}
+                      for k, r in results.items()), key=lambda o: -o["bytes"])[:3]
     return {
         "total": sum(by_cat.values()), "by_category": by_cat,
         "errors": errors if has_results else None,
@@ -433,7 +435,7 @@ def analyse(events, stats, mapping, custom_patterns=()):
 
 # ---- window, time, turns ---------------------------------------------------------------
 
-REVIEWER_RE = re.compile(r"workflow-reviewer", re.I)
+REVIEWER_RE = re.compile(r"(?:^|[\s>])/workflow-reviewer\b|skills[/\\]workflow-reviewer", re.I)
 LAG_SECONDS = 30
 
 
@@ -680,8 +682,13 @@ def _entropy(token):
     return -sum(n / len(token) * math.log2(n / len(token)) for n in counts.values())
 
 
+ID_RE = re.compile(r"^(?:toolu|srvtoolu|call|msg|req|resp|chatcmpl)_", re.I)
+
+
 def _mask_token(m):
     t = m.group(0)
+    if ID_RE.match(t):
+        return t
     if re.search(r"\d", t) and re.search(r"[A-Za-z]", t) and _entropy(t) >= 4.0:
         return "[REDACTED]"
     return t
@@ -785,14 +792,19 @@ def skills_summary(events, host, repo):
             if cat != "read":
                 continue
             for path in call_path(c):
-                parts = Path(path).parts
+                parts = tuple(p for p in re.split(r"[\\/]+", path) if p)
                 if "skills" not in parts or parts.index("skills") + 1 >= len(parts) - 1:
                     continue
                 name = parts[parts.index("skills") + 1]
                 entry = loaded.setdefault(name, {"name": name, "detected_by": "SKILL.md read", "bytes": 0})
                 res = results.get(c["id"])
                 entry["bytes"] = (entry["bytes"] or 0) + (res["bytes"] if res else 0)
-    return {"loaded": list(loaded.values()), "inventory": skill_inventory(host, repo),
+    inventory = skill_inventory(host, repo)
+    sizes = {i["name"]: i["bytes"] for i in inventory}
+    for entry in loaded.values():
+        if entry["bytes"] is None:
+            entry["bytes"] = sizes.get(entry["name"])
+    return {"loaded": list(loaded.values()), "inventory": inventory,
             "instruction_files": instruction_files(repo)}
 
 
@@ -811,7 +823,7 @@ def degraded_report(host, repo):
             "evidence_rule": "No usable transcript. The agent's own recollection is never evidence; "
                              "only git history, the diff and repo records below count.",
             "git": git,
-            "skills": {"inventory": skill_inventory(host if host in HOSTS or host == "kiro" else "kiro", repo),
+            "skills": {"inventory": skill_inventory(host, repo),
                        "instruction_files": instruction_files(repo)}}
 
 
@@ -874,7 +886,7 @@ def main(argv=None):
             emit(ambiguous, args.format, redact_on)
             return 3
     if not paths:
-        emit(degraded_report("kiro", repo), args.format, redact_on)
+        emit(degraded_report(args.host if args.host != "auto" else "claude-code", repo), args.format, redact_on)
         return 0
     first_lines = read_lines(paths[0])
     host = detect_host(first_lines, args.host)
