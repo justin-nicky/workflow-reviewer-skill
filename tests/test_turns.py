@@ -1,4 +1,5 @@
 from fixtures.builders import (bash, cc_assistant, cc_tool_result, cc_user, usage, write_jsonl)
+from test_window import three_turns
 
 SLASH = "<command-message>tdd</command-message>\n<command-name>/tdd</command-name>"
 REVIEWER = "<command-message>workflow-reviewer</command-message>\n<command-name>/workflow-reviewer</command-name>"
@@ -108,3 +109,37 @@ def test_a_plain_slash_command_prompt_ends_the_window(cli, tmp_path):
     _, out = cli.json(write_jsonl(tmp_path / "s.jsonl", records), "--host", "claude-code")
     assert out["window"]["reviewer_invocation_found"] is True
     assert out["tokens"]["output"] == 100
+
+
+def audited_twice(tmp_path):
+    return write_jsonl(tmp_path / "s.jsonl", [
+        cc_user("first task", 0), cc_assistant("m1", 10, usage=usage(1, 100)),
+        cc_user("/workflow-reviewer", 100),                       # turn 2: an earlier audit
+        cc_assistant("m2", 110, usage=usage(1, 5000)),
+        cc_user("second task", 200), cc_assistant("m3", 210, usage=usage(1, 200)),
+        cc_user("third task", 300), cc_assistant("m4", 310, usage=usage(1, 300)),
+        cc_user("/workflow-reviewer", 400),                       # the current audit
+        cc_assistant("m5", 410, usage=usage(1, 9999)),
+    ])
+
+
+def test_default_window_starts_after_an_earlier_review(cli, tmp_path):
+    _, out = cli.json(audited_twice(tmp_path), "--host", "claude-code")
+    assert out["tokens"]["output"] == 500                           # second and third task only
+    assert [t["turn"] for t in out["turns"]] == [3, 4]
+    assert out["window"]["from_turn"] == 3
+    assert "turn 2" in out["coverage"]["window_note"]
+    assert "--from-turn" in out["coverage"]["window_note"]
+
+
+def test_from_turn_overrides_the_default_start(cli, tmp_path):
+    _, out = cli.json(audited_twice(tmp_path), "--host", "claude-code", "--from-turn", "1")
+    assert out["window"]["from_turn"] == 1
+    assert out["tokens"]["output"] == 5600
+    assert out["coverage"]["window_note"] is None
+
+
+def test_no_note_when_there_was_no_earlier_review(cli, tmp_path):
+    _, out = cli.json(three_turns(tmp_path), "--host", "claude-code")
+    assert out["window"]["from_turn"] == 1
+    assert out["coverage"]["window_note"] is None

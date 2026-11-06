@@ -1138,7 +1138,13 @@ def main(argv=None):
                 listed = listed[-LIST_TURNS_SHOWN:]
             out = {"header": header, "turns": listed}
         else:
-            lo = args.from_turn or 1
+            earlier = [e["turn"] for e in events if is_turn_start(e) and REVIEWER_RE.search(e["text"])
+                       and cut is not None and e["i"] < cut]
+            lo, window_note = args.from_turn or 1, None
+            if args.from_turn is None and earlier:
+                lo = max(earlier) + 1
+                window_note = (f"window starts at turn {lo}, after the earlier /workflow-reviewer invocation "
+                               f"in turn {max(earlier)} (already audited); pass --from-turn N to override")
             window = [e for e in window if e["turn"] >= lo and (args.to_turn is None or e["turn"] <= args.to_turn)]
             out = analyse(window, stats, mapping, args.verify_patterns)
             last_ts = max((e["ts"] for e in events if e["ts"] is not None), default=None)
@@ -1150,7 +1156,8 @@ def main(argv=None):
                                "mapping_source": source, "drift": drift,
                                "ignored_types": with_other(stats["ignored_types"], TOP_TYPES), "transcript_version": stats["version"], "not_measurable": not_measurable(mapping),
                                "capabilities": mapping["capabilities"], "last_record_ts": iso(last_ts),
-                               "lag_note": lag, "truncated_last_line": stats["truncated_last_line"]}
+                               "lag_note": lag, "window_note": window_note,
+                               "truncated_last_line": stats["truncated_last_line"]}
             non_turn = {}
             for e in window:
                 if e["actor"] == "main" and e["role"] == "user" and e["non_turn"] and e["text"].strip():
