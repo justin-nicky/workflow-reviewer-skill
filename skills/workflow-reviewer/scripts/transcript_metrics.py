@@ -197,8 +197,9 @@ def token_summary(events):
         for k, v in u.items():
             cur[k] = max(cur[k], v)
     calls = list(by_id.values()) + no_id
+    main = [e["usage"] for e in events if e["usage"] and e["actor"] == "main"]
+    last = main[-1] if main else None
     total = {k: sum(c[k] for c in calls) for k in ("input", "output", "cache_read", "cache_write")}
-    last = calls[-1] if calls else None
     return {
         "fresh_input": total["input"], "output": total["output"],
         "cache_read": total["cache_read"], "cache_write": total["cache_write"],
@@ -458,27 +459,44 @@ def reviewer_cut(events):
     return None
 
 
+def tool_seconds(events):
+    """Seconds spent waiting on tools by these events' calls, with overlapping intervals merged."""
+    starts, spans = {}, []
+    for e in events:
+        if e["ts"] is None:
+            continue
+        for c in e["calls"]:
+            if c["id"] is not None:
+                starts[c["id"]] = e["ts"]
+        spans += [(starts[r["id"]], e["ts"]) for r in e["results"] if r["id"] in starts]
+    total, end = 0.0, None
+    for lo, hi in sorted(spans):
+        if end is None or lo > end:
+            total += max(0.0, hi - lo)
+            end = hi
+        elif hi > end:
+            total += hi - end
+            end = hi
+    return total
+
+
 def time_summary(events, idle):
     stamped = [e for e in events if e["ts"] is not None]
     if not stamped:
         return {"not_measurable": "host records no timestamps"}
     wall = stamped[-1]["ts"] - stamped[0]["ts"]
-    waiting, prev, tool, call_ts = 0.0, None, 0.0, {}
+    waiting, prev = 0.0, None
+    tool = tool_seconds([e for e in stamped if e["actor"] == "main"])
     for e in stamped:
         if e["actor"] == "main" and e["role"] == "user" and e["text"].strip() and prev is not None:
             gap = e["ts"] - prev
             if gap > idle:
                 waiting += gap
-        for c in e["calls"]:
-            if c["id"] is not None:
-                call_ts[c["id"]] = e["ts"]
-        for r in e["results"]:
-            if r["id"] in call_ts:
-                tool += max(0.0, e["ts"] - call_ts[r["id"]])
         prev = e["ts"]
     return {"wall_s": round(wall), "waiting_s": round(waiting), "tool_s": round(tool),
             "active_s": round(max(0.0, wall - waiting - tool)),
-            "tool_note": "tool time may include permission prompts; parallel calls can overlap"}
+            "tool_note": "main agent only, overlapping calls merged; may include permission prompts; "
+                         "subagent time is reported per actor"}
 
 
 def preview(text, n=80):
@@ -506,7 +524,8 @@ def actor_rows(events, mapping, custom):
         rows.append({"actor": actor, "models": sorted({e["model"] for e in evs if e["model"]}),
                      "brief_bytes": len(first["text"].encode()) if first else 0,
                      "tokens": tokens_for(evs, mapping), "tool_calls": tools["total"],
-                     "verify_runs": verify["total"]})
+                     "verify_runs": verify["total"],
+                     "tool_s": round(tool_seconds(evs)) if mapping["capabilities"].get("has_timestamps") else None})
     return rows
 
 
