@@ -43,24 +43,30 @@ See [examples/sample-report.md](examples/sample-report.md) (synthetic data).
 
 Hosts change their internal transcript formats. Each mapping in `skills/workflow-reviewer/scripts/mappings/` records `tested_versions`. If the script reports drift, the agent drafts an override mapping from a redacted sample and re-runs it through stdin. Please share working mappings with the format-drift issue template.
 
+## Output
+
+The audit runs inside the session it audits, so the script keeps its output small. Per-turn and per-actor rows show the top 5 (by tokens, or by tool calls on hosts without tokens) plus an "other" row. `--list-turns` shows the last 30 turns with a header, and `--all` lists every turn. File, failure, skill and record-type lists are truncated with a remainder count. On a real 361-turn session the Markdown summary is about 7k characters. How turns, windows, time and context are computed is in [hosts.md](skills/workflow-reviewer/references/hosts.md).
+
 ## Status and verification
 
-- Claude Code mapping: written against the documented record shapes; confirm on real files.
-- Codex and Cursor mappings: drafted from known formats and **not yet verified on real transcripts** (phase 0 in `docs/workflow-reviewer-plan.md`).
-- Windows transcript paths are unverified. CI runs pytest on macOS, Linux and Windows.
+Each mapping was checked against one real transcript in phase 0 (nothing from those transcripts is in the repo; tests use synthetic fixtures that reproduce their structure):
+
+| Host | `tested_versions` |
+|---|---|
+| Claude Code | 2.1.295 to 2.1.309 |
+| Codex | 0.137.0-alpha.4 to 0.142.2 (`cli_version`) |
+| Cursor | unknown (no version marker in transcripts) |
+
+Wider version coverage comes from drift reports: when a host changes its format, the script warns and the agent drafts an override mapping (see Format drift). CI runs pytest on macOS, Linux and Windows with Python 3.11 and 3.12.
 
 ## Known gaps (v1)
 
-- Subagents are read from Claude Code's `<session>/subagents/` folder and attached to turns by timestamp. Linking by spawning call (Claude Code), brief and time (Cursor) and parent id (Codex) is not implemented yet.
-- `context_at_invocation` is the last API call's input plus cache tokens inside the window; tool time sums overlapping parallel calls.
-- Degraded mode reports the working tree (git status and diff stats) and repo records. `.zst` rollouts are only reported when passed explicitly.
-
-- Injected Claude Code user records are excluded from turns by flag (`isMeta`, `isCompactSummary`, `isVisibleInTranscriptOnly`) and by a prefix list in the mapping (`not_a_turn_prefixes`, which includes user `!` shell input). New injected kinds will count as turns until added; `window.non_turn_user_records` shows what was excluded.
-- Ignored record types are listed in `coverage.ignored_types`. Claude Code's `cost-state` records carry cumulative per-model token totals (input, output, thinking, cache) that are not read; per-message usage is used instead.
-- Codex rollouts and Cursor transcripts were checked against one real file each; Cursor has no version marker, so its `tested_versions` is "unknown".
-
-- Output is capped so the audit stays cheap: per-turn and per-actor rows show the top 5 plus an "other" row, `--list-turns` shows the last 30 (`--all` for every turn), and file, failure, skill and type lists are truncated with a remainder count. On a real 361-turn session the Markdown summary is about 7k chars.
-- `interruptions` counts user interruptions with the turn of each: `[Request interrupted by user` markers (Claude Code) and `turn_aborted` events with reason `interrupted` (Codex). Cursor has no known marker.
+- Claude Code subagents are attached to turns by timestamp, not linked by the spawning call.
+- Codex subagent linking by parent id is not implemented (no subagent rollouts were seen in phase 0).
+- `.zst` rollouts are only reported when passed explicitly; transcript discovery does not look for them.
+- Windows transcript paths are unverified for all hosts.
+- Cursor transcripts carry no version marker, so its `tested_versions` is "unknown" and drift warnings cannot quote a transcript version.
+- Claude Code `cost-state` records carry cumulative per-model token totals (including thinking tokens). They are not used as a cross-check on the per-message usage the script reads.
 
 ## Development
 
