@@ -5,6 +5,13 @@ Reads a host transcript (Claude Code, Codex, Cursor), applies a declarative TOML
 mapping, and prints a compact redacted summary on stdout. Standard library only.
 It never writes files and never touches the network.
 """
+import sys
+
+EXIT_PYTHON_VERSION = 5
+if sys.version_info < (3, 11):
+    sys.stderr.write("workflow-reviewer needs Python 3.11+, found %d.%d\n" % sys.version_info[:2])
+    sys.exit(EXIT_PYTHON_VERSION)
+
 import argparse
 import hashlib
 import json
@@ -12,7 +19,6 @@ import math
 import os
 import re
 import subprocess
-import sys
 import time
 import tomllib
 from datetime import datetime, timezone

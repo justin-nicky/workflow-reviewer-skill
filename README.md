@@ -9,6 +9,8 @@ An agent skill that audits **the coding-agent task you just finished**. It finds
 
 ## Quick start (60 seconds)
 
+**Requires Python 3.11+** (the macOS system `python3` is 3.9; install a newer one, for example from python.org or Homebrew). The script exits with code 5 and a clear message on older versions.
+
 1. Install the skill (below).
 2. Finish a task in your agent.
 3. In the same session, run `/workflow-reviewer`.

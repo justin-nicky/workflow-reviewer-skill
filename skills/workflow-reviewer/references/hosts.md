@@ -23,6 +23,7 @@ Windows transcript paths are **unverified** for all hosts. `CODEX_THREAD_ID` is 
 | 2 | Format drift (output still printed from what parses) |
 | 3 | Ambiguous session; list printed |
 | 4 | Unsupported input (`.zst`) |
+| 5 | Python older than 3.11; nothing was read |
 
 ## Drift procedure
 
