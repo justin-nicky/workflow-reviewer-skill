@@ -316,3 +316,23 @@ def test_tested_versions_and_observed_version_per_host(cli, tmp_path):
     _, out = cli.json(cu, "--host", "cursor")
     assert out["coverage"]["tested_versions"] == "unknown (no version marker in transcripts)"
     assert out["coverage"]["transcript_version"] is None
+
+
+def test_codex_user_interruptions_are_counted_with_their_turn(cli, tmp_path):
+    from fixtures.builders import cx_aborted
+    path = write_jsonl(tmp_path / "rollout-x.jsonl", [
+        cx_meta("i", cli.repo),
+        cx_user("task one", 1), cx_tokens(1, 0, 1, 2), cx_aborted("interrupted", 3),
+        cx_user("task two", 10), cx_aborted("replaced", 11),          # not a user interruption
+        cx_user("task three", 20), cx_aborted("interrupted", 21), cx_aborted("interrupted", 22),
+    ])
+    code, out = cli.json(path, "--host", "codex")
+    assert code == 0
+    assert out["interruptions"] == {"count": 3, "turns": [1, 3, 3]}
+    assert out["coverage"]["ignored_types"] == {"session_meta": 1, "event_msg/turn_aborted": 1}
+
+
+def test_codex_without_interruptions_reports_zero(cli, tmp_path):
+    path = write_jsonl(tmp_path / "rollout-x.jsonl", [cx_meta("i", cli.repo), cx_user("go", 1)])
+    _, out = cli.json(path, "--host", "codex")
+    assert out["interruptions"] == {"count": 0, "turns": []}

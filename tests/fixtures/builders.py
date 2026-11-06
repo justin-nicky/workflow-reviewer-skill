@@ -77,6 +77,11 @@ def cx_meta(session_id, cwd, t=0, cli_version="0.142.2"):
     return cx_line("session_meta", {"id": session_id, "cwd": str(cwd), "cli_version": cli_version}, t)
 
 
+def cx_aborted(reason, t):
+    return cx_line("event_msg", {"type": "turn_aborted", "reason": reason, "turn_id": "t1",
+                                 "duration_ms": 1200, "completed_at": 1}, t)
+
+
 def cx_event(kind, t):
     return cx_line("event_msg", {"type": kind}, t)
 

@@ -55,6 +55,12 @@ usage_cache_read = "payload.info.last_token_usage.cached_input_tokens"
 usage_input_includes_cache = true
 usage_dedupe_key = "payload.info.total_token_usage"
 
+# Only user-initiated aborts count as interruptions; other abort reasons stay ignored (and visible).
+[[records]]
+match = { type = "event_msg", "payload.type" = "turn_aborted", "payload.reason" = "interrupted" }
+role = "meta"
+interrupt = true
+
 [[records]]
 match = { type = ["session_meta", "turn_context", "event_msg", "compacted"] }
 role = "ignore"

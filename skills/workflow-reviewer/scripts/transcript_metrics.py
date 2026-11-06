@@ -172,7 +172,8 @@ def parse_lines(lines, mapping, actor="main"):
               "model": get_first(obj, rule.get("model", fields.get("model"))),
               "usage": None, "calls": [], "results": [],
               "ts": parse_ts(get_first(obj, rule.get("timestamp", fields.get("timestamp")))),
-              "event_id": get_first(obj, fields.get("event_id")), "non_turn": None}
+              "event_id": get_first(obj, fields.get("event_id")), "non_turn": None,
+              "interrupted": bool(rule.get("interrupt"))}
         if ev["role"] == "user":
             if rule.get("turn") is False:
                 ev["non_turn"] = rule.get("non_turn_reason", "rule")
@@ -536,11 +537,16 @@ def tool_seconds(events):
 
 
 def interruption_summary(events, mapping):
-    """Plain count of user-interruption markers in the window, with the turn each falls in."""
-    prefixes = mapping.get("interruption_prefixes")
-    if not prefixes:
+    """Plain count of user-interruption markers in the window, with the turn each falls in.
+
+    A marker is either a user record starting with one of the mapping's interruption_prefixes,
+    or a record matched by a mapping rule with interrupt = true.
+    """
+    prefixes = tuple(mapping.get("interruption_prefixes", []))
+    if not prefixes and not any(r.get("interrupt") for r in mapping.get("records", [])):
         return {"not_measurable": "no interruption marker is known for this host"}
-    turns = [e["turn"] for e in events if e["role"] == "user" and e["text"].lstrip().startswith(tuple(prefixes))]
+    turns = [e["turn"] for e in events if e["interrupted"]
+             or (prefixes and e["role"] == "user" and e["text"].lstrip().startswith(prefixes))]
     return {"count": len(turns), "turns": turns[:MAX_INTERRUPTION_TURNS]}
 
 

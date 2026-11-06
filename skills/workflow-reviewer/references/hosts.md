@@ -15,6 +15,14 @@ Windows transcript paths are **unverified** for all hosts. `CODEX_THREAD_ID` is 
 2. Otherwise the newest transcript for the repo. If two or more were modified in the last 10 minutes, the script exits with code 3 and lists them; ask the user.
 3. A task spread across files: pass several paths; they merge in time order. Forks and duplicated subagents are counted once.
 
+## Interruptions
+
+`interruptions` is a plain count of user interruptions in the window, with the turn each falls in.
+
+- **Claude Code:** user records starting with `[Request interrupted by user`.
+- **Codex:** `turn_aborted` events with `reason = "interrupted"`. Observed in real rollouts: only `interrupted` (9 of 9). Any other abort reason (the Codex protocol also defines `replaced` and `review_ended`) is **excluded**: it is not a user interruption, and it stays visible under `coverage.ignored_types` as `event_msg/turn_aborted`.
+- **Cursor, Kiro:** no known marker; reported as "not measurable".
+
 ## Exit codes
 
 | Code | Meaning |
