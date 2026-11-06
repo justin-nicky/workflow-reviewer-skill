@@ -3,6 +3,8 @@ host = "claude-code"
 tested_versions = "2.1.295 to 2.1.309"
 type_path = "type"
 
+interruption_prefixes = ["[Request interrupted by user"]
+
 # User records that are not prompts from the human. Matched by prefix after the flag rules.
 not_a_turn_prefixes = [
   "<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>",

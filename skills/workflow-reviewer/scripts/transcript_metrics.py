@@ -484,6 +484,7 @@ REVIEWER_RE = re.compile(
     r"^\s*/workflow-reviewer\b|<command-(?:name|message)>/?workflow-reviewer|skills[/\\]workflow-reviewer", re.I)
 LAG_SECONDS = 30
 MAX_EVENTS = 100
+MAX_INTERRUPTION_TURNS = 50
 MAX_SAMPLE = 50
 
 
@@ -530,6 +531,15 @@ def tool_seconds(events):
             total += hi - end
             end = hi
     return total
+
+
+def interruption_summary(events, mapping):
+    """Plain count of user-interruption markers in the window, with the turn each falls in."""
+    prefixes = mapping.get("interruption_prefixes")
+    if not prefixes:
+        return {"not_measurable": "no interruption marker is known for this host"}
+    turns = [e["turn"] for e in events if e["role"] == "user" and e["text"].lstrip().startswith(tuple(prefixes))]
+    return {"count": len(turns), "turns": turns[:MAX_INTERRUPTION_TURNS]}
 
 
 def time_summary(events, idle):
@@ -1165,6 +1175,7 @@ def main(argv=None):
             out["window"] = {"reviewer_invocation_found": cut is not None, "events": len(window),
                              "non_turn_user_records": non_turn,
                              "from_turn": lo, "to_turn": args.to_turn}
+            out["interruptions"] = interruption_summary(window, mapping)
             out["time"] = time_summary(window, args.idle_threshold) if mapping["capabilities"].get("has_timestamps") \
                 else {"not_measurable": "host records no timestamps"}
             all_turns = turn_rows(window, mapping, args.verify_patterns)

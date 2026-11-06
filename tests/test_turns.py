@@ -143,3 +143,36 @@ def test_no_note_when_there_was_no_earlier_review(cli, tmp_path):
     _, out = cli.json(three_turns(tmp_path), "--host", "claude-code")
     assert out["window"]["from_turn"] == 1
     assert out["coverage"]["window_note"] is None
+
+
+def interrupted(tmp_path):
+    return write_jsonl(tmp_path / "s.jsonl", [
+        cc_user("task one", 0), cc_user("[Request interrupted by user]", 5),
+        cc_assistant("m1", 10, usage=usage(1, 1)),
+        cc_user("task two", 100), cc_assistant("m2", 110, usage=usage(1, 1)),
+        cc_user("task three", 200),
+        cc_user("[Request interrupted by user for tool use]", 205),
+        cc_user("[Request interrupted by user for tool use]", 210),
+        cc_assistant("m3", 220, usage=usage(1, 1)),
+    ])
+
+
+def test_interruptions_are_counted_with_the_turn_each_falls_in(cli, tmp_path):
+    _, out = cli.json(interrupted(tmp_path), "--host", "claude-code")
+    assert out["interruptions"] == {"count": 3, "turns": [1, 3, 3]}
+
+
+def test_interruptions_outside_the_window_are_not_counted(cli, tmp_path):
+    _, out = cli.json(interrupted(tmp_path), "--host", "claude-code", "--from-turn", "2")
+    assert out["interruptions"] == {"count": 2, "turns": [3, 3]}
+
+
+def test_zero_interruptions_is_reported_as_zero(cli, tmp_path):
+    _, out = cli.json(write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0)]), "--host", "claude-code")
+    assert out["interruptions"] == {"count": 0, "turns": []}
+
+
+def test_hosts_without_a_known_marker_say_so(cli, tmp_path):
+    from fixtures.builders import cu_user
+    _, out = cli.json(write_jsonl(tmp_path / "c.jsonl", [cu_user("go")]), "--host", "cursor")
+    assert "not_measurable" in out["interruptions"]
