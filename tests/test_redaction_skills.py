@@ -212,3 +212,27 @@ def test_json_style_secret_fields_are_masked(cli, tmp_path):
     path = write_jsonl(tmp_path / "s.jsonl", [cc_user('config {"password": "p4ss word", "ok": 1}', 0)])
     proc = cli.run(path, "--host", "claude-code", "--events", "0:0")
     assert "p4ss" not in proc.stdout
+
+
+def test_inventory_labels_where_each_skill_copy_lives(cli, tmp_path):
+    skill(cli.home / ".claude" / "skills", "generic", "Generic user-level copy")
+    skill(cli.repo / ".claude" / "skills", "generic", "A customised project copy", body="much longer " * 40)
+    skill(cli.home / ".claude" / "skills", "shared", "Same everywhere")
+    skill(cli.repo / ".claude" / "skills", "shared", "Same everywhere")
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0)])
+    _, out = cli.json(path, "--host", "claude-code")
+    entries = [(e["name"], tuple(e["scopes"]), e["bytes"]) for e in out["skills"]["inventory"]]
+    generic = sorted(e for e in entries if e[0] == "generic")
+    assert [g[1] for g in generic] == [("user",), ("project",)] or [g[1] for g in generic] == [("project",), ("user",)]
+    by_scope = {g[1][0]: g[2] for g in generic}
+    assert by_scope["project"] > by_scope["user"]                       # the customised copy is the project one
+    assert [e[1] for e in entries if e[0] == "shared"] == [("project", "user")]
+
+
+def test_user_level_skills_are_not_labelled_project_when_the_repo_sits_under_home(cli, tmp_path):
+    repo = cli.home / "work" / "app"
+    repo.mkdir(parents=True)
+    skill(cli.home / ".claude" / "skills", "only-user", "x")
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0)])
+    _, out = cli.json(path, "--host", "claude-code", cwd=repo)
+    assert [e["scopes"] for e in out["skills"]["inventory"] if e["name"] == "only-user"] == [["user"]]

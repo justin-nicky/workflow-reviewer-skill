@@ -934,37 +934,43 @@ def emit(out, fmt, do_redact):
 # ---- skills, instruction files, degraded mode ---------------------------------------------
 
 def skill_dirs(host, repo):
+    """Skill folders the host loads, as (path, scope): user-level, system-wide or project."""
     home = Path.home()
-    parents = [repo, *list(repo.parents)[:4]]
+    parents = [p for p in [repo, *list(repo.parents)[:4]] if p != home]       # home holds user-level skills
+    project = lambda *rel: [(p.joinpath(*rel), "project") for p in parents]
     if host == "claude-code":
         cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude")
-        return [p / ".claude" / "skills" for p in parents] + [cfg / "skills"]
+        return project(".claude", "skills") + [(cfg / "skills", "user")]
     if host == "codex":
-        return ([p / ".agents" / "skills" for p in parents] + [home / ".agents" / "skills",
-                home / ".codex" / "skills", Path("/etc/codex/skills")])
+        return (project(".agents", "skills") + [(home / ".agents" / "skills", "user"),
+                (home / ".codex" / "skills", "user"), (Path("/etc/codex/skills"), "system")])
     if host == "cursor":
-        return ([repo / ".cursor" / "skills", home / ".cursor" / "skills"]
-                + [p / ".agents" / "skills" for p in parents] + [home / ".agents" / "skills",
-                   repo / ".claude" / "skills", home / ".claude" / "skills", repo / ".codex" / "skills"])
-    return [repo / ".kiro" / "skills", home / ".kiro" / "skills"]
+        return ([(repo / ".cursor" / "skills", "project"), (home / ".cursor" / "skills", "user")]
+                + project(".agents", "skills") + [(home / ".agents" / "skills", "user"),
+                   (repo / ".claude" / "skills", "project"), (home / ".claude" / "skills", "user"),
+                   (repo / ".codex" / "skills", "project")])
+    return [(repo / ".kiro" / "skills", "project"), (home / ".kiro" / "skills", "user")]
 
 
 def skill_inventory(host, repo):
-    seen, inventory = set(), []
-    for base in skill_dirs(host, repo):
+    """One entry per distinct (name, content); `scopes` says where its copies live."""
+    entries = {}
+    for base, scope in skill_dirs(host, repo):
         for md in sorted(base.glob("*/SKILL.md")):
             try:
                 data = md.read_bytes()
             except OSError:
                 continue
             key = (md.parent.name, hashlib.sha256(data).hexdigest())
-            if key in seen:
+            if key in entries:
+                if scope not in entries[key]["scopes"]:
+                    entries[key]["scopes"] = sorted(entries[key]["scopes"] + [scope])
                 continue
-            seen.add(key)
             m = re.search(r"^description:[ \t]*(.*)$", data.decode("utf-8", "replace"), re.M)
             desc = m.group(1).strip().strip("\"'") if m else ""
-            inventory.append({"name": md.parent.name, "description_chars": len(desc), "bytes": len(data)})
-    return inventory
+            entries[key] = {"name": md.parent.name, "description_chars": len(desc), "bytes": len(data),
+                            "scopes": [scope]}
+    return list(entries.values())
 
 
 def instruction_files(repo):
