@@ -866,6 +866,7 @@ JSON_KEY_RE = re.compile(rf"(?i)({SECRET_KEY}\\?[\"']\s*:\s*\\?[\"'])([^\"'\\]+)
 URL_CREDS_RE = re.compile(r"(\b[a-z][a-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+(@)", re.I)
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 HOME_RE = re.compile(r"(?:/Users|/home)/[^/\s\"'\\]+")
+WIN_HOME_RE = re.compile(r"[A-Za-z]:(?:\\{1,2})Users(?:\\{1,2})[^\\/\s\"']+")      # C:\Users\name, also JSON-escaped
 TOKEN_RE = re.compile(r"[A-Za-z0-9_+=\-]{24,}")
 
 
@@ -889,14 +890,15 @@ def _mask_token(m):
 def redact(text):
     home = str(Path.home())
     if len(home) > 1:
-        text = text.replace(home, "~")
+        for variant in (home.replace("\\", "\\\\"), home, Path.home().as_posix()):   # JSON-escaped first
+            text = text.replace(variant, "~")
     for pat in SECRET_PATTERNS:
         text = re.sub(pat, "[REDACTED]", text)
     text = URL_CREDS_RE.sub(r"\1[REDACTED]\2", text)
     text = KEY_VALUE_RE.sub(r"\1[REDACTED]", text)
     text = JSON_KEY_RE.sub(r"\1[REDACTED]", text)
     text = EMAIL_RE.sub("[EMAIL]", text)
-    text = HOME_RE.sub("~", text)
+    text = WIN_HOME_RE.sub("~", HOME_RE.sub("~", text))
     return TOKEN_RE.sub(_mask_token, text)
 
 

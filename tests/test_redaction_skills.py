@@ -236,3 +236,12 @@ def test_user_level_skills_are_not_labelled_project_when_the_repo_sits_under_hom
     path = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0)])
     _, out = cli.json(path, "--host", "claude-code", cwd=repo)
     assert [e["scopes"] for e in out["skills"]["inventory"] if e["name"] == "only-user"] == [["user"]]
+
+
+def test_windows_home_paths_are_masked_even_when_json_escapes_the_backslashes(cli, tmp_path):
+    text = r"open C:\Users\alice\secret\app.py and D:\Users\bob\work\x.py then src\app.py"
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user(text, 0)])
+    for fmt in ("json", "md"):
+        proc = cli.run(path, "--host", "claude-code", "--events", "0:0", fmt=fmt)
+        assert "alice" not in proc.stdout and "bob" not in proc.stdout, fmt
+        assert "app.py" in proc.stdout and "src" in proc.stdout, fmt
