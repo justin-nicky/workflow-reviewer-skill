@@ -19,7 +19,7 @@ Read the report. Ask for any finding or proposal ID in full. Applying a proposal
 
 ## Install
 
-Copy or symlink `skills/workflow-reviewer/` into your host's skill folder, or use `npx skills add <owner>/workflow-reviewer`.
+Copy or symlink `skills/workflow-reviewer/` into your host's skill folder, or use `npx skills add justin-nicky/workflow-reviewer`.
 
 | Host | Folder | Notes |
 |---|---|---|
