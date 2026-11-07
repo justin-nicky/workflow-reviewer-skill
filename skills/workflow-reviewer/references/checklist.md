@@ -1,6 +1,6 @@
 # Checklist
 
-Match findings against these patterns. Anything else is a **candidate new pattern**: flag it with evidence; it is merged here once two independent reports show it (new-pattern issue template).
+Match findings against these patterns. Anything outside them is still reported if the evidence supports it, as an ordinary item.
 
 ## Waste
 

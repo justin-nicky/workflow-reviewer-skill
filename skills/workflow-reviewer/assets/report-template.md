@@ -1,15 +1,46 @@
-# Workflow review
+# Workflow review: <scope in one line; task model and reviewer model>
 
-Fill every section in chat. About 80 lines in total. Do not write this to a file.
+**Bottom line:** <where the cost went + the single change that matters most; max 2 sentences, with the key number>
 
-1. **Header:** reviewer model and task model(s), host, coverage, drift status (and mapping source), lag note.
-2. **Summary:** biggest cost (with its number), biggest quality risk, top three proposals.
-3. **Where it went:** compact table of totals (tokens by type, API calls, tool calls by category, verify runs, time split) plus the most expensive turns and actors.
-4. **Findings:** at most 5 in full (ID, category, evidence, cause, cost, confidence, pattern/one-off); the rest one line each.
-5. **Skills audit:** one line per skill: verdict, evidence, confidence.
-6. **Proposals:** at most 3 in full, the rest one line each. Each: diff sketch, quality check (which mechanism it touches and why it still works), host impact, risk and how to notice it failing.
-7. **Rejected ideas:** each with the quality reason.
-8. **Not measurable here.**
-9. **Candidate new patterns** (if any), with evidence.
-10. **Drafted mapping** (only if drift happened), in a code block.
-11. **Closing:** "Ask for any ID in full." If there is a Gap: "Search for skills or host features that cover G1/G2?"
+## Metrics
+
+| Measure | Value |
+|---|---|
+| API calls | |
+| Output tokens | |
+| Cache read / write | |
+| Fresh input | |
+| Context at invocation | |
+| Tool calls | |
+| Time (active / waiting / tools) | |
+| Verify runs (before last edit) | |
+| Subagents | |
+| Interruptions | |
+| Coverage | <!-- row only on format drift or an unmeasurable metric; omit on a clean run --> |
+
+<!-- Use "not measurable on <host>" where the host lacks the data. -->
+
+## Do these (ranked by impact)
+
+### 1. <action> · impact H/M/L · effort H/M/L · risk H/M/L · confidence H/M/L · <host>
+
+**Why**
+- <cause: the quoted instruction or config, or a named gap, as one plain sentence>
+- **Cost:** <tokens or time, and what the number covers: this window only, or every session of a role; "not measurable" if so>
+- **Evidence:** <numbers and locations: event indices or file:line>
+
+**What to do**
+- <change: file + short diff sketch>
+- **Safe because:** <the quality mechanism it touches and why it still works>
+- **Watch for:** <the failure signal and how to notice it>
+
+<!-- Up to 5 items, same shape. -->
+
+## Skills audit
+
+- `<skill>` · <Keep | Improve | Merge or cut | Gap> · <evidence: event indices, sizes or quoted text>
+- G1 · Gap · <evidence>
+- No verdict: <N> other skills (not exercised in this task)
+
+Search for skills or host features that cover G1/G2?
+<!-- Closing question only when at least one Gap was found. -->

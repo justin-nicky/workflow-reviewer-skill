@@ -62,4 +62,4 @@ Transcript formats are internal and change between releases. A mapping fits only
 2. Run `--sample 20` for 20 redacted, truncated raw lines.
 3. Draft a **full override mapping** in the same TOML shape as `scripts/mappings/*.toml` (dotted paths, `[]` wildcards, `[k=v]` filters, equality matches only; no expressions).
 4. Re-run with `--mapping -` and pass the mapping on **stdin**, so nothing is written to disk.
-5. Confirm coverage is acceptable. In the report: say drift happened, mark metrics from the drafted mapping as **medium** confidence, include the mapping in a code block, and point to the format-drift issue template.
+5. Confirm coverage is acceptable. The report shows drift only in the Coverage row of the Metrics table, noting that metrics from the drafted mapping are **medium** confidence. Do not print the drafted mapping in the report.

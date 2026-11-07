@@ -10,9 +10,9 @@ Evidence comes from the script's `skills` section (loaded skills with detection 
 | **Improve** | Loaded, but steps skipped or repeated, its size out of proportion to its use, or ambiguous text that caused rework |
 | **Merge or cut** | Its content duplicates another skill or `AGENTS.md`/`CLAUDE.md` (a static fact), or a large always-on description that this task's evidence shows did not help |
 | **Gap** | The task needed a capability that no loaded skill covered, or a matching skill existed but did not trigger (a description mismatch) |
-| **No verdict** | Not exercised by this task. One task cannot prove a skill unnecessary |
+| **No verdict** | Not exercised by this task. One task cannot prove a skill unnecessary. Reported as a single aggregate line ("No verdict: N other skills"), not one line each |
 
-Each verdict cites its evidence (event indices, sizes, quoted text) and a confidence level: high = measured, medium = inferred, low = one example. In degraded mode only "Merge or cut" on duplicated text and "No verdict" are possible.
+Each verdict cites its evidence (event indices, sizes, quoted text). Label each Gap G1, G2, … so the closing question can refer to it. A verdict that leads to an action becomes an item in "Do these" and the skills line points to it. In degraded mode only "Merge or cut" on duplicated text and "No verdict" are possible.
 
 ## Opt-in research (only after the user says yes, only for listed Gaps)
 
