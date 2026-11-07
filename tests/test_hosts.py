@@ -146,9 +146,10 @@ def test_a_mapping_on_stdin_restores_coverage(cli, tmp_path):
 
 def test_mapping_values_are_inert(cli, tmp_path):
     marker = tmp_path / "pwned"
+    shown = marker.as_posix()                  # forward slashes: a Windows path would be a TOML escape
     evil = CUSTOM_MAPPING.replace('text = ["message.content"]',
-                                  f'text = ["__import__(\'os\').system(\'touch {marker}\')"]')
-    path = write_jsonl(tmp_path / "t.jsonl", [cc_user(f"$(touch {marker})", 0)])
+                                  f'text = ["__import__(\'os\').system(\'touch {shown}\')"]')
+    path = write_jsonl(tmp_path / "t.jsonl", [cc_user(f"$(touch {shown})", 0)])
     cli.json(path, "--host", "claude-code", "--mapping", "-", stdin=evil)
     assert not marker.exists()
 
