@@ -1,6 +1,6 @@
 # Cursor agent-transcript mapping (unofficial format). No tokens, timestamps, tool results or ids.
 host = "cursor"
-tested_versions = "unknown (no version marker in transcripts)"
+tested_versions = "version not recorded"
 type_path = ["role", "type"]
 
 # The parent's assistant text links to each subagent by id: [description](<subagent-id>).

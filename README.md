@@ -25,7 +25,7 @@ Copy or symlink `skills/workflow-reviewer/` into your host's skill folder, or us
 |---|---|---|
 | Claude Code | `~/.claude/skills/` or `.claude/skills/` | `disable-model-invocation: true` keeps it explicit-only |
 | Codex | `.agents/skills/` or `~/.agents/skills/` | `agents/openai.yaml` sets `allow_implicit_invocation: false` |
-| Cursor | `.cursor/skills/` | Install here, not `.agents/skills/`: a forum report says the explicit-only field is ignored there. Reduced capabilities: no tokens, timestamps or tool results |
+| Cursor | `.cursor/skills/` or `.agents/skills/` | `disable-model-invocation: true` (checked in both folders). Reduced capabilities: no tokens, tool results or ids; interruptions, turn errors and a coarse wall time are reported |
 | Kiro | `.kiro/skills/` | Degraded mode (working tree and repo records only). Explicit-only is not documented for Kiro, so it may occasionally trigger on its own |
 
 ## Example
@@ -55,7 +55,7 @@ Each mapping was checked against one real transcript in phase 0 (nothing from th
 |---|---|
 | Claude Code | 2.1.295 to 2.1.309, 2.1.321 |
 | Codex | 0.137.0-alpha.4 to 0.142.2, 0.162.0-alpha.17.2 (Codex Desktop, `desktop` variant) (`cli_version`) |
-| Cursor | unknown (no version marker in transcripts) |
+| Cursor | version not recorded (transcripts carry no version) |
 
 Wider version coverage comes from drift reports: when a host changes its format, the script warns and the agent drafts an override mapping (see Format drift). CI runs pytest on macOS, Linux and Windows with Python 3.11 and 3.12.
 

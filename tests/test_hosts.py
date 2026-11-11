@@ -315,7 +315,7 @@ def test_tested_versions_and_observed_version_per_host(cli, tmp_path):
     assert out["coverage"]["transcript_version"] == "0.142.2"
     cu = write_jsonl(tmp_path / "c.jsonl", [cu_user("go")])
     _, out = cli.json(cu, "--host", "cursor")
-    assert out["coverage"]["tested_versions"] == "unknown (no version marker in transcripts)"
+    assert out["coverage"]["tested_versions"] == "version not recorded"
     assert out["coverage"]["transcript_version"] is None
 
 
