@@ -429,3 +429,16 @@ def test_without_a_matching_spawn_the_brief_falls_back_to_the_first_message(cli,
         dx_meta("s1", cli.repo, parent="p1", agent_path="/root/zzz"), dx_task_started("s-t1", 6), dx_user("short", 7)]))
     _, out = cli.json(parent, sub, "--host", "codex")
     assert out["actors"][1]["brief_bytes"] == 5
+
+
+def test_token_method_names_what_was_done_for_each_host_and_source(cli, tmp_path):
+    from fixtures.builders import cc_assistant, cc_user, usage
+    records = token_session(cli, tmp_path, dx_usage("resp_a", 100, 0, 5, 4))
+    assert records["method"] == "token_usage_record, deduplicated by response_id"
+    from fixtures.builders import cx_tokens
+    fallback = token_session(cli, tmp_path / "f", with_counts=(cx_tokens(100, 0, 5, 4),))
+    assert fallback["method"] == "token_count totals (no token_usage_record rows)"
+    classic = write_jsonl(tmp_path / "rollout-c.jsonl", [cx_meta("i", cli.repo), cx_user("go", 1), cx_tokens(1, 0, 1, 2)])
+    assert cli.json(classic, "--host", "codex")[1]["tokens"]["method"] == "token_count totals, a repeated total counted once"
+    cc = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0), cc_assistant("m", 1, usage=usage(1, 1))])
+    assert cli.json(cc, "--host", "claude-code")[1]["tokens"]["method"].startswith("deduplicated by message id")

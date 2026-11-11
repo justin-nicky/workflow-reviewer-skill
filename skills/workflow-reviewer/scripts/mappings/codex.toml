@@ -32,6 +32,7 @@ version = "payload.cli_version"
 # Variant "classic": rollouts of the Codex CLI up to 0.142.x. A user turn is an event_msg user_message.
 [[variants]]
 name = "classic"
+token_method = "token_count totals, a repeated total counted once"
 versions = "0.137.0 to 0.142.2"
 
 # A real user turn is an event_msg user_message. The user-role response items Codex
@@ -112,6 +113,8 @@ role = "ignore"
 # response_item messages; commands are JavaScript sent to the `exec` tool.
 [[variants]]
 name = "desktop"
+token_method = "token_usage_record, deduplicated by response_id"
+token_method_fallback = "token_count totals (no token_usage_record rows)"
 versions = "0.162.0 and newer"
 requires = { fields = ["ordinal"] }
 

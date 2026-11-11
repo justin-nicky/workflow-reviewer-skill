@@ -616,7 +616,12 @@ def tool_summary(events, custom_patterns, has_results):
 def tokens_for(events, mapping):
     if not mapping["capabilities"].get("has_tokens"):
         return {"not_measurable": "host records no token usage"}
-    return token_summary(events)
+    summary = token_summary(events)
+    used_fallback = any(e["usage"] and e["usage_fallback"] for e in events)
+    method = mapping.get("token_method_fallback") if used_fallback else mapping.get("token_method")
+    if method:                                  # the mapping says what its rows really are
+        summary["method"] = method
+    return summary
 
 
 def analyse(events, stats, mapping, custom_patterns=()):
