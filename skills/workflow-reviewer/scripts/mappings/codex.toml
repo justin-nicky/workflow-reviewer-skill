@@ -162,6 +162,12 @@ usage_cache_read = "payload.info.last_token_usage.cached_input_tokens"
 usage_input_includes_cache = true
 usage_dedupe_key = "payload.info.total_token_usage"
 
+# Only user-initiated aborts count as interruptions; other abort reasons stay ignored (and visible).
+[[variants.records]]
+match = { type = "event_msg", "payload.type" = "turn_aborted", "payload.reason" = "interrupted" }
+role = "meta"
+interrupt = true
+
 # Known housekeeping, listed by name so a new record type still shows up as drift.
 [[variants.records]]
 match = { type = ["session_meta", "turn_context", "world_state", "inter_agent_communication_metadata", "compacted"] }

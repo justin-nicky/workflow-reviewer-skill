@@ -199,3 +199,22 @@ def test_usage_records_add_up_to_the_final_token_count_total(cli, tmp_path):
                            with_counts=(cx_tokens(1500, 1200, 30, 6, total=final),))
     assert tokens["fresh_input"] + tokens["cache_read"] == final["input_tokens"]
     assert tokens["cache_read"] == final["cached_input_tokens"] and tokens["output"] == final["output_tokens"]
+
+
+# ---- interruptions -----------------------------------------------------------------------------
+
+from fixtures.builders import dx_aborted  # noqa: E402
+
+
+def test_an_interrupted_turn_is_counted_with_its_turn_number(cli, tmp_path):
+    path = session(cli, tmp_path, dx_task_started("t1", 1), dx_user("one", 2), dx_assistant("a", 3),
+                   dx_task_started("t2", 4), dx_user("two", 5), dx_aborted(6, "interrupted"))
+    _, out = cli.json(path, "--host", "codex")
+    assert out["interruptions"] == {"count": 1, "turns": [2]}
+
+
+def test_other_abort_reasons_are_not_interruptions_but_stay_visible(cli, tmp_path):
+    path = session(cli, tmp_path, dx_task_started("t1", 1), dx_user("one", 2), dx_aborted(3, "replaced"))
+    _, out = cli.json(path, "--host", "codex")
+    assert out["interruptions"]["count"] == 0
+    assert out["coverage"]["ignored_types"]["event_msg/turn_aborted"] == 1
