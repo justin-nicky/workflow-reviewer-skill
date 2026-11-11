@@ -396,3 +396,12 @@ def test_no_note_when_the_host_has_no_version_to_compare(cli, tmp_path):
     cu = write_jsonl(tmp_path / "c.jsonl", [cu_user("go")])
     _, out = cli.json(cu, "--host", "cursor")
     assert out["coverage"]["version_note"] is None
+
+
+def test_claude_code_relocated_and_tools_used_records_are_ignored_not_unseen(cli, tmp_path):
+    extras = [{"type": t, "sessionId": "s1", "timestamp": at(1)} for t in ("relocated", "tools-used")]
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0), *extras, cc_assistant("m", 5, usage=usage(1, 1))])
+    code, out = cli.json(path, "--host", "claude-code")
+    assert code == 0
+    assert out["coverage"]["drift"]["unseen_types"] == {}
+    assert out["coverage"]["ignored_types"] == {"relocated": 1, "tools-used": 1}
