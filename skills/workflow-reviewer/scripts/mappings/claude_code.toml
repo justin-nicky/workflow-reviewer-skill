@@ -1,7 +1,7 @@
 # Claude Code transcript mapping. Data only: dotted paths, [] wildcards, [k=v] filters.
 host = "claude-code"
 variant = "default"
-tested_versions = "2.1.295 to 2.1.309"
+tested_versions = "2.1.295 to 2.1.309, 2.1.321"
 type_path = "type"
 
 interruption_prefixes = ["[Request interrupted by user"]

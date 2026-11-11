@@ -53,7 +53,7 @@ Each mapping was checked against one real transcript in phase 0 (nothing from th
 
 | Host | `tested_versions` |
 |---|---|
-| Claude Code | 2.1.295 to 2.1.309 |
+| Claude Code | 2.1.295 to 2.1.309, 2.1.321 |
 | Codex | 0.137.0-alpha.4 to 0.142.2 (`cli_version`) |
 | Cursor | unknown (no version marker in transcripts) |
 
