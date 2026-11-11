@@ -58,6 +58,16 @@ Records the mapping deliberately skips are counted per type in `coverage.ignored
 
 A mapping file may hold several `[[variants]]`, each with a `name` and its own `[[variants.records]]` (anything else it omits is inherited from the top level). The script picks the variant whose shape fits the transcript: the best classified ratio among variants whose optional `requires = { types = [...], fields = [...] }` markers appear. An optional `versions = "low to high"` range only breaks ties between equal shapes, so a transcript with no version string still resolves. `coverage.variant` names the choice; with several variants `coverage.variant_choice` shows each score and why one won. A mapped field may also list alternative paths (`["message.id", "id"]`): the first one present in the record wins.
 
+### Codex variants
+
+`codex.toml` has two variants. `classic` is the Codex CLI shape up to 0.142.x. `desktop` is Codex Desktop 0.162.x, whose records all carry an `ordinal` (its `requires` marker). In the desktop shape:
+
+- A turn is one `event_msg/task_started` (rule flag `turn_start = true`). User-role messages starting with `<environment_context>`, `<external_codex_apps_open_page>` or `<skill>` are injected context, counted under `window.non_turn_user_records`.
+- Commands are JavaScript sent to the `exec` tool. A rule's `call_command_regex` pulls each `cmd:"..."` out of it (name `exec_command`); an `exec` without a `cmd` stays a plain tool call. Exit codes are read from `exit_code=N` in the output text.
+- Tokens come from `token_usage_record`, deduplicated by `response_id`. `token_count` rules marked `usage_fallback = true` count only when a rollout has no `token_usage_record` rows.
+- A subagent rollout names its parent in `payload.source.subagent.thread_spawn.parent_thread_id`; matching the parent's `payload.id` gives `link = "parent_thread_id"`. When it also has `forked_from_id`, records before `subagent_history_start_ordinal` are copied parent history and are skipped (reported per actor as `history_from_ordinal` and `history_records_skipped`).
+- Skills offered are the names under `### Available skills` in the developer message (`offered_from`, `offered_block`, `offered_item`).
+
 ## Drift procedure
 
 Transcript formats are internal and change between releases. A mapping fits only if coverage is at least 90% of lines, required fields are present (usage when `has_tokens`, tool names), and unseen record types are listed.
