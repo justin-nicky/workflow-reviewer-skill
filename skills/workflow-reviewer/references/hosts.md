@@ -48,7 +48,7 @@ Records the mapping deliberately skips are counted per type in `coverage.ignored
 | Code | Meaning |
 |---|---|
 | 0 | OK |
-| 2 | Format drift (output still printed from what parses) |
+| 2 | Format drift (output still printed from what parses), or a mapping that cannot be used: a `schema_version` newer than the script supports, an unsupported `[container]` kind, a hostile identifier, or a database table or column the mapping names that is missing |
 | 3 | Ambiguous session; list printed |
 | 4 | Unsupported input (`.zst`) |
 | 5 | Python older than 3.11; nothing was read |
@@ -67,6 +67,19 @@ A mapping file may hold several `[[variants]]`, each with a `name` and its own `
 - Tokens come from `token_usage_record`, deduplicated by `response_id`. `token_count` rules marked `usage_fallback = true` count only when a rollout has no `token_usage_record` rows.
 - A subagent rollout names its parent in `payload.source.subagent.thread_spawn.parent_thread_id`; matching the parent's `payload.id` gives `link = "parent_thread_id"`. When it also has `forked_from_id`, records before `subagent_history_start_ordinal` are copied parent history and are skipped (reported per actor as `history_from_ordinal` and `history_records_skipped`).
 - Skills offered are the names under `### Available skills` in the developer message (`offered_from`, `offered_block`, `offered_item`).
+
+## Storage kinds and schema_version
+
+A mapping says how its host *stores* records (`[container] kind`) apart from how it *reads* them (the `[[records]]` rules).
+
+- `jsonl` (the default; existing mappings need no change): a JSONL file, a session folder, subagent files.
+- `sqlite`: sessions in a database. The mapping names tables and columns, never SQL: `[container.sessions]` (`table`, `id`, `cwd`, `created`, `last_activity`, `head`), `[container.nodes]` (`table`, `session`, `id`, `parent`, `payload`, `created`) and optionally `[container.subagent_heads]` (`table`, `session`, `agent`, `head`). The script builds the SELECTs itself and reads only the chosen session's rows. Nodes are walked from the session's head through their parent ids; nodes off that chain (drafts) are skipped and counted in `coverage.notes` ("off-chain nodes: N"). Each subagent head is its own chain and actor, with link `subagent_heads`. Each record is the decoded payload, and its row columns are reachable as `$row.<column>` (for example `timestamp = ["ts", "$row.created_at"]`). Session choice follows the jsonl rules: working directory, most recent activity, `--session-id`, exit 3 when ambiguous (the list shows the id, the masked directory and times only).
+- Safety: every identifier must be a plain identifier (letters, digits, underscore) before anything is opened; the file is opened read-only (`mode=ro`, not `immutable`, so a running app's WAL data is included); names are checked against `sqlite_master` and `table_info`; virtual and FTS tables are refused; values are passed as parameters. A missing table or column is drift (exit 2) and is named.
+- `json_document` is reserved for hosts that keep JSON documents; it is not built yet and exits 2.
+
+Every mapping declares a top-level `schema_version = 1`. A mapping without one is treated as 1 and adds a `coverage.notes` entry. A version newer than the script supports exits 2 with "mapping schema N is newer than this script supports (max M)". This also applies to agent-drafted overrides passed with `--mapping`.
+
+**Adding a host:** copy the nearest mapping, keep `schema_version = 1`, choose the `[container]` kind, and bump `schema_version` only when the mapping format itself changes in a way old scripts cannot read.
 
 ## Drift procedure
 
