@@ -120,7 +120,7 @@ usage_output = "message.usage.output_tokens"
 """
     code, out = run(cli, tmp_path, single, [user(), old_assistant(4)])
     assert code == 0 and out["tokens"]["output"] == 4
-    assert out["coverage"]["variant"] is None
+    assert out["coverage"]["variant"] == "default"
     assert "variant_choice" not in out["coverage"]
 
 

@@ -173,7 +173,8 @@ def choose_variant(raw, lines, want_score=False):
     variants = resolve_variants(raw)
     if len(variants) == 1:
         score = score_variant(variants[0], lines)["ratio"] if want_score else None
-        return variants[0], {"variant": variants[0].get("variant"), "score": score, "scores": None, "reason": None}
+        return variants[0], {"variant": variants[0].get("variant") or "default", "score": score,
+                             "scores": None, "reason": None}
     scored = [(m, score_variant(m, lines)) for m in variants]
     qualified = [ms for ms in scored if not ms[1]["missing"]]
     pool = qualified or scored
