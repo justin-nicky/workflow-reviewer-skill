@@ -290,3 +290,43 @@ def test_long_paths_do_not_leak_a_username_fragment_when_shortened(cli, tmp_path
 def test_long_paths_under_the_real_home_do_not_leak_a_fragment(cli, tmp_path, length):
     out = edit_keys(cli, tmp_path, long_path(str(cli.home) + "/", "/", length + len(str(cli.home))))
     assert_no_username_fragment(out, cli.home.name)
+
+
+# ---- key=value redaction matches whole secret-like key names only --------------------------
+
+KEEP = [
+    "has_tokens=false", "has_tokens: true", "tokens (has_tokens=false)", "max_tokens=4096",
+    "input_tokens: 1200", "output_tokens=88", "cache_read_tokens = 5", "tokens=12", "token_count=7",
+    "secrets_found: 0", "passwords_checked=3", "api_keys_listed: 2", "SECRET_FLAG=on", "TOKEN_LIMIT=100",
+]
+MASK = [
+    ("PASSWORD=hunter2", "hunter2"), ("DB_PASSWORD: s3cr3t9", "s3cr3t9"), ("PGPASSWORD=pgpass1", "pgpass1"),
+    ("GITHUB_TOKEN=notahexvalue1", "notahexvalue1"), ("MY_SECRET_TOKEN = 'tiny'", "tiny"),
+    ("api_key: abc123", "abc123"), ("X-Api-Key: headerval9", "headerval9"), ("client_secret=cs-value-1", "cs-value-1"),
+    ("AWS_SECRET_ACCESS_KEY=awsvalue77", "awsvalue77"), ('{"accessToken": "camel-val-1"}', "camel-val-1"),
+    ('{"private_key": "pk-val-2"}', "pk-val-2"),
+]
+
+
+def test_script_output_keys_and_counters_are_never_redacted(cli, tmp_path):
+    for text in KEEP:                       # one per run: event text is cut at 200 characters
+        path = write_jsonl(tmp_path / "s.jsonl", [cc_user(f"status {text} done", 0)])
+        proc = cli.run(path, "--host", "claude-code", "--events", "0:0")
+        assert text in proc.stdout, text
+        assert "[REDACTED]" not in proc.stdout, text
+
+
+def test_cursor_report_keeps_its_not_measurable_line_intact(cli, tmp_path):
+    from fixtures.builders import cu_assistant, cu_user
+    path = write_jsonl(tmp_path / "c.jsonl", [cu_user("go"), cu_assistant("ok")])
+    proc = cli.run(path, "--host", "cursor", fmt="md")
+    assert "tokens (has_tokens=false)" in proc.stdout
+    assert "[REDACTED]" not in proc.stdout
+
+
+def test_whole_secret_key_names_are_still_masked(cli, tmp_path):
+    for text, secret in MASK:
+        path = write_jsonl(tmp_path / "s.jsonl", [cc_user(f"run {text} now", 0)])
+        proc = cli.run(path, "--host", "claude-code", "--events", "0:0")
+        assert secret not in proc.stdout, text
+        assert "[REDACTED]" in proc.stdout, text

@@ -931,7 +931,9 @@ SECRET_PATTERNS = [
     r"AKIA[0-9A-Z]{16}", r"AIza[0-9A-Za-z_\-]{30,}", r"Bearer\s+[A-Za-z0-9._\-]{16,}",
     r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]*",
 ]
-SECRET_KEY = r"\w*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_KEY|ACCESS_KEY)\w*"
+# A secret-like name ENDS with one of these words (DB_PASSWORD, GITHUB_TOKEN, accessToken, X-Api-Key).
+# Nothing may follow it, so has_tokens, max_tokens and token_count are ordinary names, not secrets.
+SECRET_KEY = r"\w*(?:PASSWORD|PASSWD|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)"
 KEY_VALUE_RE = re.compile(                      # KEY=value, KEY: value, KEY = 'value'
     rf"(?i)({SECRET_KEY}\s*[=:]\s*\\?[\"']?)('[^']*'|[^\s\"',;&\\{{\[][^\s\"',;&\\]*)")
 JSON_KEY_RE = re.compile(rf"(?i)({SECRET_KEY}\\?[\"']\s*:\s*\\?[\"'])([^\"'\\]+)")   # "key": "value"
