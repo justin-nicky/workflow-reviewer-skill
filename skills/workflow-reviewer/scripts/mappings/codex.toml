@@ -43,6 +43,7 @@ match = { type = "response_item", "payload.type" = "message", "payload.role" = "
 role = "meta"
 offered_from = ["payload.content[].text"]
 offered_block = "(?s)### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
+offered_section = "### Available skills|<skills_instructions>"
 offered_item = "(?m)^- ([\\w:.\\-]+): "
 
 # User-role response items are injected context, never turns; kept (as meta) so a
@@ -122,6 +123,7 @@ match = { type = "response_item", "payload.type" = "message", "payload.role" = "
 role = "meta"
 offered_from = ["payload.content[].text"]
 offered_block = "(?s)### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
+offered_section = "### Available skills|<skills_instructions>"
 offered_item = "(?m)^- ([\\w:.\\-]+): "
 
 [[variants.records]]

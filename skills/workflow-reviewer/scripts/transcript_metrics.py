@@ -239,7 +239,7 @@ def parse_lines(lines, mapping, actor="main"):
     fields = mapping.get("fields", {})
     events, last_total = [], None
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
-             "truncated_last_line": False, "version": None}
+             "truncated_last_line": False, "version": None, "skill_list_unparsed": 0}
     prefixes = mapping.get("not_a_turn_prefixes", [])
     lines = [ln.strip() for ln in lines if ln.strip()]
     for n, raw in enumerate(lines):
@@ -276,7 +276,10 @@ def parse_lines(lines, mapping, actor="main"):
               "spawned_agent": get_first(obj, rule.get("spawned_agent")),
               "offered": get_first(obj, rule.get("offered_skills"))}
         if rule.get("offered_from"):                       # a skill list written as prose: block, then one name per item
-            ev["offered"] = skill_names_in(get_text(obj, rule["offered_from"]), rule["offered_block"], rule["offered_item"])
+            listing = get_text(obj, rule["offered_from"])
+            ev["offered"] = skill_names_in(listing, rule["offered_block"], rule["offered_item"])
+            if not ev["offered"] and re.search(rule.get("offered_section", "(?!)"), listing):
+                stats["skill_list_unparsed"] += 1       # the message has a skills section, but no names came out
         if ev["role"] == "user":
             if rule.get("turn") is False:
                 ev["non_turn"] = rule.get("non_turn_reason", "rule")
@@ -1507,7 +1510,7 @@ def main(argv=None):
     mapping, variant_info = choose_variant(raw_mapping, first_lines)
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
-             "truncated_last_line": False, "version": None}
+             "truncated_last_line": False, "version": None, "skill_list_unparsed": 0}
     seen_files, metas, main_ids = set(), {}, set()
     sub_cfg = mapping.get("subagents") or {}
     for path in paths:
@@ -1537,6 +1540,7 @@ def main(argv=None):
             stats["lines"] += st["lines"]
             stats["classified"] += st["classified"]
             stats["truncated_last_line"] |= st["truncated_last_line"]
+            stats["skill_list_unparsed"] += st["skill_list_unparsed"]
             stats["version"] = stats["version"] or st["version"]
             for bucket in ("unseen_types", "ignored_types"):
                 for k, v in st[bucket].items():
@@ -1596,6 +1600,8 @@ def main(argv=None):
                                "capabilities": mapping["capabilities"], "last_record_ts": iso(last_ts),
                                "lag_note": lag, "window_note": window_note,
                                "truncated_last_line": stats["truncated_last_line"]}
+            if stats["skill_list_unparsed"]:
+                out["coverage"]["warnings"] = ["skill list found but not parsed; offered list may be incomplete"]
             if variant_info["scores"]:
                 out["coverage"]["variant_choice"] = {"scores": variant_info["scores"],
                                                      "reason": variant_info["reason"]}

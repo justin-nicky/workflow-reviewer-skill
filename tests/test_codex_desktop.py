@@ -354,3 +354,20 @@ def test_several_cmds_in_one_exec_are_separate_commands_with_their_own_verify_ch
     _, ev = cli.json(session(cli, tmp_path / "e", dx_task_started("t1", 1), dx_exec(js, "c1", 3)),
                      "--host", "codex", "--events", "0:9")
     assert [c["command"] for e in ev["events"] for c in e["calls"]] == ["pytest -q", "ls"]
+
+
+def listing_session(cli, tmp_path, text):
+    path = session(cli, tmp_path, cx_developer(text, 0), dx_task_started("t1", 1), dx_user("go", 2), dx_assistant("a", 3))
+    return cli.json(path, "--host", "codex")[1]
+
+def test_a_skill_list_that_is_found_but_not_parsed_is_warned_about(cli, tmp_path):
+    changed = "<skills_instructions>\n## Skills\n* hello: Say hello.\n* imagegen: Make images.\n</skills_instructions>"
+    out = listing_session(cli, tmp_path, changed)
+    assert out["coverage"]["warnings"] == ["skill list found but not parsed; offered list may be incomplete"]
+    empty_items = "<skills_instructions>\n### Available skills\n* hello - Say hello.\n</skills_instructions>"
+    out = listing_session(cli, tmp_path / "b", empty_items)
+    assert out["coverage"]["warnings"] == ["skill list found but not parsed; offered list may be incomplete"]
+
+def test_a_parsed_skill_list_or_no_skill_list_gives_no_warning(cli, tmp_path):
+    assert "warnings" not in listing_session(cli, tmp_path, LISTING)["coverage"]
+    assert "warnings" not in listing_session(cli, tmp_path / "b", "<collaboration_mode>plain</collaboration_mode>")["coverage"]
