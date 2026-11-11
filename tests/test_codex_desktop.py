@@ -158,3 +158,44 @@ def test_a_single_quoted_cmd_is_read_too(cli, tmp_path):
     js = "const r = await tools.exec_command({cmd:'echo \\'hi\\' && pytest -q'});\ntext(r.output);\n"
     out = run_cmds(cli, tmp_path, (dx_exec(js, "c1", 3), dx_exec_output("c1", 4)))
     assert out["tools"]["by_category"] == {"shell": 1} and out["verify"]["total"] == 1
+
+
+# ---- tokens: token_usage_record, one per response -----------------------------------------------
+
+from fixtures.builders import dx_usage  # noqa: E402
+
+
+def token_session(cli, tmp_path, *usage_records, with_counts=()):
+    return cli.json(session(cli, tmp_path, dx_task_started("t1", 1), dx_user("go", 2), dx_assistant("a", 3),
+                            *usage_records, *with_counts), "--host", "codex")[1]["tokens"]
+
+
+def test_token_usage_records_are_summed_with_cache_split_out(cli, tmp_path):
+    tokens = token_session(cli, tmp_path, dx_usage("resp_a", 1000, 700, 50, 4), dx_usage("resp_b", 1500, 1200, 30, 5))
+    assert (tokens["fresh_input"], tokens["cache_read"], tokens["output"], tokens["api_calls"]) == (600, 1900, 80, 2)
+    assert tokens["calls_without_id"] == 0
+
+
+def test_a_response_id_seen_twice_is_counted_once(cli, tmp_path):
+    tokens = token_session(cli, tmp_path, dx_usage("resp_a", 1000, 700, 50, 4), dx_usage("resp_a", 1000, 700, 50, 5))
+    assert (tokens["fresh_input"], tokens["cache_read"], tokens["output"], tokens["api_calls"]) == (300, 700, 50, 1)
+
+
+def test_token_count_is_used_only_when_there_are_no_usage_records(cli, tmp_path):
+    from fixtures.builders import cx_tokens
+    counts = (cx_tokens(1000, 700, 50, 4, total={"input_tokens": 1000}),
+              cx_tokens(1500, 1200, 30, 5, total={"input_tokens": 2500}))
+    fallback = token_session(cli, tmp_path, with_counts=counts)
+    assert (fallback["fresh_input"], fallback["cache_read"], fallback["output"]) == (600, 1900, 80)
+    both = token_session(cli, tmp_path / "b", dx_usage("resp_a", 1000, 700, 50, 4), dx_usage("resp_b", 1500, 1200, 30, 5),
+                         with_counts=counts)
+    assert (both["fresh_input"], both["cache_read"], both["output"], both["api_calls"]) == (600, 1900, 80, 2)
+
+
+def test_usage_records_add_up_to_the_final_token_count_total(cli, tmp_path):
+    from fixtures.builders import cx_tokens
+    final = {"input_tokens": 2500, "cached_input_tokens": 1900, "output_tokens": 80}
+    tokens = token_session(cli, tmp_path, dx_usage("resp_a", 1000, 700, 50, 4), dx_usage("resp_b", 1500, 1200, 30, 5),
+                           with_counts=(cx_tokens(1500, 1200, 30, 6, total=final),))
+    assert tokens["fresh_input"] + tokens["cache_read"] == final["input_tokens"]
+    assert tokens["cache_read"] == final["cached_input_tokens"] and tokens["output"] == final["output_tokens"]

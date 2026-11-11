@@ -267,6 +267,7 @@ def parse_lines(lines, mapping, actor="main"):
               "ts": parse_ts(get_first(obj, rule.get("timestamp", fields.get("timestamp")))),
               "event_id": get_first(obj, fields.get("event_id")), "non_turn": None,
               "interrupted": bool(rule.get("interrupt")), "turn_start": bool(rule.get("turn_start")),
+              "usage_fallback": bool(rule.get("usage_fallback")),
               "spawned_agent": get_first(obj, rule.get("spawned_agent")),
               "offered": get_first(obj, rule.get("offered_skills"))}
         if ev["role"] == "user":
@@ -313,6 +314,10 @@ def parse_lines(lines, mapping, actor="main"):
             if any(u.values()):
                 ev["usage"] = u
         events.append(ev)
+    if any(e["usage"] and not e["usage_fallback"] for e in events):
+        for e in events:                    # primary usage records exist: fallback rows would count twice
+            if e["usage_fallback"]:
+                e["usage"] = None
     return events, stats
 
 

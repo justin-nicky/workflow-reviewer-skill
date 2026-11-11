@@ -94,6 +94,9 @@ requires = { fields = ["ordinal"] }
 # Injected context sent as user-role messages; not what the user typed.
 not_a_turn_prefixes = ["<environment_context>", "<external_codex_apps_open_page>", "<skill>"]
 
+[variants.capabilities]
+has_ids = true
+
 # One turn per task_started.
 [[variants.records]]
 match = { type = "event_msg", "payload.type" = "task_started" }
@@ -138,13 +141,21 @@ result_id = "call_id"
 result_text = ["output"]
 result_exit_code_regex = "exit_code=(-?\\d+)"
 
+# One record per model response; the response id deduplicates.
 [[variants.records]]
 match = { type = "token_usage_record" }
 role = "meta"
+msg_id = "payload.response_id"
+usage_input = "payload.usage.input_tokens"
+usage_output = "payload.usage.output_tokens"
+usage_cache_read = "payload.usage.cached_input_tokens"
+usage_input_includes_cache = true
 
+# Cumulative totals: used only when the rollout has no token_usage_record rows.
 [[variants.records]]
 match = { type = "event_msg", "payload.type" = "token_count" }
 role = "meta"
+usage_fallback = true
 usage_input = "payload.info.last_token_usage.input_tokens"
 usage_output = "payload.info.last_token_usage.output_tokens"
 usage_cache_read = "payload.info.last_token_usage.cached_input_tokens"
