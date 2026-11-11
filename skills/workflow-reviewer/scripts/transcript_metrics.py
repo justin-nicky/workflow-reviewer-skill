@@ -249,7 +249,8 @@ def parse_lines(lines, mapping, actor="main"):
               "ts": parse_ts(get_first(obj, rule.get("timestamp", fields.get("timestamp")))),
               "event_id": get_first(obj, fields.get("event_id")), "non_turn": None,
               "interrupted": bool(rule.get("interrupt")),
-              "spawned_agent": get_first(obj, rule.get("spawned_agent"))}
+              "spawned_agent": get_first(obj, rule.get("spawned_agent")),
+              "offered": get_first(obj, rule.get("offered_skills"))}
         if ev["role"] == "user":
             if rule.get("turn") is False:
                 ev["non_turn"] = rule.get("non_turn_reason", "rule")
@@ -1227,7 +1228,24 @@ def invoked_skills(events, host):
     return found
 
 
-def skills_summary(events, host, repo):
+TOP_OFFERED = 100
+
+
+def offered_skills(events):
+    """Skill names the host offered the main agent this session (None when it records no listing)."""
+    names, seen = [], False
+    for ev in events:
+        if ev["actor"] == "main" and isinstance(ev.get("offered"), list):
+            seen = True
+            names += [n for n in ev["offered"] if isinstance(n, str) and n not in names]
+    return names if seen else None
+
+
+def is_offered(name, offered):
+    return name in offered or any(o.endswith(":" + name) for o in offered)
+
+
+def skills_summary(events, host, repo, offered=None):
     results = {r["id"]: r for e in events for r in e["results"] if r["id"] is not None}
     loaded = {}
     for name, how, size in invoked_skills(events, host):
@@ -1256,9 +1274,16 @@ def skills_summary(events, host, repo):
     shown = inventory
     if len(inventory) > TOP_ITEMS:       # keep the largest always-on descriptions
         shown = sorted(inventory, key=lambda i: (-i["description_chars"], i["name"]))[:TOP_ITEMS]
-    return {"loaded": list(loaded.values())[:TOP_LOADED_SKILLS], "loaded_total": len(loaded),
-            "inventory": shown, "inventory_total": len(inventory),
-            "instruction_files": instruction_files(repo)}
+    summary = {"loaded": list(loaded.values())[:TOP_LOADED_SKILLS], "loaded_total": len(loaded),
+               "used": list(loaded)[:TOP_LOADED_SKILLS]}
+    if offered is None:
+        summary["offered"] = {"not_measurable": "the host records no list of skills offered to the model"}
+    else:
+        summary["offered"] = {"total": len(offered), "names": offered[:TOP_OFFERED]}
+        summary["used_not_offered"] = [n for n in loaded if not is_offered(n, offered)][:TOP_LOADED_SKILLS]
+        summary["offered_note"] = "a skill used but not offered is normal for explicit-only skills"
+    summary.update(inventory=shown, inventory_total=len(inventory), instruction_files=instruction_files(repo))
+    return summary
 
 
 def _git(repo, *args):
@@ -1481,7 +1506,7 @@ def main(argv=None):
             out["turns"] = cap_rows(all_turns, TOP_ROWS, "turn", "turns", "other")
             out["actors"] = cap_rows(actor_rows(window, mapping, args.verify_patterns, links, metas), TOP_ROWS,
                                      "actor", "actors", "other", keep="main")
-            out["skills"] = skills_summary(window, host, repo)
+            out["skills"] = skills_summary(window, host, repo, offered_skills(events))
     emit(out, args.format, redact_on)
     return 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
 

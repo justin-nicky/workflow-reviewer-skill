@@ -89,6 +89,12 @@ call_name = "name"
 call_input = "input"
 call_id = "id"
 
+# The skills offered to the model this session (explicit-only skills are absent from this list).
+[[records]]
+match = { type = "attachment", "attachment.type" = "skill_listing" }
+role = "meta"
+offered_skills = "attachment.names"
+
 [[records]]
 match = { type = ["summary", "system", "file-history-snapshot", "queue-operation", "attachment", "progress", "last-prompt", "custom-title", "agent-name", "permission-mode", "pr-link", "api-request", "api-request-blob", "api-request-shape", "mode", "cost-state", "atis-latch", "bridge-session", "file-history-delta", "relocated", "tools-used"] }
 role = "ignore"
