@@ -725,7 +725,10 @@ def coarse_time_summary(events):
     if len(stamps) < 2:
         return {"not_measurable": "fewer than two prompts carry a timestamp"}
     na = {"not_measurable": "host records no timestamps beyond the prompt clock"}
-    return {"wall_s": round(max(stamps) - min(stamps)), "precision": COARSE_LABEL, "tool_s": na, "waiting_s": na}
+    wall = round(max(stamps) - min(stamps))
+    # minute precision: each prompt time may be off by up to a minute either way
+    return {"wall_s": wall, "wall_range_s": [max(0, wall - 60), wall + 60], "precision": COARSE_LABEL,
+            "tool_s": na, "waiting_s": na}
 
 
 def time_summary(events, idle):
@@ -1313,6 +1316,16 @@ def _fmt(v):
     return str(v)
 
 
+def coarse_time_view(time):
+    """Markdown form of a coarse wall time: minutes, never a raw number of seconds."""
+    low, high = time["wall_range_s"]
+    if high <= 60:
+        wall = "under 1 min"
+    else:
+        wall = f"about {round(time['wall_s'] / 60)} min (between {round(low / 60)}\u2013{round(high / 60)} min)"
+    return {"wall": wall, **{k: v for k, v in time.items() if k not in ("wall_s", "wall_range_s")}}
+
+
 def render_md(out):
     lines = ["# workflow-reviewer metrics"]
     if out.get("header"):
@@ -1324,7 +1337,9 @@ def render_md(out):
         if key == "header":
             continue
         lines.append(f"## {key.replace('_', ' ').capitalize()}")
-        if isinstance(value, dict):
+        if key == "time" and isinstance(value, dict) and "wall_range_s" in value:
+            lines += [f"- {k}: {_fmt(v)}" for k, v in coarse_time_view(value).items()]
+        elif isinstance(value, dict):
             lines += [f"- {k}: {_fmt(v)}" for k, v in value.items()]
         elif isinstance(value, list):
             lines += [f"- {_fmt(v)}" for v in value]

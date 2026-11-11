@@ -55,9 +55,13 @@ def test_cursor_first_chat_with_a_subagent(cli):
     assert out["actors"][1]["link"] == "markdown_link"
     assert out["verify"]["total"] == 1 and out["tools"]["errors"] is None
     assert out["time"]["wall_s"] == 180 and out["time"]["precision"] == COARSE
+    assert out["time"]["wall_range_s"] == [120, 240]
 
 
 def test_cursor_second_chat_uses_a_skill_automatically(cli):
     code, out = cli.json(one("cursor-chat2/*/"), "--host", "cursor")
     assert code == 0 and out["window"]["turns_total"] == 3
+    assert out["time"]["wall_range_s"] == [0, 60]
+    md = cli.run(one("cursor-chat2/*/"), "--host", "cursor", fmt="md").stdout
+    assert "under 1 min" in md
     assert [(s["name"], s["detected_by"]) for s in out["skills"]["loaded"]] == [("mango-greeting", "read SKILL.md")]

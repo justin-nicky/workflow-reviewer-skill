@@ -130,3 +130,31 @@ def test_an_attached_skill_that_is_also_read_stays_attached(cli, tmp_path):
 def test_reading_a_file_that_merely_sits_under_a_skills_folder_is_not_a_use(cli, tmp_path):
     out = run(cli, tmp_path, cu_user("x"), cu_assistant("ok", [("Read", {"path": "/x/.cursor/skills/hello/notes.md"})]))
     assert loaded(out) == {}
+
+
+# ---- coarse time is a range: minute precision means +/- one minute -----------------------------------------
+
+def test_coarse_wall_time_comes_with_its_true_range(cli, tmp_path):
+    out = run(cli, tmp_path, stamped("a", "11:40 AM"), stamped("b", "11:43 AM"))
+    assert out["time"]["wall_s"] == 180 and out["time"]["wall_range_s"] == [120, 240]
+
+
+def test_the_same_minute_gives_zero_to_sixty_and_markdown_says_under_a_minute(cli, tmp_path):
+    out = run(cli, tmp_path, stamped("a", "11:52 AM"), stamped("b", "11:52 AM"))
+    assert out["time"]["wall_s"] == 0 and out["time"]["wall_range_s"] == [0, 60]
+    md = cli.run(write_jsonl(tmp_path / "m.jsonl", [stamped("a", "11:52 AM"), stamped("b", "11:52 AM")]),
+                 "--host", "cursor", fmt="md").stdout
+    assert "under 1 min" in md and "wall_s" not in md
+
+
+def test_markdown_says_about_n_minutes_and_the_range(cli, tmp_path):
+    md = cli.run(write_jsonl(tmp_path / "m.jsonl", [stamped("a", "11:40 AM"), stamped("b", "11:43 AM")]),
+                 "--host", "cursor", fmt="md").stdout
+    assert "about 3 min" in md and "2–4 min" in md and "wall_s" not in md
+
+
+def test_hosts_with_real_timestamps_have_no_range(cli, tmp_path):
+    from fixtures.builders import cc_assistant, cc_user, usage
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0), cc_assistant("m", 90, usage=usage(1, 1))])
+    _, out = cli.json(path, "--host", "claude-code")
+    assert "wall_range_s" not in out["time"] and out["time"]["wall_s"] == 90
