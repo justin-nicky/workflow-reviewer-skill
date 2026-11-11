@@ -1,0 +1,10 @@
+{"role": "user", "message": {"content": [{"type": "text", "text": "<timestamp>Monday, Jan 05, 2026, 09:12 AM (UTC+0)</timestamp>\n<user_query>\nlorem ipsum dolor sit amet con\n</user_query>"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolo"}, {"type": "tool_use", "name": "Read", "input": {"path": "~/project/.cursor/skills/mango-greeting/SKILL.md"}}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "lorem ipsu"}]}}
+{"type": "turn_ended", "status": "success"}
+{"role": "user", "message": {"content": [{"type": "text", "text": "<timestamp>Monday, Jan 05, 2026, 09:12 AM (UTC+0)</timestamp>\n<user_query>\nlorem ipsum dolor sit amet con\n</user_query>"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "lorem ipsum dolor sit amet consectetur lorem "}]}}
+{"type": "turn_ended", "status": "success"}
+{"role": "user", "message": {"content": [{"type": "text", "text": "<timestamp>Monday, Jan 05, 2026, 09:12 AM (UTC+0)</timestamp>\n<user_query>\nlorem ipsum dolor sit amet con\n</user_query>"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "lorem ipsum dolor sit amet consectetur lorem i"}]}}
+{"type": "turn_ended", "status": "success"}
