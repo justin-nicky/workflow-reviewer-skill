@@ -106,3 +106,55 @@ def test_the_reviewer_invocation_turn_is_cut_whole_including_its_task_started(cl
                    dx_task_started("t2", 4), dx_user(ENV, 5), dx_user("$workflow-reviewer", 6), dx_assistant("x", 7))
     _, out = cli.json(path, "--host", "codex")
     assert out["window"]["reviewer_invocation_found"] and out["window"]["turns_total"] == 1
+
+
+# ---- commands: JavaScript sent to the exec tool ------------------------------------------------
+
+from fixtures.builders import dx_exec, dx_exec_cmd, dx_exec_output  # noqa: E402
+
+
+def run_cmds(cli, tmp_path, *pairs):
+    """pairs: (exec record, output record) in order, inside one turn."""
+    records = [dx_task_started("t1", 1), dx_user("go", 2)]
+    for pair in pairs:
+        records += list(pair)
+    return cli.json(session(cli, tmp_path, *records, dx_assistant("done", 90)), "--host", "codex")[1]
+
+
+def test_exec_javascript_yields_its_cmd_as_a_shell_command(cli, tmp_path):
+    out = run_cmds(cli, tmp_path,
+                   (dx_exec_cmd("ls -la", "c1", 3), dx_exec_output("c1", 4, "x")),
+                   (dx_exec_cmd("python3 -m pytest -q", "c2", 5), dx_exec_output("c2", 6, "1 passed", 0)))
+    assert out["tools"]["by_category"] == {"shell": 2}
+    assert out["verify"]["total"] == 1 and out["verify"]["by_kind"] == {"test": 1}
+
+
+def test_a_cmd_with_escaped_quotes_and_newlines_is_decoded(cli, tmp_path):
+    cmd = 'python3 -c "print(1)"\npytest -q'
+    out = run_cmds(cli, tmp_path, (dx_exec_cmd(cmd, "c1", 3), dx_exec_output("c1", 4)))
+    _, ev = cli.json(session(cli, tmp_path / "e", dx_task_started("t1", 1), dx_exec_cmd(cmd, "c1", 3),
+                             dx_exec_output("c1", 4)), "--host", "codex", "--events", "0:9")
+    call = next(c for e in ev["events"] for c in e["calls"])
+    assert call["command"] == cmd and out["verify"]["total"] == 1
+
+
+def test_an_exec_without_a_cmd_is_a_tool_call_but_not_a_command(cli, tmp_path):
+    patch = dx_exec('const patch = "*** Begin Patch";\ntext(await tools.apply_patch(patch));\n', "c1", 3)
+    out = run_cmds(cli, tmp_path, (patch, dx_exec_output("c1", 4, "{}")),
+                   (dx_exec_cmd("ls", "c2", 5), dx_exec_output("c2", 6)))
+    assert out["tools"]["total"] == 2 and out["tools"]["by_category"] == {"other": 1, "shell": 1}
+
+
+def test_exit_codes_come_from_the_output_text_and_nonzero_is_an_error(cli, tmp_path):
+    out = run_cmds(cli, tmp_path,
+                   (dx_exec_cmd("true", "c1", 3), dx_exec_output("c1", 4, "", 0)),
+                   (dx_exec_cmd("python3 missing.py", "c2", 5), dx_exec_output("c2", 6, "no such file", 2)),
+                   (dx_exec_cmd("ls", "c3", 7, report_exit=False), dx_exec_output("c3", 8, "a b")))
+    assert out["tools"]["errors"] == 1
+    assert out["tools"]["largest_outputs"][0]["bytes"] > 0
+
+
+def test_a_single_quoted_cmd_is_read_too(cli, tmp_path):
+    js = "const r = await tools.exec_command({cmd:'echo \\'hi\\' && pytest -q'});\ntext(r.output);\n"
+    out = run_cmds(cli, tmp_path, (dx_exec(js, "c1", 3), dx_exec_output("c1", 4)))
+    assert out["tools"]["by_category"] == {"shell": 1} and out["verify"]["total"] == 1

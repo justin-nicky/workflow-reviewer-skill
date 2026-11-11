@@ -126,6 +126,9 @@ calls = "payload"
 call_name = "name"
 call_input = ["arguments", "input"]
 call_id = "call_id"
+# The `exec` tool takes JavaScript that calls tools.exec_command({cmd:"…"}).
+call_command_regex = "cmd\\s*:\\s*(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')"
+call_command_name = "exec_command"
 
 [[variants.records]]
 match = { type = "response_item", "payload.type" = ["function_call_output", "custom_tool_call_output"] }
@@ -133,6 +136,7 @@ role = "user"
 results = "payload"
 result_id = "call_id"
 result_text = ["output"]
+result_exit_code_regex = "exit_code=(-?\\d+)"
 
 [[variants.records]]
 match = { type = "token_usage_record" }

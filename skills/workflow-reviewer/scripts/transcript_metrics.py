@@ -212,6 +212,23 @@ def _int(v):
     return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
 
 
+def js_string(literal):
+    """The text of a quoted JavaScript string literal (double or single quotes)."""
+    body = literal[1:-1]
+    if literal[0] == "'":
+        body = body.replace("\\'", "'").replace('"', '\\"')
+    try:
+        return json.loads('"' + body + '"') if literal[0] == "'" else json.loads(literal)
+    except ValueError:
+        return body
+
+
+def command_from_script(script, pattern):
+    """Commands a tool script passes as cmd:"…" (pattern's group 1 is the quoted literal), newline-joined."""
+    found = [js_string(m.group(1)) for m in re.finditer(pattern, script)]
+    return "\n".join(found) if found else None
+
+
 def parse_lines(lines, mapping, actor="main"):
     """Return (events, stats). Each line is classified by the first matching rule."""
     fields = mapping.get("fields", {})
@@ -266,9 +283,12 @@ def parse_lines(lines, mapping, actor="main"):
                         inp = json.loads(inp)
                     except ValueError:
                         pass
-                ev["calls"].append({"name": get_first(c, rule.get("call_name")) or "",
-                                    "input": inp,
-                                    "id": get_first(c, rule.get("call_id"))})
+                name = get_first(c, rule.get("call_name")) or ""
+                if rule.get("call_command_regex") and isinstance(inp, str):
+                    cmd = command_from_script(inp, rule["call_command_regex"])
+                    if cmd is not None:               # a script that runs a shell command is that command
+                        name, inp = rule.get("call_command_name", name), {"cmd": cmd}
+                ev["calls"].append({"name": name, "input": inp, "id": get_first(c, rule.get("call_id"))})
         if "results" in rule:
             for r in get_all(obj, rule["results"]):
                 code = get_first(r, rule.get("result_exit_code"))
