@@ -840,7 +840,8 @@ def actor_rows(events, mapping, custom, links=None, metas=None):
         models = [metas[actor]["model"]] if metas.get(actor, {}).get("model") \
             else sorted({e["model"] for e in evs if e["model"]})
         rows.append({"actor": actor, "models": models,
-                     "brief_bytes": len(first["text"].encode()) if first else 0,
+                     "brief_bytes": links.get(actor, {}).get("brief_bytes",
+                                                             len(first["text"].encode()) if first else 0),
                      "tokens": row_tokens(evs, mapping), "tool_calls": tools["total"],
                      "verify_runs": verify["total"],
                      "tool_s": round(tool_seconds(evs)) if mapping["capabilities"].get("has_timestamps") else None})
@@ -1027,6 +1028,7 @@ def read_subagent_meta(file, mapping, lines=()):
     first = first_record(lines) if cfg.get("parent_id") else None
     if first is not None:
         found["parent"] = get_first(first, cfg["parent_id"])
+        found["agent_path"] = get_first(first, cfg.get("agent_path")) if cfg.get("agent_path") else None
     return found
 
 
@@ -1061,6 +1063,20 @@ def skip_copied_history(lines, mapping):
                 + ("; session_meta read for linking only" if len(copied) < len(dropped) else ""))
     return kept, {"from_ordinal": start, "skipped": len(dropped), "note": note,
                   "version": get_first(first, mapping.get("fields", {}).get("version"))}
+
+
+def spawn_for(events, mapping, agent_path):
+    """(event, brief size in bytes) of the spawn call that named this agent path, or None."""
+    cfg = mapping.get("subagents") or {}
+    if not (agent_path and cfg.get("spawn_key") and cfg.get("brief_key")):
+        return None
+    for ev in events:
+        for c in ev["calls"]:
+            inp = c["input"]
+            if ev["actor"] == "main" and categorise(c["name"]) == "agent" and isinstance(inp, dict) \
+                    and inp.get(cfg["spawn_key"]) == agent_path and isinstance(inp.get(cfg["brief_key"]), str):
+                return ev, len(inp[cfg["brief_key"]].encode("utf-8"))
+    return None
 
 
 def link_subagents(events, metas, mapping, placed, main_ids=()):
@@ -1105,6 +1121,11 @@ def link_subagents(events, metas, mapping, placed, main_ids=()):
             info[actor] = {"link": "markdown_link", "call_id": None}
         elif metas.get(actor, {}).get("parent") in main_ids and main_ids:
             info[actor] = {"link": "parent_thread_id", "call_id": None}
+            spawn = spawn_for(events, mapping, metas[actor].get("agent_path"))
+            if spawn is not None:                 # the spawn call's message is the brief; only its size is kept
+                info[actor]["brief_bytes"] = spawn[1]
+                for e in evs:
+                    e["turn"] = spawn[0]["turn"]
         elif actor in placed:
             info[actor] = {"link": "brief", "call_id": None}
         else:

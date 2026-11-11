@@ -408,3 +408,24 @@ def test_classic_turn_context_model_is_mapped_too(cli, tmp_path):
                                                       cx_user("go", 2), cx_tokens(1, 0, 1, 3)])
     _, out = cli.json(path, "--host", "codex")
     assert out["actors"][0]["models"] == ["gpt-old"]
+
+
+def test_subagent_brief_bytes_come_from_the_spawn_message(cli, tmp_path):
+    message = "x" * 321 + "é"                         # 322 characters, 323 bytes
+    parent = session(cli, tmp_path, dx_task_started("t1", 1), dx_user("go", 2),
+                     dx_spawn("sp1", 3, "/root/a", "other"), dx_spawn("sp2", 4, "/root/b", message),
+                     dx_usage("resp_p", 100, 0, 5, 5), name="rollout-parent.jsonl")
+    sub = write_jsonl(tmp_path / f"{SUB_STEM}.jsonl", desktop([
+        dx_meta("s1", cli.repo, parent="p1", agent_path="/root/b"), dx_task_started("s-t1", 6),
+        dx_user("short", 7), dx_usage("resp_s", 100, 0, 5, 8)]))
+    _, out = cli.json(parent, sub, "--host", "codex")
+    assert out["actors"][1]["brief_bytes"] == 323
+    assert "x" * 20 not in str(out)                         # bytes only, never the text
+
+
+def test_without_a_matching_spawn_the_brief_falls_back_to_the_first_message(cli, tmp_path):
+    parent = session(cli, tmp_path, dx_task_started("t1", 1), dx_user("go", 2), name="rollout-parent.jsonl")
+    sub = write_jsonl(tmp_path / f"{SUB_STEM}.jsonl", desktop([
+        dx_meta("s1", cli.repo, parent="p1", agent_path="/root/zzz"), dx_task_started("s-t1", 6), dx_user("short", 7)]))
+    _, out = cli.json(parent, sub, "--host", "codex")
+    assert out["actors"][1]["brief_bytes"] == 5

@@ -14,6 +14,10 @@ parent_id = "payload.source.subagent.thread_spawn.parent_thread_id"
 forked_from = "payload.forked_from_id"
 history_start = "payload.subagent_history_start_ordinal"
 ordinal = "ordinal"
+# The spawn_agent call that created a subagent carries its path and its brief.
+agent_path = "payload.agent_path"
+spawn_key = "task_name"
+brief_key = "message"
 
 [capabilities]
 has_tokens = true

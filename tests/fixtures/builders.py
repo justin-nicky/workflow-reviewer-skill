@@ -147,13 +147,16 @@ def desktop(records):
     return [{**r, "ordinal": r.get("ordinal", n)} if isinstance(r, dict) else r for n, r in enumerate(records)]
 
 
-def dx_meta(session_id, cwd, t=0, version=DX_VERSION, parent=None, forked_from=None, history_start=None):
+def dx_meta(session_id, cwd, t=0, version=DX_VERSION, parent=None, forked_from=None, history_start=None,
+            agent_path=None):
     payload = {"id": session_id, "cwd": str(cwd), "cli_version": version, "originator": "Codex Desktop",
                "source": "vscode", "thread_source": "user"}
     if parent:
         payload["source"] = {"subagent": {"thread_spawn": {"parent_thread_id": parent, "depth": 1}}}
         payload["thread_source"] = "subagent"
         payload["parent_thread_id"] = parent
+    if agent_path:
+        payload["agent_path"] = agent_path
     if forked_from:
         payload["forked_from_id"] = forked_from
     if history_start is not None:
@@ -214,8 +217,8 @@ def dx_usage(response_id, inp, cached, out, t):
                                           "turn_token_usage": usage, "thread_token_usage": usage}, t)
 
 
-def dx_spawn(call_id, t):
-    args = json.dumps({"task_name": "/root/worker", "fork_turns": "all", "message": "do the thing"})
+def dx_spawn(call_id, t, task_name="/root/worker", message="do the thing"):
+    args = json.dumps({"task_name": task_name, "fork_turns": "all", "message": message})
     return cx_line("response_item", {"type": "function_call", "name": "spawn_agent", "namespace": "collaboration",
                                      "arguments": args, "call_id": call_id}, t)
 
