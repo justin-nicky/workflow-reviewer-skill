@@ -388,3 +388,23 @@ def test_the_skipped_records_line_says_what_was_copied_and_what_was_read_for_lin
     assert sub["history_note"] == ("copied history skipped: 4 records (ordinals 1–4); "
                                    "session_meta read for linking only")
     assert sub["history_records_skipped"] == 5
+
+
+# ---- 1d: models, subagent brief bytes, token method labels ---------------------------------------------
+
+def test_models_come_from_turn_context_for_each_actor(cli, tmp_path):
+    parent = session(cli, tmp_path, dx_task_started("t1", 1), dx_turn_context(2, "gpt-main"), dx_user("go", 3),
+                     dx_spawn("sp1", 4), dx_usage("resp_p", 100, 0, 5, 5), name="rollout-parent.jsonl")
+    sub = write_jsonl(tmp_path / f"{SUB_STEM}.jsonl", desktop([
+        dx_meta("s1", cli.repo, parent="p1"), dx_task_started("s-t1", 6), dx_turn_context(7, "gpt-sub"),
+        dx_user("brief", 8), dx_usage("resp_s", 100, 0, 5, 9)]))
+    _, out = cli.json(parent, sub, "--host", "codex")
+    assert [a["models"] for a in out["actors"]] == [["gpt-main"], ["gpt-sub"]]
+
+
+def test_classic_turn_context_model_is_mapped_too(cli, tmp_path):
+    from fixtures.builders import cx_line
+    path = write_jsonl(tmp_path / "rollout-c.jsonl", [cx_meta("i", cli.repo), cx_line("turn_context", {"model": "gpt-old"}, 1),
+                                                      cx_user("go", 2), cx_tokens(1, 0, 1, 3)])
+    _, out = cli.json(path, "--host", "codex")
+    assert out["actors"][0]["models"] == ["gpt-old"]

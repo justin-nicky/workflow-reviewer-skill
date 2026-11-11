@@ -1119,7 +1119,7 @@ def _event_keys(events):
         key = ev["event_id"]
         if key is None:
             base = json.dumps([ev["role"], ev["text"], [(c["name"], c["input"], c["id"]) for c in ev["calls"]],
-                               [r["id"] for r in ev["results"]], ev["msg_id"], ev["usage"], ev["turn_start"],
+                               [r["id"] for r in ev["results"]], ev["msg_id"], ev["usage"], ev["model"], ev["turn_start"],
                                ev["interrupted"]], sort_keys=True, default=str)
             n = ordinal[(ev["file"], base)] = ordinal.get((ev["file"], base), -1) + 1
             key = (base, n)

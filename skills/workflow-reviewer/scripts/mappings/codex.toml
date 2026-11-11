@@ -90,6 +90,12 @@ match = { type = "event_msg", "payload.type" = "turn_aborted", "payload.reason" 
 role = "meta"
 interrupt = true
 
+# The model each turn ran with.
+[[variants.records]]
+match = { type = "turn_context" }
+role = "meta"
+model = "payload.model"
+
 [[variants.records]]
 match = { type = ["session_meta", "turn_context", "event_msg", "compacted"] }
 role = "ignore"
@@ -187,9 +193,15 @@ match = { type = "event_msg", "payload.type" = "turn_aborted", "payload.reason" 
 role = "meta"
 interrupt = true
 
+# The model each turn ran with.
+[[variants.records]]
+match = { type = "turn_context" }
+role = "meta"
+model = "payload.model"
+
 # Known housekeeping, listed by name so a new record type still shows up as drift.
 [[variants.records]]
-match = { type = ["session_meta", "turn_context", "world_state", "inter_agent_communication_metadata", "compacted"] }
+match = { type = ["session_meta", "world_state", "inter_agent_communication_metadata", "compacted"] }
 role = "ignore"
 
 [[variants.records]]

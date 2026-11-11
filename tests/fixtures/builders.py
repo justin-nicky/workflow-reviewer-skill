@@ -224,8 +224,11 @@ def dx_world_state(t):
     return cx_line("world_state", {"full": True, "state": {"model": "m"}}, t)
 
 
-def dx_turn_context(t):
-    return cx_line("turn_context", {"turn_id": "t1", "cwd": "/repo"}, t)
+def dx_turn_context(t, model=None):
+    payload = {"turn_id": "t1", "cwd": "/repo"}
+    if model:
+        payload["model"] = model
+    return cx_line("turn_context", payload, t)
 
 
 def dx_item_completed(t):
