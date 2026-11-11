@@ -61,3 +61,12 @@ def test_no_listing_means_not_measurable_not_empty(cli, tmp_path):
     cu = write_jsonl(tmp_path / "c.jsonl", [cu_user("go"), cu_assistant("hi")])
     _, out = cli.json(cu, "--host", "cursor")
     assert "not_measurable" in out["skills"]["offered"]
+
+
+def test_events_label_a_skill_listing_without_its_names(cli, tmp_path):
+    path = session(tmp_path, cc_user("go", 5))
+    _, out = cli.json(path, "--host", "claude-code", "--events", "0:0")
+    row = out["events"][0]
+    assert row["role"] == "meta"
+    assert row["text"] == f"skill listing ({len(NAMES)} names)"
+    assert not any(n in str(row) for n in NAMES)

@@ -767,8 +767,11 @@ def event_view(ev, limit=200):
         if paths:
             item["paths"] = paths
         calls.append(item)
+    text = ev["text"][:limit]
+    if isinstance(ev.get("offered"), list):               # a skill listing: say how long, never list the names
+        text = f"skill listing ({len(ev['offered'])} names)"
     return {"i": ev["i"], "actor": ev["actor"], "turn": ev["turn"], "role": ev["role"],
-            "ts": iso(ev["ts"]), "text": ev["text"][:limit], "calls": calls, "results": ev["results"]}
+            "ts": iso(ev["ts"]), "text": text, "calls": calls, "results": ev["results"]}
 
 
 # ---- transcript discovery --------------------------------------------------------------
