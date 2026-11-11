@@ -1,3 +1,5 @@
+import json
+
 from fixtures.builders import (bash, cc_assistant, cc_tool_result, cc_user, usage, write_jsonl)
 from test_window import three_turns
 
@@ -209,3 +211,65 @@ def test_codex_dollar_syntax_invocation_ends_the_window(cli, tmp_path):
     _, out = cli.json(write_jsonl(tmp_path / "rollout-x.jsonl", records), "--host", "codex")
     assert out["window"]["reviewer_invocation_found"] is True
     assert out["tokens"]["output"] == 100
+
+
+# ---- subagent records never create main turns, on any host ------------------------------------
+
+def cursor_session(tmp_path):
+    from fixtures.builders import cu_assistant, cu_turn_ended, cu_user
+    sid = tmp_path / "abc123"
+    main = write_jsonl(sid / "abc123.jsonl", [
+        cu_user("first task"), cu_assistant("ok"), cu_turn_ended(),
+        cu_user("second task"),
+        cu_assistant(calls=[("CallDynamicTool", {"toolName": "Task", "prompt": "run the checks please"})]),
+        cu_turn_ended(),
+    ])
+    sub = write_jsonl(sid / "subagents" / "sub-1.jsonl", [
+        cu_user("run the checks please"), cu_assistant(calls=[("Shell", {"command": "npm test"})])])
+    return main, sub
+
+
+def assert_two_main_turns(out):
+    assert out["window"]["turns_total"] == 2
+    assert out["verify"]["total"] == 1
+    assert [a["actor"] for a in out["actors"]] == ["main", "subagent:sub-1"]
+
+
+def test_cursor_subagent_brief_is_not_a_main_turn_however_the_files_are_passed(cli, tmp_path):
+    main, sub = cursor_session(tmp_path)
+    for args in ([main], [main, sub], [sub, main], [main.parent]):
+        _, out = cli.json(*args, "--host", "cursor")
+        assert_two_main_turns(out)
+
+
+def test_cursor_subagent_twin_outside_the_subagents_folder_is_still_not_a_main_turn(cli, tmp_path):
+    main, sub = cursor_session(tmp_path)
+    twin = write_jsonl(tmp_path / "twin.jsonl", [json.loads(l) for l in sub.read_text().splitlines()])
+    for args in ([main, twin], [twin, main]):
+        _, out = cli.json(*args, "--host", "cursor")
+        assert out["window"]["turns_total"] == 2, args
+        assert out["verify"]["total"] == 1
+
+
+def test_claude_code_subagent_file_passed_explicitly_is_not_a_main_turn(cli, tmp_path):
+    main = write_jsonl(tmp_path / "proj" / "s1.jsonl", [
+        cc_user("first task", 0, uuid="u1"), cc_assistant("m1", 1, usage=usage(1, 1), uuid="a1"),
+        cc_user("second task", 20, uuid="u2"), cc_assistant("m2", 21, usage=usage(1, 1), uuid="a2")])
+    sub = write_jsonl(tmp_path / "proj" / "s1" / "subagents" / "sub-1.jsonl", [
+        cc_user("sub brief", 22, uuid="su"), cc_assistant("sm", 23, usage=usage(1, 5), uuid="sa")])
+    for args in ([main], [main, sub], [sub, main]):
+        _, out = cli.json(*args, "--host", "claude-code")
+        assert out["window"]["turns_total"] == 2, args
+        assert out["tokens"]["output"] == 7, args           # the subagent counted once
+
+
+def test_codex_subagent_rollout_is_not_a_main_turn(cli, tmp_path):
+    from fixtures.builders import cx_line, cx_meta, cx_tokens, cx_user
+    main = write_jsonl(tmp_path / "rollout-main.jsonl", [
+        cx_meta("p", cli.repo), cx_user("first task", 1), cx_user("second task", 20), cx_tokens(1, 0, 1, 21)])
+    sub_meta = cx_line("session_meta", {"id": "c", "cwd": str(cli.repo), "cli_version": "0.142.2",
+                                        "source": {"subagent": {"thread_spawn": {"parent_thread_id": "p"}}}}, 22)
+    sub = write_jsonl(tmp_path / "rollout-sub.jsonl", [sub_meta, cx_user("sub brief", 23), cx_tokens(1, 0, 5, 24)])
+    for args in ([main], [main, sub], [sub, main]):
+        _, out = cli.json(*args, "--host", "codex")
+        assert out["window"]["turns_total"] == 2, args

@@ -780,6 +780,17 @@ def main_transcript(folder):
     return rollouts[0] if len(rollouts) == 1 else None
 
 
+def is_subagent_file(path, first_line, mapping):
+    """A subagent transcript passed on its own: it sits in a subagents/ folder, or its first record says so."""
+    if path.parent.name == "subagents":
+        return True
+    marker = mapping.get("subagent_marker")
+    try:
+        return bool(marker and get_first(json.loads(first_line), marker))
+    except ValueError:
+        return False
+
+
 def spawn_text(call):
     inp = call["input"]
     return " ".join(v for v in inp.values() if isinstance(v, str)) if isinstance(inp, dict) else ""
@@ -805,9 +816,9 @@ def place_subagents(events):
     return out
 
 
-def dedupe(events):
-    """Drop events already seen in another file (forked sessions, duplicated subagents)."""
-    first_file, ordinal, kept = {}, {}, []
+def _event_keys(events):
+    """A stable identity per event: its id, or its content plus how many identical ones the file had before."""
+    ordinal, keys = {}, []
     for ev in events:
         key = ev["event_id"]
         if key is None:
@@ -815,7 +826,27 @@ def dedupe(events):
                               sort_keys=True, default=str)
             n = ordinal[(ev["file"], base)] = ordinal.get((ev["file"], base), -1) + 1
             key = (base, n)
-        if first_file.setdefault(key, ev["file"]) != ev["file"]:
+        keys.append(key)
+    return keys
+
+
+def dedupe(events):
+    """Drop events already seen in another file (forked sessions, duplicated subagents).
+
+    A main-actor file whose every event also sits in a subagent file is that subagent passed
+    on its own, so it is dropped whole: subagent records never become main turns.
+    """
+    keys = _event_keys(events)
+    sub_keys = {k for k, ev in zip(keys, events) if ev["actor"] != "main"}
+    by_file = {}
+    for k, ev in zip(keys, events):
+        by_file.setdefault(ev["file"], []).append(k)
+    twins = {f for f, ks in by_file.items()
+             if ks and all(k in sub_keys for k in ks)
+             and all(ev["actor"] == "main" for ev in events if ev["file"] == f)}
+    first_file, kept = {}, []
+    for key, ev in zip(keys, events):
+        if ev["file"] in twins or first_file.setdefault(key, ev["file"]) != ev["file"]:
             continue
         kept.append(ev)
     return kept
@@ -1226,11 +1257,17 @@ def main(argv=None):
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
              "truncated_last_line": False, "version": None}
+    seen_files = set()
     for path in paths:
+        own_sub = is_subagent_file(path, read_lines(path)[0], mapping)
         for file in [path, *expand_subagents(path)]:
-            actor = "main" if file is path else f"subagent:{file.stem}"
+            if file.resolve() in seen_files:
+                continue                                # e.g. a subagent passed and also found beside its parent
+            seen_files.add(file.resolve())
+            main_file = file is path and not own_sub
+            actor = "main" if main_file else f"subagent:{file.stem}"
             lines = read_lines(file)
-            if file is path:
+            if main_file:
                 raw += lines
             ev, st = parse_lines(lines, mapping, actor)
             for e in ev:

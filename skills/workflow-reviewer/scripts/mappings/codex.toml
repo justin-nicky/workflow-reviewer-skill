@@ -3,6 +3,9 @@ host = "codex"
 tested_versions = "0.137.0-alpha.4 to 0.142.2 (cli_version)"
 type_path = ["type", "payload.type"]
 
+# A rollout whose first record has this field is a subagent's, never the main conversation.
+subagent_marker = "payload.source.subagent"
+
 [capabilities]
 has_tokens = true
 has_timestamps = true
