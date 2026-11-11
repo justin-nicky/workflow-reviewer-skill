@@ -248,7 +248,8 @@ def parse_lines(lines, mapping, actor="main"):
               "usage": None, "calls": [], "results": [],
               "ts": parse_ts(get_first(obj, rule.get("timestamp", fields.get("timestamp")))),
               "event_id": get_first(obj, fields.get("event_id")), "non_turn": None,
-              "interrupted": bool(rule.get("interrupt"))}
+              "interrupted": bool(rule.get("interrupt")),
+              "spawned_agent": get_first(obj, rule.get("spawned_agent"))}
         if ev["role"] == "user":
             if rule.get("turn") is False:
                 ev["non_turn"] = rule.get("non_turn_reason", "rule")
@@ -734,17 +735,22 @@ def turn_rows(events, mapping, custom):
     return rows
 
 
-def actor_rows(events, mapping, custom):
+def actor_rows(events, mapping, custom, links=None, metas=None):
     rows = []
+    links, metas = links or {}, metas or {}
     for actor in dict.fromkeys(e["actor"] for e in events):
         evs = [e for e in events if e["actor"] == actor]
         tools, verify = tool_summary(evs, custom, mapping["capabilities"].get("has_tool_results", False))
         first = next((e for e in evs if e["role"] == "user" and e["text"].strip()), None)
-        rows.append({"actor": actor, "models": sorted({e["model"] for e in evs if e["model"]}),
+        models = [metas[actor]["model"]] if metas.get(actor, {}).get("model") \
+            else sorted({e["model"] for e in evs if e["model"]})
+        rows.append({"actor": actor, "models": models,
                      "brief_bytes": len(first["text"].encode()) if first else 0,
                      "tokens": row_tokens(evs, mapping), "tool_calls": tools["total"],
                      "verify_runs": verify["total"],
                      "tool_s": round(tool_seconds(evs)) if mapping["capabilities"].get("has_timestamps") else None})
+        if actor in links:
+            rows[-1]["link"] = links[actor]["link"]
     return rows
 
 
@@ -874,6 +880,7 @@ def spawn_text(call):
 def place_subagents(events):
     """Without timestamps, put each subagent's events right after the call that spawned it (matched by brief)."""
     out = [e for e in events if e["actor"] == "main"]
+    placed = set()
     subs = {}
     for e in events:
         if e["actor"] != "main":
@@ -885,10 +892,58 @@ def place_subagents(events):
         if pos is None:
             out += evs
             continue
+        placed.add(evs[0]["actor"])
         while pos + 1 < len(out) and out[pos + 1]["actor"] != "main":
             pos += 1
         out[pos + 1:pos + 1] = evs
-    return out
+    return out, placed
+
+
+def read_subagent_meta(file, mapping):
+    """The spawning call's id and the picked model from a subagent's sidecar meta file, if the host has one."""
+    cfg = mapping.get("subagents")
+    if not cfg:
+        return {}
+    try:
+        meta = json.loads(file.with_name(cfg["meta_file"].format(stem=file.stem)).read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError):
+        return {}
+    return {"call_id": get_first(meta, cfg.get("call_id")), "model": get_first(meta, cfg.get("model"))}
+
+
+def link_subagents(events, metas, mapping, placed):
+    """Attach each subagent to the call that spawned it. Returns {actor: {link, call_id}}.
+
+    Exact: the sidecar meta file names the spawning call, or the call's result names the agent id.
+    Fallbacks: the brief matched against the spawning call (hosts without timestamps), then timestamps.
+    """
+    prefix = (mapping.get("subagents") or {}).get("file_prefix", "")
+    spawners, by_agent = {}, {}
+    for ev in events:
+        if ev["actor"] != "main":
+            continue
+        for c in ev["calls"]:
+            if c["id"] is not None:
+                spawners.setdefault(c["id"], ev)
+        if ev.get("spawned_agent") and ev["results"]:
+            by_agent[str(ev["spawned_agent"])] = ev["results"][0]["id"]
+    info = {}
+    for actor in dict.fromkeys(e["actor"] for e in events if e["actor"] != "main"):
+        evs = [e for e in events if e["actor"] == actor]
+        stem = actor.split(":", 1)[1]
+        call_id = metas.get(actor, {}).get("call_id")
+        if call_id not in spawners:
+            call_id = by_agent.get(stem[len(prefix):] if prefix and stem.startswith(prefix) else stem)
+        spawner = spawners.get(call_id)
+        if spawner is not None:
+            for e in evs:
+                e["turn"] = spawner["turn"]
+            info[actor] = {"link": "tool_use_id", "call_id": call_id}
+        elif actor in placed:
+            info[actor] = {"link": "brief", "call_id": None}
+        else:
+            info[actor] = {"link": "timestamp" if any(e["ts"] is not None for e in evs) else None, "call_id": None}
+    return info
 
 
 def _event_keys(events):
@@ -1328,7 +1383,7 @@ def main(argv=None):
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
              "truncated_last_line": False, "version": None}
-    seen_files = set()
+    seen_files, metas = set(), {}
     for path in paths:
         own_sub = is_subagent_file(path, read_lines(path)[0], mapping)
         for file in [path, *expand_subagents(path)]:
@@ -1337,6 +1392,8 @@ def main(argv=None):
             seen_files.add(file.resolve())
             main_file = file is path and not own_sub
             actor = "main" if main_file else f"subagent:{file.stem}"
+            if not main_file:
+                metas[actor] = read_subagent_meta(file, mapping)
             lines = read_lines(file)
             if main_file:
                 raw += lines
@@ -1352,13 +1409,15 @@ def main(argv=None):
                 for k, v in st[bucket].items():
                     stats[bucket][k] = stats[bucket].get(k, 0) + v
     events = dedupe(events)
+    placed = set()
     if events and all(e["ts"] is not None for e in events):
         events.sort(key=lambda e: e["ts"])
     else:
-        events = place_subagents(events)
+        events, placed = place_subagents(events)
     for i, ev in enumerate(events):
         ev["i"] = i
     assign_turns(events)
+    links = link_subagents(events, metas, mapping, placed)
     cut = reviewer_cut(events)
     if args.events:
         lo, _, hi = args.events.partition(":")
@@ -1420,7 +1479,7 @@ def main(argv=None):
             all_turns = turn_rows(window, mapping, args.verify_patterns)
             out["window"]["turns_total"] = len(all_turns)
             out["turns"] = cap_rows(all_turns, TOP_ROWS, "turn", "turns", "other")
-            out["actors"] = cap_rows(actor_rows(window, mapping, args.verify_patterns), TOP_ROWS,
+            out["actors"] = cap_rows(actor_rows(window, mapping, args.verify_patterns, links, metas), TOP_ROWS,
                                      "actor", "actors", "other", keep="main")
             out["skills"] = skills_summary(window, host, repo)
     emit(out, args.format, redact_on)

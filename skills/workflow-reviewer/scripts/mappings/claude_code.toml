@@ -13,6 +13,13 @@ not_a_turn_prefixes = [
   "<task-notification>", "<system-reminder>", "[Request interrupted by user",
 ]
 
+# Where a subagent's sidecar file sits and which of its fields name the spawning call and model.
+[subagents]
+meta_file = "{stem}.meta.json"
+file_prefix = "agent-"          # the agent id in a result's toolUseResult.agentId follows this prefix in the file name
+call_id = "toolUseId"
+model = "pickedEffortModel"
+
 [capabilities]
 has_tokens = true
 has_timestamps = true
@@ -63,6 +70,7 @@ result_text = "content"
 match = { type = "user" }
 role = "user"
 text = ["message.content", "message.content[type=text].text"]
+spawned_agent = "toolUseResult.agentId"
 results = "message.content[type=tool_result]"
 result_id = "tool_use_id"
 result_error = "is_error"
