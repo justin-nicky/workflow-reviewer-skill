@@ -808,7 +808,8 @@ def actor_rows(events, mapping, custom, links=None, metas=None):
             rows[-1]["link"] = links[actor]["link"]
         history = metas.get(actor, {}).get("history")
         if history:
-            rows[-1].update(history_from_ordinal=history["from_ordinal"], history_records_skipped=history["skipped"])
+            rows[-1].update(history_from_ordinal=history["from_ordinal"], history_records_skipped=history["skipped"],
+                              history_note=history["note"])
     return rows
 
 
@@ -1001,17 +1002,24 @@ def skip_copied_history(lines, mapping):
     start = get_first(first, cfg["history_start"])
     if not isinstance(start, int) or isinstance(start, bool):
         return lines, None
-    kept, skipped = [], 0
+    kept, dropped, first_seen = [], [], False
     for ln in lines:
         try:
             ordinal = get_first(json.loads(ln), cfg.get("ordinal")) if ln.strip() else None
         except ValueError:
             ordinal = None
+        is_first = bool(ln.strip()) and not first_seen
+        first_seen = first_seen or bool(ln.strip())
         if isinstance(ordinal, int) and ordinal < start:
-            skipped += 1
+            dropped.append((ordinal, is_first))
         else:
             kept.append(ln)
-    return kept, {"from_ordinal": start, "skipped": skipped,
+    copied = [o for o, is_first in dropped if not is_first]       # the first record is the rollout's own session_meta
+    note = None
+    if copied:
+        note = (f"copied history skipped: {len(copied)} records (ordinals {min(copied)}\u2013{max(copied)})"
+                + ("; session_meta read for linking only" if len(copied) < len(dropped) else ""))
+    return kept, {"from_ordinal": start, "skipped": len(dropped), "note": note,
                   "version": get_first(first, mapping.get("fields", {}).get("version"))}
 
 

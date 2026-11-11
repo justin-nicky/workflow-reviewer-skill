@@ -381,3 +381,10 @@ def test_the_desktop_version_range_is_open_ended(cli, tmp_path):
     old = write_jsonl(tmp_path / "rollout-old.jsonl", desktop([dx_meta("p1", cli.repo, version="0.150.0")]))
     _, out = cli.json(old, "--host", "codex")
     assert out["coverage"]["variant"] == "classic"          # a tie below the range goes to the first listed variant
+
+
+def test_the_skipped_records_line_says_what_was_copied_and_what_was_read_for_linking(cli, tmp_path):
+    sub = run_pair(cli, tmp_path)["actors"][1]
+    assert sub["history_note"] == ("copied history skipped: 4 records (ordinals 1–4); "
+                                   "session_meta read for linking only")
+    assert sub["history_records_skipped"] == 5
