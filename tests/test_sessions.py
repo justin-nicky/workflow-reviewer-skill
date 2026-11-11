@@ -84,3 +84,37 @@ def test_subagent_transcripts_are_discovered_and_attached_to_their_turn(cli, tmp
     assert actors["subagent:agent-7"]["models"] == ["claude-opus-x"]
     assert out["turns"][1]["tokens"]["output"] == 520
     assert out["turns"][0]["tokens"]["output"] == 10
+
+
+# ---- PATH may be a session folder ---------------------------------------------------------------
+
+def test_claude_code_session_folder_reads_the_main_transcript_and_its_subagents(cli, tmp_path):
+    main = write_jsonl(tmp_path / "proj" / "sess1.jsonl", [
+        cc_user("go", 0), cc_assistant("m1", 5, usage=usage(1, 10), uuid="a1")])
+    write_jsonl(tmp_path / "proj" / "sess1" / "subagents" / "agent-x.jsonl", [
+        cc_user("sub brief", 6, uuid="su"), cc_assistant("sm", 7, usage=usage(1, 20), uuid="sa")])
+    for target in (main.with_suffix(""), str(main.with_suffix("")) + "/"):
+        code, out = cli.json(target, "--host", "claude-code")
+        assert code == 0
+        assert out["tokens"]["output"] == 30
+        assert [a["actor"] for a in out["actors"]] == ["main", "subagent:agent-x"]
+    _, via_file = cli.json(main, "--host", "claude-code")
+    assert via_file["tokens"] == out["tokens"]
+
+
+def test_cursor_session_folder_reads_the_main_transcript_and_its_subagents(cli, tmp_path):
+    from fixtures.builders import cu_assistant, cu_user
+    sid = tmp_path / "abc123"
+    write_jsonl(sid / "abc123.jsonl", [cu_user("first task"), cu_assistant("ok")])
+    write_jsonl(sid / "subagents" / "sub-1.jsonl", [cu_user("brief"), cu_assistant("done")])
+    code, out = cli.json(sid, "--host", "cursor")
+    assert code == 0
+    assert [a["actor"] for a in out["actors"]] == ["main", "subagent:sub-1"]
+
+
+def test_a_folder_without_a_transcript_is_a_clean_error_not_a_traceback(cli, tmp_path):
+    (tmp_path / "empty").mkdir()
+    proc = cli.run(tmp_path / "empty", "--host", "claude-code")
+    assert proc.returncode == 6
+    assert "Traceback" not in proc.stderr
+    assert "empty" in proc.stdout and "no main transcript" in proc.stdout.lower()

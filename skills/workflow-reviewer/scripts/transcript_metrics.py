@@ -767,6 +767,19 @@ def expand_subagents(path):
     return sorted(f for d in dirs if d.is_dir() for f in d.glob("*.jsonl"))
 
 
+def main_transcript(folder):
+    """The main transcript of a session folder, or None.
+
+    Cursor keeps <id>/<id>.jsonl inside the folder, Claude Code keeps <id>.jsonl beside
+    the <id>/ folder (which holds subagents/), Codex has one rollout-*.jsonl per folder.
+    """
+    for cand in (folder / f"{folder.name}.jsonl", folder.parent / f"{folder.name}.jsonl"):
+        if cand.is_file():
+            return cand
+    rollouts = sorted(folder.glob("rollout-*.jsonl"))
+    return rollouts[0] if len(rollouts) == 1 else None
+
+
 def spawn_text(call):
     inp = call["input"]
     return " ".join(v for v in inp.values() if isinstance(v, str)) if isinstance(inp, dict) else ""
@@ -1177,6 +1190,18 @@ def main(argv=None):
         emit(degraded_report("kiro", repo), args.format, redact_on)
         return 0
     paths = [Path(p) for p in args.paths]
+    resolved = []
+    for p in paths:
+        if p.is_dir():
+            main_file = main_transcript(p.resolve())
+            if main_file is None:
+                emit({"error": f"no main transcript found for session folder {p}",
+                      "note": "pass the .jsonl transcript, or a folder that holds or sits beside one"},
+                     args.format, redact_on)
+                return EXIT_NO_TRANSCRIPT
+            p = main_file
+        resolved.append(p)
+    paths = resolved
     zst = [str(p) for p in paths if p.suffix == ".zst"]
     if zst:
         emit({"unsupported": zst, "note": "compressed rollouts are not supported; use a live .jsonl"},
