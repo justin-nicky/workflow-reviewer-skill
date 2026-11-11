@@ -37,9 +37,13 @@ match = { type = "event_msg", "payload.type" = "user_message" }
 role = "user"
 text = ["payload.message"]
 
+# Developer messages are instructions, not conversation. One of them lists the skills offered to the model.
 [[variants.records]]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
-role = "ignore"
+role = "meta"
+offered_from = ["payload.content[].text"]
+offered_block = "(?s)### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
+offered_item = "(?m)^- ([\\w:.\\-]+): "
 
 # User-role response items are injected context, never turns; kept (as meta) so a
 # $skill link and its injected <skill> block can be found.
@@ -112,9 +116,13 @@ match = { type = "event_msg", "payload.type" = "task_started" }
 role = "meta"
 turn_start = true
 
+# Developer messages are instructions, not conversation. One of them lists the skills offered to the model.
 [[variants.records]]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
-role = "ignore"
+role = "meta"
+offered_from = ["payload.content[].text"]
+offered_block = "(?s)### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
+offered_item = "(?m)^- ([\\w:.\\-]+): "
 
 [[variants.records]]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "user" }

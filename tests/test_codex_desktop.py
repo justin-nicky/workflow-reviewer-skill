@@ -297,3 +297,48 @@ def test_same_position_records_of_different_files_are_not_mistaken_for_copies(cl
         dx_usage("resp_s", 200, 0, 22, 6)]))
     _, out = cli.json(parent, sub, "--host", "codex")
     assert out["actors"][1]["tokens"]["output"] == 22 and out["tokens"]["output"] == 33
+
+
+# ---- skills: used (link + block) and offered (developer message) -----------------------------
+
+from fixtures.builders import cx_developer  # noqa: E402
+
+LISTING = ("<skills_instructions>\n## Skills\nA skill is a set of local instructions.\n### Skill roots\n"
+           "- `r0` = `/x/.codex/skills`\n### Available skills\n"
+           "- imagegen: Generate raster images. (file: r0/imagegen/SKILL.md)\n"
+           "- hello: Say hello. (file: r5/hello/SKILL.md)\n"
+           "- data:analyze: Answer data questions. (file: r3/analyze/SKILL.md)\n"
+           "### How to use skills\n- Discovery: read the list.\n</skills_instructions>")
+
+
+def skills_session(cli, tmp_path, *extra, listing=True):
+    block = lambda name: f"<skill><name>{name}</name><path>/x/{name}/SKILL.md</path>{'steps ' * 40}</skill>"
+    records = ([cx_developer(LISTING, 0)] if listing else [])
+    records += [dx_task_started("t1", 1), dx_user("[$hello](/x/hello/SKILL.md) hi", 2), dx_user(block("hello"), 3),
+                dx_assistant("hi", 4), dx_task_started("t2", 5), dx_user("[$explicit-only](/x/explicit-only/SKILL.md) go", 6),
+                dx_user(block("explicit-only"), 7), dx_assistant("ok", 8), *extra]
+    return cli.json(session(cli, tmp_path, *records), "--host", "codex")[1]["skills"]
+
+
+def test_used_skills_are_still_found_by_link_and_block(cli, tmp_path):
+    skills = skills_session(cli, tmp_path)
+    assert skills["used"] == ["hello", "explicit-only"]
+    assert {s["name"]: s["detected_by"] for s in skills["loaded"]} == {"hello": "$skill link", "explicit-only": "$skill link"}
+
+
+def test_offered_skills_come_from_the_developer_message_skill_list(cli, tmp_path):
+    skills = skills_session(cli, tmp_path)
+    assert skills["offered"]["names"] == ["imagegen", "hello", "data:analyze"] and skills["offered"]["total"] == 3
+    assert skills["used_not_offered"] == ["explicit-only"]          # normal for an explicit-only skill
+
+
+def test_without_a_skill_list_offered_is_not_measurable(cli, tmp_path):
+    skills = skills_session(cli, tmp_path, listing=False)
+    assert "not_measurable" in skills["offered"] and "used_not_offered" not in skills
+
+
+def test_the_skill_list_is_labelled_in_events_without_its_names(cli, tmp_path):
+    path = session(cli, tmp_path, cx_developer(LISTING, 0), dx_task_started("t1", 1))
+    _, out = cli.json(path, "--host", "codex", "--events", "0:3")
+    labels = [e["text"] for e in out["events"] if e["text"].startswith("skill listing")]
+    assert labels == ["skill listing (3 names)"] and "imagegen" not in str(out["events"])

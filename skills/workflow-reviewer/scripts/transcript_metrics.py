@@ -229,6 +229,12 @@ def command_from_script(script, pattern):
     return "\n".join(found) if found else None
 
 
+def skill_names_in(text, block_pattern, item_pattern):
+    """Names listed in the block of `text` the first pattern finds (its group 1), or None when there is no block."""
+    block = re.search(block_pattern, text)
+    return re.findall(item_pattern, block.group(1)) if block else None
+
+
 def parse_lines(lines, mapping, actor="main"):
     """Return (events, stats). Each line is classified by the first matching rule."""
     fields = mapping.get("fields", {})
@@ -270,6 +276,8 @@ def parse_lines(lines, mapping, actor="main"):
               "usage_fallback": bool(rule.get("usage_fallback")),
               "spawned_agent": get_first(obj, rule.get("spawned_agent")),
               "offered": get_first(obj, rule.get("offered_skills"))}
+        if rule.get("offered_from"):                       # a skill list written as prose: block, then one name per item
+            ev["offered"] = skill_names_in(get_text(obj, rule["offered_from"]), rule["offered_block"], rule["offered_item"])
         if ev["role"] == "user":
             if rule.get("turn") is False:
                 ev["non_turn"] = rule.get("non_turn_reason", "rule")
