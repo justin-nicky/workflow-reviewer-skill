@@ -359,7 +359,9 @@ VERIFY_KINDS = [
     ("typecheck", r"(mypy|pyright|tsc|ty check)\b|(npm|pnpm|yarn|bun)( run)? (typecheck|type-check)\b|make typecheck\b"),
     ("lint", r"(ruff|eslint|flake8|pylint|golangci-lint|rubocop|biome|stylelint)\b|(npm|pnpm|yarn|bun)( run)? lint\b|make lint\b|cargo clippy\b"),
     ("build", r"(npm|pnpm|yarn|bun)( run)? build\b|make build\b|cargo build\b|go build\b|gradlew? build\b"),
-    ("test", r"(pytest|py\.test|jest|vitest|mocha|rspec|phpunit|tox|nox|unittest)\b|(npm|pnpm|yarn|bun)( run)? test\b|go test\b|cargo (test|nextest)\b|dotnet test\b|gradlew? test\b|make (test|tests|check)\b|just test\b|playwright test\b"),
+    ("test", r"(pytest|py\.test|jest|vitest|mocha|rspec|phpunit|tox|nox|unittest)\b|(npm|pnpm|yarn|bun)( run)? test\b|go test\b|cargo (test|nextest)\b|dotnet test\b|gradlew? test\b|make (test|tests|check)\b|just test\b|playwright test\b"
+              r"|python[\d.]*\s+(?:-\S+\s+)*(?:\S*/)?(?:tests?/\S*|test\w*|\w*_test)\.py\b"       # python3 test_calc.py
+              r"|node\s+(?:--test\b|(?:-\S+\s+)*\S*\.(?:test|spec)\.[cm]?[jt]s\b)"),                # node calc.test.js
     ("verify", r"make (verify|ci|all)\b|(npm|pnpm|yarn|bun)( run)? (verify|ci|check)\b|just (verify|ci|check)\b"),
 ]
 

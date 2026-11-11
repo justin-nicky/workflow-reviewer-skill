@@ -24,6 +24,17 @@ def verify_total(cli, tmp_path, command, extra=()):
     "uv run pytest -q",
     "cd app && npx vitest run",
     "make lint | tail -5",
+    "python3 test_calc.py",
+    "python tests/test_calc.py -v",
+    "uv run python3 test_calc.py",
+    "cd app && python3 ./pkg/calc_test.py",
+    "python3 tests/run_all.py",
+    "node calc.test.js",
+    "node --experimental-vm-modules src/calc.test.ts",
+    "node src/calc.spec.mjs",
+    "node --test",
+    "go test ./...",
+    "cargo test --release",
 ])
 def test_real_verify_commands_are_counted(cli, tmp_path, command):
     assert verify_total(cli, tmp_path, command) == 1
@@ -34,6 +45,15 @@ def test_real_verify_commands_are_counted(cli, tmp_path, command):
     "cat <<'EOF' > notes.md\nmake verify\nnpm test\nEOF",
     "echo 'pytest'",
     "ls tests",
+    "cat test_calc.py",
+    "python3 contest.py",
+    "python3 latest_report.py",
+    "python3 setup.py build",
+    "node server.js",
+    "node scripts/attest.js",
+    "echo 'python3 test_calc.py'",
+    'git commit -m "ran python3 test_calc.py and node calc.test.js"',
+    "cat <<'EOF' > notes.md\npython3 test_calc.py\ngo test ./...\nEOF",
 ])
 def test_text_that_only_mentions_a_command_is_not_counted(cli, tmp_path, command):
     assert verify_total(cli, tmp_path, command) == 0
