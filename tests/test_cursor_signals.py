@@ -66,3 +66,41 @@ def test_only_the_part_that_is_measurable_leaves_the_not_measurable_list(cli, tm
     listed = out["coverage"]["not_measurable"]
     assert not any(n.startswith("time ") for n in listed)
     assert any("tool time and waiting time" in n for n in listed)
+
+
+# ---- subagent link: a markdown link to the subagent id -----------------------------------------------
+
+SUB_ID = "00000000-0000-4000-8000-0000000000a1"
+
+
+def folder_session(tmp_path, main_records, sub_records, sub_id=SUB_ID):
+    sid = tmp_path / "00000000-0000-4000-8000-0000000000b2"
+    write_jsonl(sid / f"{sid.name}.jsonl", main_records)
+    write_jsonl(sid / "subagents" / f"{sub_id}.jsonl", sub_records)
+    return sid
+
+
+def test_the_subagent_is_linked_by_the_markdown_link_in_the_parent_text(cli, tmp_path):
+    sid = folder_session(tmp_path,
+                         [cu_user("one"), cu_assistant("first"), cu_turn_ended(),
+                          cu_user("two"), cu_assistant(f"The explorer finished: [Explore the files]({SUB_ID})"),
+                          cu_turn_ended()],
+                         [cu_user("a brief nobody quotes"), cu_assistant("found")])
+    _, out = cli.json(sid, "--host", "cursor")
+    sub = out["actors"][1]
+    assert sub["actor"] == f"subagent:{SUB_ID}" and sub["link"] == "markdown_link"
+
+
+def test_a_link_to_another_id_does_not_link(cli, tmp_path):
+    sid = folder_session(tmp_path, [cu_user("one"), cu_assistant("see [x](11111111-2222-3333-4444-555555555555)")],
+                         [cu_user("brief"), cu_assistant("found")])
+    _, out = cli.json(sid, "--host", "cursor")
+    assert out["actors"][1]["link"] == "none"
+
+
+def test_without_a_link_the_brief_fallback_is_named(cli, tmp_path):
+    sid = folder_session(tmp_path,
+                         [cu_user("one"), cu_assistant("go", [("Task", {"prompt": "explore the repo layout"})])],
+                         [cu_user("explore the repo layout"), cu_assistant("done")])
+    _, out = cli.json(sid, "--host", "cursor")
+    assert out["actors"][1]["link"] == "brief"

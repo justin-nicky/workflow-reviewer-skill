@@ -1067,7 +1067,8 @@ def link_subagents(events, metas, mapping, placed, main_ids=()):
     """Attach each subagent to the call that spawned it. Returns {actor: {link, call_id}}.
 
     Exact: the sidecar meta file names the spawning call, or the call's result names the agent id,
-    or the subagent's rollout names its parent thread (parent_thread_id).
+    or the subagent's rollout names its parent thread (parent_thread_id), or the parent's text links to
+    its id (markdown_link).
     Fallbacks: the brief matched against the spawning call (hosts without timestamps), then timestamps.
     """
     prefix = (mapping.get("subagents") or {}).get("file_prefix", "")
@@ -1080,6 +1081,12 @@ def link_subagents(events, metas, mapping, placed, main_ids=()):
                 spawners.setdefault(c["id"], ev)
         if ev.get("spawned_agent") and ev["results"]:
             by_agent[str(ev["spawned_agent"])] = ev["results"][0]["id"]
+    linked_in_text = {}
+    if (mapping.get("subagents") or {}).get("link_regex"):       # the parent's text links to the subagent's id
+        for ev in events:
+            if ev["actor"] == "main" and ev["role"] == "assistant":
+                for sub_id in re.findall(mapping["subagents"]["link_regex"], ev["text"]):
+                    linked_in_text.setdefault(sub_id, ev)
     info = {}
     for actor in dict.fromkeys(e["actor"] for e in events if e["actor"] != "main"):
         evs = [e for e in events if e["actor"] == actor]
@@ -1092,12 +1099,16 @@ def link_subagents(events, metas, mapping, placed, main_ids=()):
             for e in evs:
                 e["turn"] = spawner["turn"]
             info[actor] = {"link": "tool_use_id", "call_id": call_id}
+        elif stem in linked_in_text:
+            for e in evs:
+                e["turn"] = linked_in_text[stem]["turn"]
+            info[actor] = {"link": "markdown_link", "call_id": None}
         elif metas.get(actor, {}).get("parent") in main_ids and main_ids:
             info[actor] = {"link": "parent_thread_id", "call_id": None}
         elif actor in placed:
             info[actor] = {"link": "brief", "call_id": None}
         else:
-            info[actor] = {"link": "timestamp" if any(e["ts"] is not None for e in evs) else None, "call_id": None}
+            info[actor] = {"link": "timestamp" if any(e["ts"] is not None for e in evs) else "none", "call_id": None}
     return info
 
 

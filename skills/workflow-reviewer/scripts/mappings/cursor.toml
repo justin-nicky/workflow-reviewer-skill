@@ -3,6 +3,10 @@ host = "cursor"
 tested_versions = "unknown (no version marker in transcripts)"
 type_path = ["role", "type"]
 
+# The parent's assistant text links to each subagent by id: [description](<subagent-id>).
+[subagents]
+link_regex = "\\]\\(<?([0-9A-Fa-f-]{36})>?\\)"
+
 [capabilities]
 has_tokens = false
 has_timestamps = false
