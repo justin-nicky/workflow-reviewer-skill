@@ -114,6 +114,21 @@ def type_key(obj, type_path):
     return "/".join(parts) if parts else "<missing>"
 
 
+SCHEMA_MAX = 1          # the newest mapping schema this script understands
+
+
+def schema_check(raw):
+    """(error, note) for a mapping's schema_version. A missing one counts as 1, with a note."""
+    version = raw.get("schema_version")
+    if version is None:
+        return None, "mapping has no schema_version; treated as 1"
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        return f"mapping schema_version must be a whole number from 1 (got {version!r})", None
+    if version > SCHEMA_MAX:
+        return f"mapping schema {version} is newer than this script supports (max {SCHEMA_MAX})", None
+    return None, None
+
+
 def load_mapping(name=None, text=None):
     if text is None:
         text = (MAPPING_DIR / f"{name}.toml").read_text(encoding="utf-8")
@@ -1626,6 +1641,11 @@ def main(argv=None):
         raw_mapping.setdefault("capabilities", {})
     else:
         raw_mapping, source = load_mapping(HOSTS[host]), "builtin"
+    schema_error, schema_note = schema_check(raw_mapping)
+    if schema_error:
+        emit({"error": schema_error}, args.format, redact_on)
+        return 2
+    notes = [schema_note] if schema_note else []
     mapping, variant_info = choose_variant(raw_mapping, first_lines)
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
@@ -1719,6 +1739,8 @@ def main(argv=None):
                                "capabilities": mapping["capabilities"], "last_record_ts": iso(last_ts),
                                "lag_note": lag, "window_note": window_note,
                                "truncated_last_line": stats["truncated_last_line"]}
+            if notes:
+                out["coverage"]["notes"] = notes
             if stats["skill_list_unparsed"]:
                 out["coverage"]["warnings"] = ["skill list found but not parsed; offered list may be incomplete"]
             if variant_info["scores"]:

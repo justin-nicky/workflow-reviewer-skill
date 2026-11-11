@@ -1,5 +1,6 @@
 # Cursor agent-transcript mapping (unofficial format). No tokens, timestamps, tool results or ids.
 host = "cursor"
+schema_version = 1
 tested_versions = "version not recorded"
 type_path = ["role", "type"]
 

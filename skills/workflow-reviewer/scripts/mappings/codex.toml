@@ -1,5 +1,6 @@
 # Codex rollout mapping. Data only: dotted paths, [] wildcards, [k=v] filters.
 host = "codex"
+schema_version = 1
 tested_versions = "0.137.0-alpha.4 to 0.142.2, 0.162.0-alpha.17.2 (cli_version)"
 type_path = ["type", "payload.type"]
 
