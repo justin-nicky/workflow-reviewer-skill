@@ -22,6 +22,17 @@ calls = "message.content[type=tool_use]"
 call_name = "name"
 call_input = "input"
 
+# The user pressing stop is an interruption; any other error ending a turn is a turn error.
+[[records]]
+match = { type = "turn_ended", status = "error", error = "user_stopped_generation" }
+role = "meta"
+interrupt = true
+
+[[records]]
+match = { type = "turn_ended", status = "error" }
+role = "meta"
+turn_error = true
+
 [[records]]
 match = { type = "turn_ended" }
 role = "ignore"

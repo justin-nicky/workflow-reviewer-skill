@@ -242,3 +242,8 @@ def dx_inter_agent(t):
 
 def dx_aborted(t, reason="interrupted"):
     return cx_line("event_msg", {"type": "turn_aborted", "turn_id": "t1", "reason": reason}, t)
+
+
+def cu_turn_error(error):
+    """A turn that ended in error; user_stopped_generation is the user pressing stop."""
+    return {"type": "turn_ended", "status": "error", "error": error}

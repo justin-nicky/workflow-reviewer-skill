@@ -279,7 +279,7 @@ def parse_lines(lines, mapping, actor="main"):
               "ts": parse_ts(get_first(obj, rule.get("timestamp", fields.get("timestamp")))),
               "event_id": get_first(obj, fields.get("event_id")), "non_turn": None,
               "interrupted": bool(rule.get("interrupt")), "turn_start": bool(rule.get("turn_start")),
-              "usage_fallback": bool(rule.get("usage_fallback")),
+              "usage_fallback": bool(rule.get("usage_fallback")), "turn_error": bool(rule.get("turn_error")),
               "spawned_agent": get_first(obj, rule.get("spawned_agent")),
               "offered": get_first(obj, rule.get("offered_skills"))}
         if rule.get("offered_from"):                       # a skill list written as prose: block, then one name per item
@@ -680,6 +680,14 @@ def interruption_summary(events, mapping):
         return {"not_measurable": "no interruption marker is known for this host"}
     turns = [e["turn"] for e in events if e["interrupted"]
              or (prefixes and e["role"] == "user" and e["text"].lstrip().startswith(prefixes))]
+    return {"count": len(turns), "turns": turns[:MAX_INTERRUPTION_TURNS]}
+
+
+def turn_error_summary(events, mapping):
+    """Turns that ended in an error that was not the user stopping them (None when the host has no such record)."""
+    if not any(r.get("turn_error") for r in mapping.get("records", [])):
+        return None
+    turns = [e["turn"] for e in events if e["turn_error"]]
     return {"count": len(turns), "turns": turns[:MAX_INTERRUPTION_TURNS]}
 
 
@@ -1628,6 +1636,9 @@ def main(argv=None):
                              "non_turn_user_records": non_turn,
                              "from_turn": lo, "to_turn": args.to_turn}
             out["interruptions"] = interruption_summary(window, mapping)
+            turn_errors = turn_error_summary(window, mapping)
+            if turn_errors is not None:
+                out["turn_errors"] = turn_errors
             out["time"] = time_summary(window, args.idle_threshold) if mapping["capabilities"].get("has_timestamps") \
                 else {"not_measurable": "host records no timestamps"}
             all_turns = turn_rows(window, mapping, args.verify_patterns)

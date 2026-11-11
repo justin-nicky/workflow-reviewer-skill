@@ -175,8 +175,10 @@ def test_zero_interruptions_is_reported_as_zero(cli, tmp_path):
 
 
 def test_hosts_without_a_known_marker_say_so(cli, tmp_path):
-    from fixtures.builders import cu_user
-    _, out = cli.json(write_jsonl(tmp_path / "c.jsonl", [cu_user("go")]), "--host", "cursor")
+    mapping = ('host = "x"\ntype_path = "kind"\n[capabilities]\nhas_tokens = false\n'
+               '[[records]]\nmatch = { kind = "u" }\nrole = "user"\ntext = ["t"]\n')
+    path = write_jsonl(tmp_path / "x.jsonl", [{"kind": "u", "t": "go"}])
+    _, out = cli.json(path, "--host", "cursor", "--mapping", "-", stdin=mapping)
     assert "not_measurable" in out["interruptions"]
 
 
