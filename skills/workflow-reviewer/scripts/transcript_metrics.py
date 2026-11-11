@@ -1079,7 +1079,8 @@ def spawn_for(events, mapping, agent_path):
         for c in ev["calls"]:
             inp = c["input"]
             if ev["actor"] == "main" and categorise(c["name"]) == "agent" and isinstance(inp, dict) \
-                    and inp.get(cfg["spawn_key"]) == agent_path and isinstance(inp.get(cfg["brief_key"]), str):
+                    and isinstance(inp.get(cfg["spawn_key"]), str) and isinstance(inp.get(cfg["brief_key"]), str) \
+                    and (agent_path == inp[cfg["spawn_key"]] or agent_path.endswith("/" + inp[cfg["spawn_key"]].lstrip("/"))):
                 return ev, len(inp[cfg["brief_key"]].encode("utf-8"))
     return None
 
@@ -1145,7 +1146,7 @@ def _event_keys(events):
         key = ev["event_id"]
         if key is None:
             base = json.dumps([ev["role"], ev["text"], [(c["name"], c["input"], c["id"]) for c in ev["calls"]],
-                               [r["id"] for r in ev["results"]], ev["msg_id"], ev["usage"], ev["model"], ev["turn_start"],
+                               [r["id"] for r in ev["results"]], ev["msg_id"], ev["usage"], ev["model"], ev["ts"], ev["turn_start"],
                                ev["interrupted"]], sort_keys=True, default=str)
             n = ordinal[(ev["file"], base)] = ordinal.get((ev["file"], base), -1) + 1
             key = (base, n)

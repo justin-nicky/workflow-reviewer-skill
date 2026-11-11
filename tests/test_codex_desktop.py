@@ -442,3 +442,24 @@ def test_token_method_names_what_was_done_for_each_host_and_source(cli, tmp_path
     assert cli.json(classic, "--host", "codex")[1]["tokens"]["method"] == "token_count totals, a repeated total counted once"
     cc = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 0), cc_assistant("m", 1, usage=usage(1, 1))])
     assert cli.json(cc, "--host", "claude-code")[1]["tokens"]["method"].startswith("deduplicated by message id")
+
+
+def test_a_subagent_record_equal_in_content_to_a_parent_record_is_still_counted(cli, tmp_path):
+    """Both rollouts have turn_context records with the same model; only the timestamps tell them apart."""
+    parent = session(cli, tmp_path, dx_task_started("t1", 1), dx_turn_context(2, "gpt-x"), dx_user("go", 3),
+                     dx_usage("resp_p", 100, 0, 5, 4), name="rollout-parent.jsonl")
+    sub = write_jsonl(tmp_path / f"{SUB_STEM}.jsonl", desktop([
+        dx_meta("s1", cli.repo, parent="p1"), dx_task_started("s-t1", 6), dx_turn_context(7, "gpt-x"),
+        dx_user("brief", 8), dx_usage("resp_s", 100, 0, 5, 9)]))
+    _, out = cli.json(parent, sub, "--host", "codex")
+    assert [a["models"] for a in out["actors"]] == [["gpt-x"], ["gpt-x"]]
+
+
+def test_the_spawn_task_name_may_be_the_last_segment_of_the_agent_path(cli, tmp_path):
+    """Real spawn calls say task_name "list_files"; the subagent's own path is "/root/list_files"."""
+    parent = session(cli, tmp_path, dx_task_started("t1", 1), dx_user("go", 2),
+                     dx_spawn("sp1", 3, "worker", "x" * 77), dx_usage("resp_p", 100, 0, 5, 4), name="rollout-parent.jsonl")
+    sub = write_jsonl(tmp_path / f"{SUB_STEM}.jsonl", desktop([
+        dx_meta("s1", cli.repo, parent="p1", agent_path="/root/worker"), dx_task_started("s-t1", 6), dx_user("short", 7)]))
+    _, out = cli.json(parent, sub, "--host", "codex")
+    assert out["actors"][1]["brief_bytes"] == 77
