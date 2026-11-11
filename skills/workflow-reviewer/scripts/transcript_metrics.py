@@ -38,6 +38,9 @@ def _segments(path):
 
 
 def get_all(obj, path):
+    """All values at a path. A list of paths lists alternatives: the first one present wins."""
+    if isinstance(path, list):
+        return next((found for found in (get_all(obj, p) for p in path) if found), [])
     cur = [obj]
     for name, bracket in _segments(path):
         nxt = []
@@ -65,6 +68,8 @@ def get_all(obj, path):
 def get_first(obj, path):
     if not path:
         return None
+    if isinstance(path, list):
+        return next((v for v in (get_first(obj, p) for p in path) if v is not None), None)
     for v in get_all(obj, path):
         if v is not None:
             return v
