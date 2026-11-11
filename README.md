@@ -54,7 +54,7 @@ Each mapping was checked against one real transcript in phase 0 (nothing from th
 | Host | `tested_versions` |
 |---|---|
 | Claude Code | 2.1.295 to 2.1.309, 2.1.321 |
-| Codex | 0.137.0-alpha.4 to 0.142.2 (`cli_version`) |
+| Codex | 0.137.0-alpha.4 to 0.142.2, 0.162.0-alpha.17.2 (Codex Desktop, `desktop` variant) (`cli_version`) |
 | Cursor | unknown (no version marker in transcripts) |
 
 Wider version coverage comes from drift reports: when a host changes its format, the script warns and the agent drafts an override mapping (see Format drift). CI runs pytest on macOS, Linux and Windows with Python 3.11 and 3.12.

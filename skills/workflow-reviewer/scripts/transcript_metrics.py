@@ -1021,12 +1021,12 @@ def drift_report(mapping, stats, events, threshold):
             "unseen_types": with_other(unseen, TOP_TYPES), "warning": warning}
 
 
-VERSION_RE = re.compile(r"\d+(?:\.\d+)+")
+VERSION_RE = re.compile(r"\d+(?:\.\d+)+(?:-[A-Za-z]+(?:\.\d+)*)?")   # 0.162.0-alpha.17.2 is one version
 
 
 def _version_tuple(text):
     m = VERSION_RE.search(str(text))
-    return tuple(int(n) for n in m.group(0).split(".")) if m else None
+    return tuple(int(n) for n in re.match(r"\d+(?:\.\d+)+", m.group(0)).group(0).split(".")) if m else None
 
 
 def version_note(version, tested, drift):

@@ -1,6 +1,6 @@
 # Codex rollout mapping. Data only: dotted paths, [] wildcards, [k=v] filters.
 host = "codex"
-tested_versions = "0.137.0-alpha.4 to 0.142.2 (cli_version)"
+tested_versions = "0.137.0-alpha.4 to 0.142.2, 0.162.0-alpha.17.2 (cli_version)"
 type_path = ["type", "payload.type"]
 
 # A rollout whose first record has this field is a subagent's, never the main conversation.
@@ -16,30 +16,35 @@ has_ids = false
 timestamp = "timestamp"
 version = "payload.cli_version"
 
+# Variant "classic": rollouts of the Codex CLI up to 0.142.x. A user turn is an event_msg user_message.
+[[variants]]
+name = "classic"
+versions = "0.137.0 to 0.142.2"
+
 # A real user turn is an event_msg user_message. The user-role response items Codex
 # injects (environment context, instructions) are not turns.
-[[records]]
+[[variants.records]]
 match = { type = "event_msg", "payload.type" = "user_message" }
 role = "user"
 text = ["payload.message"]
 
-[[records]]
+[[variants.records]]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
 role = "ignore"
 
 # User-role response items are injected context, never turns; kept (as meta) so a
 # $skill link and its injected <skill> block can be found.
-[[records]]
+[[variants.records]]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "user" }
 role = "meta"
 text = ["payload.content[].text"]
 
-[[records]]
+[[variants.records]]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "assistant" }
 role = "assistant"
 text = ["payload.content[].text"]
 
-[[records]]
+[[variants.records]]
 match = { type = "response_item", "payload.type" = ["function_call", "custom_tool_call", "local_shell_call"] }
 role = "assistant"
 calls = "payload"
@@ -47,7 +52,7 @@ call_name = "name"
 call_input = "arguments"
 call_id = "call_id"
 
-[[records]]
+[[variants.records]]
 match = { type = "response_item", "payload.type" = ["function_call_output", "custom_tool_call_output"] }
 role = "user"
 results = "payload"
@@ -56,7 +61,7 @@ result_exit_code = "output.metadata.exit_code"
 result_exit_code_regex = "Process exited with code (-?\\d+)"
 result_text = ["output.output", "output"]
 
-[[records]]
+[[variants.records]]
 match = { type = "event_msg", "payload.type" = "token_count" }
 role = "meta"
 usage_input = "payload.info.last_token_usage.input_tokens"
@@ -66,15 +71,82 @@ usage_input_includes_cache = true
 usage_dedupe_key = "payload.info.total_token_usage"
 
 # Only user-initiated aborts count as interruptions; other abort reasons stay ignored (and visible).
-[[records]]
+[[variants.records]]
 match = { type = "event_msg", "payload.type" = "turn_aborted", "payload.reason" = "interrupted" }
 role = "meta"
 interrupt = true
 
-[[records]]
+[[variants.records]]
 match = { type = ["session_meta", "turn_context", "event_msg", "compacted"] }
 role = "ignore"
 
-[[records]]
+[[variants.records]]
+match = { type = "response_item", "payload.type" = ["reasoning", "web_search_call", "ghost_snapshot"] }
+role = "ignore"
+
+# Variant "desktop": Codex Desktop 0.162.x. Every record carries an `ordinal`; prompts are
+# response_item messages; commands are JavaScript sent to the `exec` tool.
+[[variants]]
+name = "desktop"
+versions = "0.162.0 to 9.0.0"
+requires = { fields = ["ordinal"] }
+
+[[variants.records]]
+match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
+role = "ignore"
+
+[[variants.records]]
+match = { type = "response_item", "payload.type" = "message", "payload.role" = "user" }
+role = "user"
+text = ["payload.content[].text"]
+
+[[variants.records]]
+match = { type = "response_item", "payload.type" = "message", "payload.role" = "assistant" }
+role = "assistant"
+text = ["payload.content[].text"]
+
+[[variants.records]]
+match = { type = "response_item", "payload.type" = "agent_message" }
+role = "assistant"
+text = ["payload.content[].text"]
+
+[[variants.records]]
+match = { type = "response_item", "payload.type" = ["function_call", "custom_tool_call", "local_shell_call"] }
+role = "assistant"
+calls = "payload"
+call_name = "name"
+call_input = ["arguments", "input"]
+call_id = "call_id"
+
+[[variants.records]]
+match = { type = "response_item", "payload.type" = ["function_call_output", "custom_tool_call_output"] }
+role = "user"
+results = "payload"
+result_id = "call_id"
+result_text = ["output"]
+
+[[variants.records]]
+match = { type = "token_usage_record" }
+role = "meta"
+
+[[variants.records]]
+match = { type = "event_msg", "payload.type" = "token_count" }
+role = "meta"
+usage_input = "payload.info.last_token_usage.input_tokens"
+usage_output = "payload.info.last_token_usage.output_tokens"
+usage_cache_read = "payload.info.last_token_usage.cached_input_tokens"
+usage_input_includes_cache = true
+usage_dedupe_key = "payload.info.total_token_usage"
+
+# Known housekeeping, listed by name so a new record type still shows up as drift.
+[[variants.records]]
+match = { type = ["session_meta", "turn_context", "world_state", "inter_agent_communication_metadata", "compacted"] }
+role = "ignore"
+
+[[variants.records]]
+match = { type = "event_msg", "payload.type" = ["task_started", "task_complete", "item_completed", "thread_settings_applied", "turn_aborted"] }
+role = "ignore"
+
+[[variants.records]]
 match = { type = "response_item", "payload.type" = ["reasoning", "web_search_call", "ghost_snapshot"] }
 role = "ignore"

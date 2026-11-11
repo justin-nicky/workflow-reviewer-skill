@@ -134,3 +134,111 @@ def cu_assistant(text=None, calls=()):
 
 def cu_turn_ended():
     return {"type": "turn_ended", "status": "success"}
+
+
+# ---- Codex Desktop (rollout shape of 0.162.x) ------------------------------------------------
+# Every record carries an `ordinal`; user prompts are response_item messages; commands are JavaScript.
+
+DX_VERSION = "0.162.0-alpha.17.2"
+
+
+def desktop(records):
+    """Number the records the way Codex Desktop does (ordinal = position) unless they already have one."""
+    return [{**r, "ordinal": r.get("ordinal", n)} if isinstance(r, dict) else r for n, r in enumerate(records)]
+
+
+def dx_meta(session_id, cwd, t=0, version=DX_VERSION, parent=None, forked_from=None, history_start=None):
+    payload = {"id": session_id, "cwd": str(cwd), "cli_version": version, "originator": "Codex Desktop",
+               "source": "vscode", "thread_source": "user"}
+    if parent:
+        payload["source"] = {"subagent": {"thread_spawn": {"parent_thread_id": parent, "depth": 1}}}
+        payload["thread_source"] = "subagent"
+        payload["parent_thread_id"] = parent
+    if forked_from:
+        payload["forked_from_id"] = forked_from
+    if history_start is not None:
+        payload["subagent_history_start_ordinal"] = history_start
+    return cx_line("session_meta", payload, t)
+
+
+def dx_task_started(turn_id, t):
+    return cx_line("event_msg", {"type": "task_started", "turn_id": turn_id, "root_turn_id": turn_id}, t)
+
+
+def dx_task_complete(turn_id, t):
+    return cx_line("event_msg", {"type": "task_complete", "turn_id": turn_id}, t)
+
+
+def dx_user(text, t):
+    return cx_injected_user(text, t)
+
+
+def dx_assistant(text, t, phase="final_answer"):
+    return cx_line("response_item", {"type": "message", "role": "assistant", "phase": phase,
+                                     "content": [{"type": "output_text", "text": text}]}, t)
+
+
+def dx_agent_message(text, t, author="/root", recipient="/root/worker"):
+    return cx_line("response_item", {"type": "agent_message", "author": author, "recipient": recipient,
+                                     "content": [{"type": "input_text", "text": text}]}, t)
+
+
+def dx_exec_js(cmd, extra=""):
+    """The JavaScript Codex Desktop sends to its `exec` tool for one shell command."""
+    return ("const r = await tools.exec_command({cmd:%s,workdir:\"/repo\",max_output_tokens:2000});\n"
+            "text(r.output);\n%s" % (json.dumps(cmd), extra))
+
+
+def dx_exec(js, call_id, t):
+    return cx_line("response_item", {"type": "custom_tool_call", "name": "exec", "input": js,
+                                     "call_id": call_id, "status": "completed"}, t)
+
+
+def dx_exec_cmd(cmd, call_id, t, report_exit=True):
+    extra = "text(`exit_code=${r.exit_code}`);\n" if report_exit else ""
+    return dx_exec(dx_exec_js(cmd, extra), call_id, t)
+
+
+def dx_exec_output(call_id, t, text="", exit_code=None):
+    parts = [{"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
+             {"type": "input_text", "text": text}]
+    if exit_code is not None:
+        parts.append({"type": "input_text", "text": f"exit_code={exit_code}"})
+    return cx_line("response_item", {"type": "custom_tool_call_output", "call_id": call_id, "output": parts}, t)
+
+
+def dx_usage(response_id, inp, cached, out, t):
+    usage = {"input_tokens": inp, "cached_input_tokens": cached, "output_tokens": out,
+             "cache_write_input_tokens": 0, "reasoning_output_tokens": 0, "total_tokens": inp + out}
+    return cx_line("token_usage_record", {"response_id": response_id, "usage": usage,
+                                          "turn_token_usage": usage, "thread_token_usage": usage}, t)
+
+
+def dx_spawn(call_id, t):
+    args = json.dumps({"task_name": "/root/worker", "fork_turns": "all", "message": "do the thing"})
+    return cx_line("response_item", {"type": "function_call", "name": "spawn_agent", "namespace": "collaboration",
+                                     "arguments": args, "call_id": call_id}, t)
+
+
+def dx_world_state(t):
+    return cx_line("world_state", {"full": True, "state": {"model": "m"}}, t)
+
+
+def dx_turn_context(t):
+    return cx_line("turn_context", {"turn_id": "t1", "cwd": "/repo"}, t)
+
+
+def dx_item_completed(t):
+    return cx_line("event_msg", {"type": "item_completed", "thread_id": "x", "item": {"type": "Plan"}}, t)
+
+
+def dx_settings(t):
+    return cx_line("event_msg", {"type": "thread_settings_applied", "thread_id": "x"}, t)
+
+
+def dx_inter_agent(t):
+    return cx_line("inter_agent_communication_metadata", {"trigger_turn": True}, t)
+
+
+def dx_aborted(t, reason="interrupted"):
+    return cx_line("event_msg", {"type": "turn_aborted", "turn_id": "t1", "reason": reason}, t)
