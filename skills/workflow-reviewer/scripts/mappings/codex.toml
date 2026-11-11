@@ -21,8 +21,15 @@ role = "user"
 text = ["payload.message"]
 
 [[records]]
-match = { type = "response_item", "payload.type" = "message", "payload.role" = ["user", "developer"] }
+match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
 role = "ignore"
+
+# User-role response items are injected context, never turns; kept (as meta) so a
+# $skill link and its injected <skill> block can be found.
+[[records]]
+match = { type = "response_item", "payload.type" = "message", "payload.role" = "user" }
+role = "meta"
+text = ["payload.content[].text"]
 
 [[records]]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "assistant" }

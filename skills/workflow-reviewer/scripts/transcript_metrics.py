@@ -987,9 +987,49 @@ def instruction_files(repo):
     return found
 
 
+CC_COMMAND_RE = re.compile(r"<command-name>\s*/?([^<\s]+)\s*</command-name>")
+CC_SKILL_BODY = "Base directory for this skill"
+CODEX_LINK_RE = re.compile(r"\[\$([\w:.\-]+)\]\([^)]*SKILL\.md\)")
+CODEX_BLOCK_RE = re.compile(r"<skill>\s*<name>\s*([^<\s]+)\s*</name>")
+CURSOR_ATTACHED_RE = re.compile(r"Skill Name:[ \t]*(\S+)")
+
+
+def invoked_skills(events, host):
+    """Skills the user started by name, as (name, detected_by, bytes), in order.
+
+    Each host injects the skill body next to the user's request; the pair must be present.
+    """
+    main = [e for e in events if e["actor"] == "main"]
+    found = []
+    for k, ev in enumerate(main):
+        if host == "claude-code" and ev["role"] == "user" and not ev["non_turn"]:
+            m = CC_COMMAND_RE.search(ev["text"])
+            if not m:
+                continue
+            for nxt in main[k + 1:]:
+                if is_turn_start(nxt):
+                    break
+                if nxt["role"] == "user" and nxt["text"].lstrip().startswith(CC_SKILL_BODY):
+                    found.append((m.group(1), "slash command", len(nxt["text"].encode("utf-8"))))
+                    break
+        elif host == "codex" and ev["role"] in ("user", "meta"):
+            for link in CODEX_LINK_RE.finditer(ev["text"]):
+                for nxt in main[k + 1:k + 6]:
+                    block = CODEX_BLOCK_RE.search(nxt["text"])
+                    if block and block.group(1) == link.group(1):
+                        found.append((link.group(1), "$skill link", len(nxt["text"].encode("utf-8"))))
+                        break
+        elif host == "cursor" and ev["role"] == "user" and "<manually_attached_skills>" in ev["text"]:
+            size = len(ev["text"].encode("utf-8"))
+            found += [(name, "attached skill", size) for name in CURSOR_ATTACHED_RE.findall(ev["text"])]
+    return found
+
+
 def skills_summary(events, host, repo):
     results = {r["id"]: r for e in events for r in e["results"] if r["id"] is not None}
     loaded = {}
+    for name, how, size in invoked_skills(events, host):
+        loaded.setdefault(name, {"name": name, "detected_by": how, "bytes": size})
     for ev in events:
         for c in ev["calls"]:
             cat = categorise(c["name"])
