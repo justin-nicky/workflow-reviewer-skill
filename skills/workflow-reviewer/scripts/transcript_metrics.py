@@ -1592,6 +1592,53 @@ def read_lines(path):
     return path.read_text(encoding="utf-8").split("\n")      # JSONL: only \n ends a record
 
 
+# ---- storage readers: how a host keeps its records, apart from how the mapping reads them -----------------
+
+CONTAINER_KINDS = ("jsonl", "sqlite")
+RESERVED_KINDS = ("json_document",)              # planned for hosts that keep JSON documents
+
+
+def container_kind(raw):
+    return (raw.get("container") or {}).get("kind", "jsonl")
+
+
+def container_error(kind):
+    if kind in RESERVED_KINDS:
+        return f"mapping container kind '{kind}' is reserved but not supported yet ({', '.join(CONTAINER_KINDS)})"
+    if kind not in CONTAINER_KINDS:
+        return f"mapping container kind '{kind}' is not supported ({', '.join(CONTAINER_KINDS)})"
+    return None
+
+
+class Source:
+    """One stream of records: the main conversation or one subagent's."""
+
+    def __init__(self, lines, label, main, stem=None, file=None, link=None):
+        self.lines, self.label, self.main, self.stem, self.file, self.link = lines, label, main, stem, file, link
+
+
+class JsonlReader:
+    """Session files: a JSONL transcript, its subagent files, a session folder."""
+    kind = "jsonl"
+
+    def __init__(self, paths):
+        self.paths = paths
+
+    def first_lines(self):
+        return read_lines(self.paths[0])
+
+    def sources(self, mapping):
+        seen = set()
+        for path in self.paths:
+            own_sub = is_subagent_file(path, read_lines(path)[0], mapping)
+            for file in [path, *expand_subagents(path)]:
+                if file.resolve() in seen:
+                    continue                            # e.g. a subagent passed and also found beside its parent
+                seen.add(file.resolve())
+                main_file = file is path and not own_sub
+                yield Source(read_lines(file), str(file), main_file, file.stem, file)
+
+
 def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -1607,6 +1654,15 @@ def main(argv=None):
     if args.host == "kiro":
         emit(degraded_report("kiro", repo), args.format, redact_on)
         return 0
+    override = None
+    if args.mapping:                                  # an override decides how records are stored, so read it first
+        text = sys.stdin.read() if args.mapping == "-" else Path(args.mapping).read_text(encoding="utf-8")
+        override = load_mapping(text=text)
+        override.setdefault("capabilities", {})
+        error = schema_check(override)[0] or container_error(container_kind(override))
+        if error:
+            emit({"error": error}, args.format, redact_on)
+            return 2
     paths = [Path(p) for p in args.paths]
     resolved = []
     for p in paths:
@@ -1633,57 +1689,47 @@ def main(argv=None):
     if not paths:
         emit(degraded_report(args.host, repo, searched_locations(args.host, repo)), args.format, redact_on)
         return EXIT_NO_TRANSCRIPT
-    first_lines = read_lines(paths[0])
+    reader = JsonlReader(paths)
+    first_lines = reader.first_lines()
     host = detect_host(first_lines, args.host)
-    if args.mapping:
-        text = sys.stdin.read() if args.mapping == "-" else Path(args.mapping).read_text(encoding="utf-8")
-        raw_mapping, source = load_mapping(text=text), "override"
-        raw_mapping.setdefault("capabilities", {})
+    if override is not None:
+        raw_mapping, source = override, "override"
     else:
         raw_mapping, source = load_mapping(HOSTS[host]), "builtin"
-    schema_error, schema_note = schema_check(raw_mapping)
-    if schema_error:
-        emit({"error": schema_error}, args.format, redact_on)
-        return 2
+    schema_note = schema_check(raw_mapping)[1]
     notes = [schema_note] if schema_note else []
     mapping, variant_info = choose_variant(raw_mapping, first_lines)
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
              "truncated_last_line": False, "version": None, "skill_list_unparsed": 0}
-    seen_files, metas, main_ids = set(), {}, set()
+    metas, main_ids = {}, set()
     sub_cfg = mapping.get("subagents") or {}
-    for path in paths:
-        own_sub = is_subagent_file(path, read_lines(path)[0], mapping)
-        for file in [path, *expand_subagents(path)]:
-            if file.resolve() in seen_files:
-                continue                                # e.g. a subagent passed and also found beside its parent
-            seen_files.add(file.resolve())
-            main_file = file is path and not own_sub
-            actor = "main" if main_file else f"subagent:{file.stem}"
-            lines = read_lines(file)
-            if not main_file:
-                metas[actor] = read_subagent_meta(file, mapping, lines)
-                lines, history = skip_copied_history(lines, mapping)
-                if history:
-                    metas[actor]["history"] = history
-            else:
-                raw += lines
-                if sub_cfg.get("self_id"):
-                    main_ids.add(get_first(first_record(lines) or {}, sub_cfg["self_id"]))
-            ev, st = parse_lines(lines, mapping, actor)
-            if not main_file and metas[actor].get("history") and st["version"] is None:
-                st["version"] = metas[actor]["history"]["version"]
-            for e in ev:
-                e["file"] = str(file)
-            events += ev
-            stats["lines"] += st["lines"]
-            stats["classified"] += st["classified"]
-            stats["truncated_last_line"] |= st["truncated_last_line"]
-            stats["skill_list_unparsed"] += st["skill_list_unparsed"]
-            stats["version"] = stats["version"] or st["version"]
-            for bucket in ("unseen_types", "ignored_types"):
-                for k, v in st[bucket].items():
-                    stats[bucket][k] = stats[bucket].get(k, 0) + v
+    for src in reader.sources(mapping):
+        actor = "main" if src.main else f"subagent:{src.stem}"
+        lines = src.lines
+        if not src.main:
+            metas[actor] = read_subagent_meta(src.file, mapping, lines) if src.file else {}
+            lines, history = skip_copied_history(lines, mapping)
+            if history:
+                metas[actor]["history"] = history
+        else:
+            raw += lines
+            if sub_cfg.get("self_id"):
+                main_ids.add(get_first(first_record(lines) or {}, sub_cfg["self_id"]))
+        ev, st = parse_lines(lines, mapping, actor)
+        if not src.main and metas[actor].get("history") and st["version"] is None:
+            st["version"] = metas[actor]["history"]["version"]
+        for e in ev:
+            e["file"] = src.label
+        events += ev
+        stats["lines"] += st["lines"]
+        stats["classified"] += st["classified"]
+        stats["truncated_last_line"] |= st["truncated_last_line"]
+        stats["skill_list_unparsed"] += st["skill_list_unparsed"]
+        stats["version"] = stats["version"] or st["version"]
+        for bucket in ("unseen_types", "ignored_types"):
+            for k, v in st[bucket].items():
+                stats[bucket][k] = stats[bucket].get(k, 0) + v
     events = dedupe(events)
     placed = set()
     if events and all(e["ts"] is not None for e in events):
