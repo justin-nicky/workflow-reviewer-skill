@@ -56,7 +56,7 @@ Records the mapping deliberately skips are counted per type in `coverage.ignored
 
 ## Mapping variants and alternative paths
 
-A mapping file may hold several `[[variants]]`, each with a `name` and its own `[[variants.records]]` (anything else it omits is inherited from the top level). The script picks the variant whose shape fits the transcript: the best classified ratio among variants whose optional `requires = { types = [...], fields = [...] }` markers appear. An optional `versions = "low to high"` range only breaks ties between equal shapes, so a transcript with no version string still resolves. `coverage.variant` names the choice; with several variants `coverage.variant_choice` shows each score and why one won. A mapped field may also list alternative paths (`["message.id", "id"]`): the first one present in the record wins.
+A mapping file may hold several `[[variants]]`, each with a `name` and its own `[[variants.records]]` (anything else it omits is inherited from the top level). The script picks the variant whose shape fits the transcript: the best classified ratio among variants whose optional `requires = { types = [...], fields = [...] }` markers appear. An optional `versions = "low to high"` (or open-ended `"low and newer"`) range only breaks ties between equal shapes, so a transcript with no version string still resolves. `coverage.variant` names the choice; with several variants `coverage.variant_choice` shows each score and why one won. A mapped field may also list alternative paths (`["message.id", "id"]`): the first one present in the record wins.
 
 ### Codex variants
 

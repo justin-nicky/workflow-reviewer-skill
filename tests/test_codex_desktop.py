@@ -371,3 +371,13 @@ def test_a_skill_list_that_is_found_but_not_parsed_is_warned_about(cli, tmp_path
 def test_a_parsed_skill_list_or_no_skill_list_gives_no_warning(cli, tmp_path):
     assert "warnings" not in listing_session(cli, tmp_path, LISTING)["coverage"]
     assert "warnings" not in listing_session(cli, tmp_path / "b", "<collaboration_mode>plain</collaboration_mode>")["coverage"]
+
+
+def test_the_desktop_version_range_is_open_ended(cli, tmp_path):
+    for version in ("0.162.0", "0.300.0", "12.0.0"):
+        path = write_jsonl(tmp_path / f"rollout-{version}.jsonl", desktop([dx_meta("p1", cli.repo, version=version)]))
+        _, out = cli.json(path, "--host", "codex")
+        assert out["coverage"]["variant"] == "desktop", version
+    old = write_jsonl(tmp_path / "rollout-old.jsonl", desktop([dx_meta("p1", cli.repo, version="0.150.0")]))
+    _, out = cli.json(old, "--host", "codex")
+    assert out["coverage"]["variant"] == "classic"          # a tie below the range goes to the first listed variant

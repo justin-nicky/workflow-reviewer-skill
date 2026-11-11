@@ -139,10 +139,17 @@ def resolve_variants(raw):
 
 
 def version_in(version, spec):
-    """Is `version` inside a 'low to high' range string? False when either side has no version."""
+    """Is `version` inside a 'low to high' (or open-ended 'low and newer') range string?
+
+    False when either side has no version.
+    """
     seen = _version_tuple(version) if version else None
     bounds = VERSION_RE.findall(str(spec or ""))
-    return bool(seen and bounds and _version_tuple(bounds[0]) <= seen <= _version_tuple(bounds[-1]))
+    if not (seen and bounds):
+        return False
+    if re.search(r"\band newer\b", str(spec)):
+        return _version_tuple(bounds[0]) <= seen
+    return _version_tuple(bounds[0]) <= seen <= _version_tuple(bounds[-1])
 
 
 def score_variant(m, lines):

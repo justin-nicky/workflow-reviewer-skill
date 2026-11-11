@@ -102,7 +102,7 @@ role = "ignore"
 # response_item messages; commands are JavaScript sent to the `exec` tool.
 [[variants]]
 name = "desktop"
-versions = "0.162.0 to 9.0.0"
+versions = "0.162.0 and newer"
 requires = { fields = ["ordinal"] }
 
 # Injected context sent as user-role messages; not what the user typed.
