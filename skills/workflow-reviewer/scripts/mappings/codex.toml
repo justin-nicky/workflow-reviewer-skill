@@ -6,6 +6,15 @@ type_path = ["type", "payload.type"]
 # A rollout whose first record has this field is a subagent's, never the main conversation.
 subagent_marker = "payload.source.subagent"
 
+# A subagent's rollout names its parent thread. When it was forked it starts with a copy of the parent's
+# history; its own records begin at the ordinal in its first record.
+[subagents]
+self_id = "payload.id"
+parent_id = "payload.source.subagent.thread_spawn.parent_thread_id"
+forked_from = "payload.forked_from_id"
+history_start = "payload.subagent_history_start_ordinal"
+ordinal = "ordinal"
+
 [capabilities]
 has_tokens = true
 has_timestamps = true

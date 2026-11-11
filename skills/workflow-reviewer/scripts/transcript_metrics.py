@@ -787,6 +787,9 @@ def actor_rows(events, mapping, custom, links=None, metas=None):
                      "tool_s": round(tool_seconds(evs)) if mapping["capabilities"].get("has_timestamps") else None})
         if actor in links:
             rows[-1]["link"] = links[actor]["link"]
+        history = metas.get(actor, {}).get("history")
+        if history:
+            rows[-1].update(history_from_ordinal=history["from_ordinal"], history_records_skipped=history["skipped"])
     return rows
 
 
@@ -938,22 +941,66 @@ def place_subagents(events):
     return out, placed
 
 
-def read_subagent_meta(file, mapping):
-    """The spawning call's id and the picked model from a subagent's sidecar meta file, if the host has one."""
+def first_record(lines):
+    for ln in lines:
+        if ln.strip():
+            try:
+                return json.loads(ln)
+            except ValueError:
+                return None
+    return None
+
+
+def read_subagent_meta(file, mapping, lines=()):
+    """What links a subagent to its parent: the spawning call's id and the picked model from a sidecar
+    meta file, and/or the parent thread id named in the rollout's own first record."""
     cfg = mapping.get("subagents")
     if not cfg:
         return {}
-    try:
-        meta = json.loads(file.with_name(cfg["meta_file"].format(stem=file.stem)).read_text(encoding="utf-8"))
-    except (OSError, ValueError, KeyError):
-        return {}
-    return {"call_id": get_first(meta, cfg.get("call_id")), "model": get_first(meta, cfg.get("model"))}
+    found = {}
+    if cfg.get("meta_file"):
+        try:
+            meta = json.loads(file.with_name(cfg["meta_file"].format(stem=file.stem)).read_text(encoding="utf-8"))
+            found = {"call_id": get_first(meta, cfg.get("call_id")), "model": get_first(meta, cfg.get("model"))}
+        except (OSError, ValueError, KeyError):
+            pass
+    first = first_record(lines) if cfg.get("parent_id") else None
+    if first is not None:
+        found["parent"] = get_first(first, cfg["parent_id"])
+    return found
 
 
-def link_subagents(events, metas, mapping, placed):
+def skip_copied_history(lines, mapping):
+    """A forked subagent's rollout starts with a copy of its parent's history; keep only its own records.
+
+    Returns (lines, info). info is None unless the first record names a fork and the ordinal its own records start at.
+    """
+    cfg = mapping.get("subagents") or {}
+    first = first_record(lines) if cfg.get("history_start") else None
+    if first is None or not get_first(first, cfg.get("forked_from")):
+        return lines, None
+    start = get_first(first, cfg["history_start"])
+    if not isinstance(start, int) or isinstance(start, bool):
+        return lines, None
+    kept, skipped = [], 0
+    for ln in lines:
+        try:
+            ordinal = get_first(json.loads(ln), cfg.get("ordinal")) if ln.strip() else None
+        except ValueError:
+            ordinal = None
+        if isinstance(ordinal, int) and ordinal < start:
+            skipped += 1
+        else:
+            kept.append(ln)
+    return kept, {"from_ordinal": start, "skipped": skipped,
+                  "version": get_first(first, mapping.get("fields", {}).get("version"))}
+
+
+def link_subagents(events, metas, mapping, placed, main_ids=()):
     """Attach each subagent to the call that spawned it. Returns {actor: {link, call_id}}.
 
-    Exact: the sidecar meta file names the spawning call, or the call's result names the agent id.
+    Exact: the sidecar meta file names the spawning call, or the call's result names the agent id,
+    or the subagent's rollout names its parent thread (parent_thread_id).
     Fallbacks: the brief matched against the spawning call (hosts without timestamps), then timestamps.
     """
     prefix = (mapping.get("subagents") or {}).get("file_prefix", "")
@@ -978,6 +1025,8 @@ def link_subagents(events, metas, mapping, placed):
             for e in evs:
                 e["turn"] = spawner["turn"]
             info[actor] = {"link": "tool_use_id", "call_id": call_id}
+        elif metas.get(actor, {}).get("parent") in main_ids and main_ids:
+            info[actor] = {"link": "parent_thread_id", "call_id": None}
         elif actor in placed:
             info[actor] = {"link": "brief", "call_id": None}
         else:
@@ -991,8 +1040,9 @@ def _event_keys(events):
     for ev in events:
         key = ev["event_id"]
         if key is None:
-            base = json.dumps([ev["role"], ev["text"], [(c["name"], c["input"]) for c in ev["calls"]]],
-                              sort_keys=True, default=str)
+            base = json.dumps([ev["role"], ev["text"], [(c["name"], c["input"], c["id"]) for c in ev["calls"]],
+                               [r["id"] for r in ev["results"]], ev["msg_id"], ev["usage"], ev["turn_start"],
+                               ev["interrupted"]], sort_keys=True, default=str)
             n = ordinal[(ev["file"], base)] = ordinal.get((ev["file"], base), -1) + 1
             key = (base, n)
         keys.append(key)
@@ -1449,7 +1499,8 @@ def main(argv=None):
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
              "truncated_last_line": False, "version": None}
-    seen_files, metas = set(), {}
+    seen_files, metas, main_ids = set(), {}, set()
+    sub_cfg = mapping.get("subagents") or {}
     for path in paths:
         own_sub = is_subagent_file(path, read_lines(path)[0], mapping)
         for file in [path, *expand_subagents(path)]:
@@ -1458,12 +1509,19 @@ def main(argv=None):
             seen_files.add(file.resolve())
             main_file = file is path and not own_sub
             actor = "main" if main_file else f"subagent:{file.stem}"
-            if not main_file:
-                metas[actor] = read_subagent_meta(file, mapping)
             lines = read_lines(file)
-            if main_file:
+            if not main_file:
+                metas[actor] = read_subagent_meta(file, mapping, lines)
+                lines, history = skip_copied_history(lines, mapping)
+                if history:
+                    metas[actor]["history"] = history
+            else:
                 raw += lines
+                if sub_cfg.get("self_id"):
+                    main_ids.add(get_first(first_record(lines) or {}, sub_cfg["self_id"]))
             ev, st = parse_lines(lines, mapping, actor)
+            if not main_file and metas[actor].get("history") and st["version"] is None:
+                st["version"] = metas[actor]["history"]["version"]
             for e in ev:
                 e["file"] = str(file)
             events += ev
@@ -1483,7 +1541,7 @@ def main(argv=None):
     for i, ev in enumerate(events):
         ev["i"] = i
     assign_turns(events)
-    links = link_subagents(events, metas, mapping, placed)
+    links = link_subagents(events, metas, mapping, placed, main_ids - {None})
     cut = reviewer_cut(events)
     if args.events:
         lo, _, hi = args.events.partition(":")

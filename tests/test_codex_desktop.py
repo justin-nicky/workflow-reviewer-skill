@@ -218,3 +218,82 @@ def test_other_abort_reasons_are_not_interruptions_but_stay_visible(cli, tmp_pat
     _, out = cli.json(path, "--host", "codex")
     assert out["interruptions"]["count"] == 0
     assert out["coverage"]["ignored_types"]["event_msg/turn_aborted"] == 1
+
+
+# ---- subagents: linked by parent thread id, copied history skipped -------------------------------
+
+from fixtures.builders import dx_spawn  # noqa: E402
+
+SUB_STEM = "rollout-2026-11-11T11-31-48-01000000-0000-7000-8000-00000000000a"
+
+
+def parent_file(cli, tmp_path):
+    return session(cli, tmp_path, dx_task_started("t1", 1), dx_user("delegate", 2), dx_spawn("sp1", 3),
+                   dx_usage("resp_p1", 1000, 800, 20, 4), dx_assistant("done", 9), dx_usage("resp_p2", 1200, 1000, 10, 10),
+                   name="rollout-parent.jsonl")
+
+
+def sub_file(cli, tmp_path, parent="p1", forked_from="p1", start=5, stem=SUB_STEM):
+    """A subagent rollout: its own meta, copied parent history (ordinals below `start`), then its own records."""
+    copied = [dx_task_started("t1", 1), dx_user("delegate", 2), dx_exec_cmd("git log", "pc1", 3),
+              dx_usage("resp_old", 900, 0, 99, 4)]
+    own = [dx_task_started("s-t1", 5), dx_user("subagent brief", 6), dx_exec_cmd("ls", "sc1", 7),
+           dx_exec_output("sc1", 8, "a", 0), dx_usage("resp_s1", 500, 0, 40, 9), dx_assistant("listed", 9)]
+    records = [dx_meta("s1", cli.repo, parent=parent, forked_from=forked_from, history_start=start), *copied, *own]
+    return write_jsonl(tmp_path / f"{stem}.jsonl", desktop(records))
+
+
+def run_pair(cli, tmp_path, **kw):
+    return cli.json(parent_file(cli, tmp_path), sub_file(cli, tmp_path, **kw), "--host", "codex")[1]
+
+
+def test_the_subagent_is_linked_to_its_parent_by_thread_id(cli, tmp_path):
+    out = run_pair(cli, tmp_path)
+    assert [a["actor"] for a in out["actors"]] == ["main", f"subagent:{SUB_STEM}"]
+    assert out["actors"][1]["link"] == "parent_thread_id"
+
+
+def test_copied_parent_history_is_skipped_and_the_skip_is_reported(cli, tmp_path):
+    out = run_pair(cli, tmp_path)
+    sub = out["actors"][1]
+    assert sub["history_from_ordinal"] == 5 and sub["history_records_skipped"] == 5
+    assert sub["tokens"]["output"] == 40 and sub["tokens"]["api_calls"] == 1      # only its own response
+    assert out["actors"][0]["tokens"]["api_calls"] == 2                           # the parent's are not counted twice
+    assert sub["tool_calls"] == 1
+
+
+def test_subagent_records_never_become_main_turns(cli, tmp_path):
+    out = run_pair(cli, tmp_path)
+    assert out["window"]["turns_total"] == 1
+    assert out["tokens"]["api_calls"] == 3 and out["tokens"]["output"] == 70   # not 4 / 169: no copied history
+
+
+def test_a_subagent_of_another_parent_is_not_linked_by_id(cli, tmp_path):
+    out = run_pair(cli, tmp_path, parent="somebody-else", forked_from="somebody-else")
+    assert out["actors"][1]["link"] == "timestamp"
+
+
+def test_without_forked_from_nothing_is_skipped(cli, tmp_path):
+    out = cli.json(parent_file(cli, tmp_path), sub_file(cli, tmp_path, forked_from=None, start=None), "--host", "codex")[1]
+    sub = out["actors"][1]
+    assert "history_from_ordinal" not in sub and "history_records_skipped" not in sub
+
+
+def test_the_spawn_call_is_an_agent_call(cli, tmp_path):
+    _, out = cli.json(parent_file(cli, tmp_path), "--host", "codex")
+    assert out["tools"]["by_category"]["agent"] == 1
+
+
+def test_a_uuid_shaped_subagent_label_is_readable(cli, tmp_path):
+    out = run_pair(cli, tmp_path)
+    assert "REDACTED" not in out["actors"][1]["actor"]
+
+
+def test_same_position_records_of_different_files_are_not_mistaken_for_copies(cli, tmp_path):
+    parent = session(cli, tmp_path, dx_task_started("t1", 1), dx_user("go", 2), dx_usage("resp_p", 100, 0, 11, 3),
+                     name="rollout-parent.jsonl")
+    sub = write_jsonl(tmp_path / f"{SUB_STEM}.jsonl", desktop([
+        dx_meta("s1", cli.repo, parent="p1"), dx_task_started("s-t1", 4), dx_user("brief", 5),
+        dx_usage("resp_s", 200, 0, 22, 6)]))
+    _, out = cli.json(parent, sub, "--host", "codex")
+    assert out["actors"][1]["tokens"]["output"] == 22 and out["tokens"]["output"] == 33
