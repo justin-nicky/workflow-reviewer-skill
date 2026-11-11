@@ -337,3 +337,62 @@ def test_codex_without_interruptions_reports_zero(cli, tmp_path):
     path = write_jsonl(tmp_path / "rollout-x.jsonl", [cx_meta("i", cli.repo), cx_user("go", 1)])
     _, out = cli.json(path, "--host", "codex")
     assert out["interruptions"] == {"count": 0, "turns": []}
+
+
+# ---- a transcript outside the tested version range is noted -----------------------------------
+
+def cc_versioned(tmp_path, version, records=None):
+    rec = cc_assistant("m", 5, usage=usage(1, 1))
+    rec["version"] = version
+    return write_jsonl(tmp_path / f"v-{version}.jsonl", [cc_user("go", 0), rec, *(records or [])])
+
+
+def test_newer_than_tested_version_is_noted_when_checks_pass(cli, tmp_path):
+    code, out = cli.json(cc_versioned(tmp_path, "2.1.321"), "--host", "claude-code")
+    assert code == 0
+    assert out["coverage"]["version_note"] == "newer than tested; checks passed"
+
+
+def test_older_than_tested_version_is_noted_when_checks_pass(cli, tmp_path):
+    _, out = cli.json(cc_versioned(tmp_path, "2.1.200"), "--host", "claude-code")
+    assert out["coverage"]["version_note"] == "older than tested; checks passed"
+
+
+def test_versions_inside_the_tested_range_get_no_note(cli, tmp_path):
+    for v in ("2.1.295", "2.1.300", "2.1.309"):
+        _, out = cli.json(cc_versioned(tmp_path, v), "--host", "claude-code")
+        assert out["coverage"]["version_note"] is None, v
+
+
+def test_version_comparison_is_numeric_not_textual(cli, tmp_path):
+    _, out = cli.json(cc_versioned(tmp_path, "2.1.1000"), "--host", "claude-code")
+    assert out["coverage"]["version_note"] == "newer than tested; checks passed"
+
+
+def test_newer_version_with_failing_checks_gets_the_drift_warning_instead(cli, tmp_path):
+    weird = [{"type": "assistant_v2", "n": i} for i in range(9)]
+    rec = cc_user("go", 0)
+    rec["version"] = "2.1.321"
+    path = write_jsonl(tmp_path / "d.jsonl", [rec, *weird])
+    code, out = cli.json(path, "--host", "claude-code")
+    assert code == 2
+    note = out["coverage"]["version_note"]
+    assert note == out["coverage"]["drift"]["warning"]
+    assert "2.1.321" in note and "checks passed" not in note
+
+
+def test_codex_prerelease_range_and_newer_version(cli, tmp_path):
+    path = write_jsonl(tmp_path / "rollout-x.jsonl", [
+        cx_meta("i", cli.repo, cli_version="0.162.0-alpha.17.2"), cx_user("go", 1), cx_tokens(1, 0, 1, 2)])
+    _, out = cli.json(path, "--host", "codex")
+    assert out["coverage"]["version_note"] == "newer than tested; checks passed"
+    inside = write_jsonl(tmp_path / "rollout-y.jsonl", [
+        cx_meta("i", cli.repo, cli_version="0.140.0"), cx_user("go", 1), cx_tokens(1, 0, 1, 2)])
+    _, out = cli.json(inside, "--host", "codex")
+    assert out["coverage"]["version_note"] is None
+
+
+def test_no_note_when_the_host_has_no_version_to_compare(cli, tmp_path):
+    cu = write_jsonl(tmp_path / "c.jsonl", [cu_user("go")])
+    _, out = cli.json(cu, "--host", "cursor")
+    assert out["coverage"]["version_note"] is None

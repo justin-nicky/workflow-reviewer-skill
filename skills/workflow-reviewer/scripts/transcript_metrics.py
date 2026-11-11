@@ -849,6 +849,30 @@ def drift_report(mapping, stats, events, threshold):
             "unseen_types": with_other(unseen, TOP_TYPES), "warning": warning}
 
 
+VERSION_RE = re.compile(r"\d+(?:\.\d+)+")
+
+
+def _version_tuple(text):
+    m = VERSION_RE.search(str(text))
+    return tuple(int(n) for n in m.group(0).split(".")) if m else None
+
+
+def version_note(version, tested, drift):
+    """Say when the transcript's version is outside the mapping's tested range.
+
+    Returns None when it is inside, or when either side has no comparable version.
+    """
+    seen = _version_tuple(version) if version else None
+    bounds = VERSION_RE.findall(str(tested or ""))
+    if seen is None or not bounds:
+        return None
+    lo, hi = _version_tuple(bounds[0]), _version_tuple(bounds[-1])
+    side = "newer" if seen > hi else "older" if seen < lo else None
+    if side is None:
+        return None
+    return f"{side} than tested; checks passed" if drift["ok"] else drift["warning"]
+
+
 def not_measurable(mapping):
     labels = {"has_tokens": "tokens", "has_timestamps": "time", "has_tool_results": "tool results",
               "has_ids": "message ids"}
@@ -1241,7 +1265,9 @@ def main(argv=None):
             drift = drift_report(mapping, stats, window, args.drift_threshold)
             out["coverage"] = {"host": host, "tested_versions": mapping.get("tested_versions"),
                                "mapping_source": source, "drift": drift,
-                               "ignored_types": with_other(stats["ignored_types"], TOP_TYPES), "transcript_version": stats["version"], "not_measurable": not_measurable(mapping),
+                               "ignored_types": with_other(stats["ignored_types"], TOP_TYPES), "transcript_version": stats["version"],
+                               "version_note": version_note(stats["version"], mapping.get("tested_versions"), drift),
+                               "not_measurable": not_measurable(mapping),
                                "capabilities": mapping["capabilities"], "last_record_ts": iso(last_ts),
                                "lag_note": lag, "window_note": window_note,
                                "truncated_last_line": stats["truncated_last_line"]}

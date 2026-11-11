@@ -58,6 +58,8 @@ Records the mapping deliberately skips are counted per type in `coverage.ignored
 
 Transcript formats are internal and change between releases. A mapping fits only if coverage is at least 90% of lines, required fields are present (usage when `has_tokens`, tool names), and unseen record types are listed.
 
+Outside the tested range the script adds `coverage.version_note`: `newer than tested; checks passed` (or `older than ...`) when the checks pass, or the drift warning when they fail.
+
 1. The script prints a warning quoting the mapping's `tested_versions` and exits with code 2.
 2. Run `--sample 20` for 20 redacted, truncated raw lines.
 3. Draft a **full override mapping** in the same TOML shape as `scripts/mappings/*.toml` (dotted paths, `[]` wildcards, `[k=v]` filters, equality matches only; no expressions).
