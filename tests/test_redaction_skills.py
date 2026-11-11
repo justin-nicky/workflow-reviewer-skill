@@ -330,3 +330,26 @@ def test_whole_secret_key_names_are_still_masked(cli, tmp_path):
         proc = cli.run(path, "--host", "claude-code", "--events", "0:0")
         assert secret not in proc.stdout, text
         assert "[REDACTED]" in proc.stdout, text
+
+
+# ---- actor labels: rollout ids are not secrets ----------------------------------------------
+
+def _subagent_labels(cli, tmp_path, stem):
+    from fixtures.builders import cx_meta, cx_tokens, cx_user
+    parent = write_jsonl(tmp_path / "rollout-parent.jsonl", [cx_meta("p", cli.repo), cx_user("go", 1), cx_tokens(1, 0, 1, 2)])
+    meta = cx_meta("s", cli.repo)
+    meta["payload"]["source"] = {"subagent": {"thread_spawn": {"parent_thread_id": "p"}}}
+    sub = write_jsonl(tmp_path / f"{stem}.jsonl", [meta, cx_user("brief", 3), cx_tokens(1, 0, 1, 4)])
+    _, out = cli.json(parent, sub, "--host", "codex")
+    return [a["actor"] for a in out["actors"]]
+
+
+def test_a_uuid_shaped_rollout_id_in_an_actor_label_is_not_redacted(cli, tmp_path):
+    stem = "rollout-2026-11-11T11-31-48-01000000-0000-7000-8000-00000000000a"
+    assert _subagent_labels(cli, tmp_path, stem) == ["main", f"subagent:{stem}"]
+
+
+def test_a_secret_in_the_same_label_is_still_redacted(cli, tmp_path):
+    secret = "rollout-aB3dE5gH7jK9mN1pQ3sT5vX7zA9cD1fG"
+    labels = _subagent_labels(cli, tmp_path, secret)
+    assert labels == ["main", "subagent:[REDACTED]"]

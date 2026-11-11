@@ -1077,7 +1077,10 @@ def _entropy(token):
     return -sum(n / len(token) * math.log2(n / len(token)) for n in counts.values())
 
 
-ID_RE = re.compile(r"^(?:toolu|srvtoolu|call|msg|req|resp|chatcmpl)_", re.I)
+ID_RE = re.compile(
+    r"^(?:toolu|srvtoolu|call|msg|req|resp|chatcmpl)_"
+    # a UUID or UUIDv7-like id, optionally after short hyphen-joined words (rollout-2026-11-11T11-31-48-<uuid>)
+    r"|^(?:[A-Za-z0-9]{1,8}-)*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 
 def _mask_token(m):
