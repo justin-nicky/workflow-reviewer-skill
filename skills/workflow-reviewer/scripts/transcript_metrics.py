@@ -22,7 +22,7 @@ import re
 import subprocess
 import time
 import tomllib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 MAPPING_DIR = Path(__file__).resolve().parent / "mappings"
@@ -235,6 +235,25 @@ def commands_from_script(script, pattern):
     return [js_string(m.group(1)) for m in re.finditer(pattern, script)]
 
 
+def prompt_time(text, spec):
+    """Epoch seconds from a clock the host writes inside the prompt, or None.
+
+    spec: regex (group 1 the date-time text, optional groups 2 and 3 the UTC offset hours and minutes)
+    and the strptime format of group 1.
+    """
+    m = re.search(spec["regex"], text)
+    if not m:
+        return None
+    try:
+        when = datetime.strptime(m.group(1).strip(), spec["format"])
+    except ValueError:
+        return None
+    hours = int(m.group(2)) if len(m.groups()) > 1 and m.group(2) else 0
+    minutes = int(m.group(3)) if len(m.groups()) > 2 and m.group(3) else 0
+    offset = timedelta(hours=hours, minutes=minutes if hours >= 0 else -minutes)
+    return when.replace(tzinfo=timezone(offset)).timestamp()
+
+
 def skill_names_in(text, block_pattern, item_pattern):
     """Names listed in the block of `text` the first pattern finds (its group 1), or None when there is no block."""
     block = re.search(block_pattern, text)
@@ -280,6 +299,7 @@ def parse_lines(lines, mapping, actor="main"):
               "event_id": get_first(obj, fields.get("event_id")), "non_turn": None,
               "interrupted": bool(rule.get("interrupt")), "turn_start": bool(rule.get("turn_start")),
               "usage_fallback": bool(rule.get("usage_fallback")), "turn_error": bool(rule.get("turn_error")),
+              "prompt_ts": prompt_time(get_text(obj, rule["text"]), rule["prompt_time"]) if rule.get("prompt_time") else None,
               "spawned_agent": get_first(obj, rule.get("spawned_agent")),
               "offered": get_first(obj, rule.get("offered_skills"))}
         if rule.get("offered_from"):                       # a skill list written as prose: block, then one name per item
@@ -689,6 +709,18 @@ def turn_error_summary(events, mapping):
         return None
     turns = [e["turn"] for e in events if e["turn_error"]]
     return {"count": len(turns), "turns": turns[:MAX_INTERRUPTION_TURNS]}
+
+
+COARSE_LABEL = "coarse: prompt timestamps only, minute precision; last turn's duration unknown"
+
+
+def coarse_time_summary(events):
+    """Wall time between the first and last prompt, for hosts that only write a clock inside prompts."""
+    stamps = [e["prompt_ts"] for e in events if e["actor"] == "main" and e["prompt_ts"] is not None]
+    if len(stamps) < 2:
+        return {"not_measurable": "fewer than two prompts carry a timestamp"}
+    na = {"not_measurable": "host records no timestamps beyond the prompt clock"}
+    return {"wall_s": round(max(stamps) - min(stamps)), "precision": COARSE_LABEL, "tool_s": na, "waiting_s": na}
 
 
 def time_summary(events, idle):
@@ -1164,9 +1196,15 @@ def version_note(version, tested, drift):
     return f"{side} than tested; checks passed" if drift["ok"] else drift["warning"]
 
 
+def has_prompt_clock(mapping):
+    return any(r.get("prompt_time") for r in mapping.get("records", []))
+
+
 def not_measurable(mapping):
     labels = {"has_tokens": "tokens", "has_timestamps": "time", "has_tool_results": "tool results",
               "has_ids": "message ids"}
+    if has_prompt_clock(mapping):                 # wall time is reported coarsely; only the rest is missing
+        labels["has_timestamps"] = "tool time and waiting time"
     return [f"{labels[k]} ({k}=false)" for k, v in mapping["capabilities"].items()
             if not v and k in labels]
 
@@ -1639,8 +1677,12 @@ def main(argv=None):
             turn_errors = turn_error_summary(window, mapping)
             if turn_errors is not None:
                 out["turn_errors"] = turn_errors
-            out["time"] = time_summary(window, args.idle_threshold) if mapping["capabilities"].get("has_timestamps") \
-                else {"not_measurable": "host records no timestamps"}
+            if mapping["capabilities"].get("has_timestamps"):
+                out["time"] = time_summary(window, args.idle_threshold)
+            elif has_prompt_clock(mapping):
+                out["time"] = coarse_time_summary(window)
+            else:
+                out["time"] = {"not_measurable": "host records no timestamps"}
             all_turns = turn_rows(window, mapping, args.verify_patterns)
             out["window"]["turns_total"] = len(all_turns)
             out["turns"] = cap_rows(all_turns, TOP_ROWS, "turn", "turns", "other")

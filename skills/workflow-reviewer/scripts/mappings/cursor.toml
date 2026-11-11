@@ -13,6 +13,8 @@ has_ids = false
 match = { role = "user" }
 role = "user"
 text = ["message.content[type=text].text", "message.content"]
+# Each prompt starts with <timestamp>Wednesday, Nov 11, 2026, 11:40 AM (UTC+4)</timestamp>.
+prompt_time = { regex = "<timestamp>\\s*([^<(]*?)\\s*(?:\\(UTC([+-]\\d+)(?::(\\d+))?\\))?\\s*</timestamp>", format = "%A, %b %d, %Y, %I:%M %p" }
 
 [[records]]
 match = { role = "assistant" }
