@@ -197,7 +197,7 @@ The audit only reports. It never edits code, skills or config, and it never writ
   - verify whether Claude Code compaction keeps writing to the same file;
   - verify Codex subagent linking (parent id or time);
   - verify Windows transcript paths for all three hosts;
-  - verify the forum report that Cursor ignores `disable-model-invocation` in `.agents/skills/`.
+  - (done) `disable-model-invocation` was verified in both `.cursor/skills/` and `.agents/skills/`.
 - Claude Code documents its transcript format as internal and changing between versions, so the drift path is expected to run in normal use.
 - `CODEX_THREAD_ID` is undocumented and may change.
 - Build phases: 0 verify formats; 1 tests/fixtures then engine, parser, shared code, analysis, redaction; 2 `SKILL.md`, references, template; 3 README, issue templates, sample report; 4 dry run on a real session (in chat, never committed); 5 a short LinkedIn draft plus a list of anything unverified.

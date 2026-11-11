@@ -310,7 +310,7 @@ Each finding records:
 |---|---|---|---|---|
 | Claude Code | `~/.claude/skills/`, project `.claude/skills/` (+ parents up to the repo root), plugin skills | `~/.claude/projects/<slug>/<session>.jsonl` + `<session>/subagents/*.jsonl`; moves with `CLAUDE_CONFIG_DIR` | `disable-model-invocation: true` ✅ official | full |
 | Codex | `.agents/skills/` (cwd up to the repo root), `~/.agents/skills/` (`~/.codex/skills` deprecated), `/etc/codex/skills` | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl` (default `~/.codex`) | `agents/openai.yaml`: `allow_implicit_invocation: false` ✅ official source | full (to confirm on a real rollout) |
-| Cursor | `.cursor/skills/`, `~/.cursor/skills/`, `.agents/skills/`, `~/.agents/skills/`, plus `.claude`/`.codex` compatibility folders | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` (unofficial) | `disable-model-invocation: true` ✅ official. **Install to `.cursor/skills/`**: a forum report says the field is ignored in `.agents/skills/` | no tokens, timestamps, tool results or ids |
+| Cursor | `.cursor/skills/`, `~/.cursor/skills/`, `.agents/skills/`, `~/.agents/skills/`, plus `.claude`/`.codex` compatibility folders | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` (unofficial) | `disable-model-invocation: true` ✅ official (verified in both `.cursor/skills/` and `.agents/skills/`) | no tokens, timestamps, tool results or ids |
 | Kiro | `.kiro/skills/`, `~/.kiro/skills/` | IDE: internal storage; CLI: SQLite in `~/.kiro/` (schema undocumented) | **none documented.** The description discourages auto-triggering; the README warns it may occasionally trigger on its own | degraded mode only |
 
 Per-OS paths are documented for each host. Windows paths are marked **unverified** until confirmed. The file also carries the drift procedure (§4.2).
@@ -378,7 +378,7 @@ workflow-reviewer/
 | The agent grades its own work | Numbers come from the script; every finding cites event indices; self-reported evidence is not allowed (D10) |
 | The wrong session is picked when several are open | Session id where available; otherwise ambiguity is listed and the user chooses (§3) |
 | Transcripts lag behind the live session | Truncated line ignored; lag note; window runs to the end of the file (§3) |
-| Explicit-only isn't enforceable on Kiro, and is reportedly ignored in Cursor's `.agents/skills/` | Discouraging description; install Cursor copies to `.cursor/skills/`; both documented |
+| Explicit-only isn't enforceable on Kiro | Discouraging description; documented |
 | `CODEX_THREAD_ID` is undocumented | Labelled as such; falls back to the newest transcript plus the ambiguity check |
 | Reports quote parts of transcripts | Redaction on by default; previews truncated; nothing written to disk |
 | A drafted mapping is wrong | Coverage check after the re-run; medium confidence label; mapping shown for review |
