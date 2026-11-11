@@ -1,6 +1,8 @@
 import subprocess
 import sys
 
+import pytest
+
 from conftest import SCRIPT
 from fixtures.builders import (cc_assistant, cc_bash_call, cc_tool_result, cc_user, tool_use,
                                usage, write_jsonl)
@@ -245,3 +247,46 @@ def test_windows_home_paths_are_masked_even_when_json_escapes_the_backslashes(cl
         proc = cli.run(path, "--host", "claude-code", "--events", "0:0", fmt=fmt)
         assert "alice" not in proc.stdout and "bob" not in proc.stdout, fmt
         assert "app.py" in proc.stdout and "src" in proc.stdout, fmt
+
+
+# ---- home is masked before long paths are shortened ----------------------------------------
+
+def edit_keys(cli, tmp_path, file_path):
+    path = write_jsonl(tmp_path / "s.jsonl", [
+        cc_user("go", 0),
+        cc_assistant("m", 2, [tool_use("Edit", {"file_path": file_path}, "c1")], usage(1, 1)),
+        cc_tool_result("c1", "done", 3),
+    ])
+    proc = cli.run(path, "--host", "claude-code")
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout
+
+
+def long_path(prefix, sep, length):
+    """A path of exactly `length` characters, so the 60-character cut lands at every spot in the prefix."""
+    tail = "src" + sep + "handler.py"
+    pad = length - len(prefix) - len(tail) - 1
+    return prefix + "d" * pad + sep + tail
+
+
+def assert_no_username_fragment(out, user):
+    for k in range(3, len(user) + 1):             # "tin/", "stin/", "alex/" ...
+        for sep in ("/", "\\", "\\\\"):
+            assert user[-k:] + sep not in out, (user[-k:], sep)
+    assert user not in out
+    assert "handler.py" in out
+
+
+@pytest.mark.parametrize("prefix,sep", [
+    ("/Users/alex/", "/"), ("/home/alex/", "/"), ("C:\\Users\\alex\\", "\\"),
+])
+@pytest.mark.parametrize("length", range(62, 80))
+def test_long_paths_do_not_leak_a_username_fragment_when_shortened(cli, tmp_path, prefix, sep, length):
+    out = edit_keys(cli, tmp_path, long_path(prefix, sep, length))
+    assert_no_username_fragment(out, "alex")
+
+
+@pytest.mark.parametrize("length", range(70, 90, 3))
+def test_long_paths_under_the_real_home_do_not_leak_a_fragment(cli, tmp_path, length):
+    out = edit_keys(cli, tmp_path, long_path(str(cli.home) + "/", "/", length + len(str(cli.home))))
+    assert_no_username_fragment(out, cli.home.name)

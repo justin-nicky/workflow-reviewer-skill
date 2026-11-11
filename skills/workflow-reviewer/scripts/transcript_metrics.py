@@ -601,6 +601,8 @@ def row_tokens(events, mapping):
 
 
 def short_path(path, n=60):
+    """Mask the home folder first, then shorten, so a cut can never leave a username fragment."""
+    path = mask_home(path)
     return path if len(path) <= n else "\u2026" + path[-(n - 1):]
 
 
@@ -887,18 +889,23 @@ def _mask_token(m):
     return t
 
 
-def redact(text):
+def mask_home(text):
+    """Replace this machine's home folder, and any /Users/x, /home/x or C:\\Users\\x, with ~."""
     home = str(Path.home())
     if len(home) > 1:
         for variant in (home.replace("\\", "\\\\"), home, Path.home().as_posix()):   # JSON-escaped first
             text = text.replace(variant, "~")
+    return WIN_HOME_RE.sub("~", HOME_RE.sub("~", text))
+
+
+def redact(text):
+    text = mask_home(text)
     for pat in SECRET_PATTERNS:
         text = re.sub(pat, "[REDACTED]", text)
     text = URL_CREDS_RE.sub(r"\1[REDACTED]\2", text)
     text = KEY_VALUE_RE.sub(r"\1[REDACTED]", text)
     text = JSON_KEY_RE.sub(r"\1[REDACTED]", text)
     text = EMAIL_RE.sub("[EMAIL]", text)
-    text = WIN_HOME_RE.sub("~", HOME_RE.sub("~", text))
     return TOKEN_RE.sub(_mask_token, text)
 
 
