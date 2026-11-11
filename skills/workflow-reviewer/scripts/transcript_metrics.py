@@ -120,6 +120,76 @@ def load_mapping(name=None, text=None):
     return tomllib.loads(text)
 
 
+# ---- variants: one mapping file may describe several transcript shapes ------------------------
+
+def resolve_variants(raw):
+    """A mapping with [[variants]] becomes one merged mapping per variant; otherwise just itself."""
+    variants = raw.get("variants")
+    if not variants:
+        return [raw]
+    base = {k: v for k, v in raw.items() if k != "variants"}
+    merged = []
+    for v in variants:
+        m = dict(base)
+        for k, val in v.items():
+            m[k] = {**base.get(k, {}), **val} if k in ("fields", "capabilities") and isinstance(val, dict) else val
+        m["variant"] = v.get("name")
+        merged.append(m)
+    return merged
+
+
+def version_in(version, spec):
+    """Is `version` inside a 'low to high' range string? False when either side has no version."""
+    seen = _version_tuple(version) if version else None
+    bounds = VERSION_RE.findall(str(spec or ""))
+    return bool(seen and bounds and _version_tuple(bounds[0]) <= seen <= _version_tuple(bounds[-1]))
+
+
+def score_variant(m, lines):
+    """How well one variant fits a sample: classified ratio, version seen, and unmet required markers."""
+    lines = [ln for ln in lines if ln.strip()][:300]
+    _, st = parse_lines(lines, m)
+    req = m.get("requires") or {}
+    types, fields_seen = set(), set()
+    for ln in lines:
+        try:
+            obj = json.loads(ln)
+        except ValueError:
+            continue
+        types.add(type_key(obj, m.get("type_path", "type")))
+        fields_seen.update(f for f in req.get("fields", []) if get_first(obj, f) is not None)
+    missing = [t for t in req.get("types", []) if t not in types] + \
+              [f for f in req.get("fields", []) if f not in fields_seen]
+    return {"ratio": st["classified"] / max(1, st["lines"]) if lines else 0.0,
+            "version": st["version"], "missing": missing}
+
+
+def choose_variant(raw, lines, want_score=False):
+    """Pick the variant by shape: best classified ratio among those whose required markers appear.
+
+    The optional `versions` range only breaks ties between equal shapes; listing order breaks the rest.
+    Returns (mapping, info) where info has variant, score, and, for several variants, scores and reason.
+    """
+    variants = resolve_variants(raw)
+    if len(variants) == 1:
+        score = score_variant(variants[0], lines)["ratio"] if want_score else None
+        return variants[0], {"variant": variants[0].get("variant"), "score": score, "scores": None, "reason": None}
+    scored = [(m, score_variant(m, lines)) for m in variants]
+    qualified = [ms for ms in scored if not ms[1]["missing"]]
+    pool = qualified or scored
+    top = max(round(sc["ratio"], 6) for _, sc in pool)
+    tied = [ms for ms in pool if round(ms[1]["ratio"], 6) == top]
+    matching = [ms for ms in tied if version_in(ms[1]["version"], ms[0].get("versions"))]
+    chosen = (matching or tied)[0]
+    if len(tied) == 1:
+        reason = "best classified ratio" if len(qualified) == len(scored) else "required markers met, best classified ratio"
+    else:
+        reason = "version range tiebreak" if 0 < len(matching) < len(tied) else "listed first"
+    return chosen[0], {"variant": chosen[0].get("variant"), "score": chosen[1]["ratio"],
+                       "scores": {m.get("variant"): round(100.0 * sc["ratio"], 1) for m, sc in scored},
+                       "reason": reason}
+
+
 # ---- parsing --------------------------------------------------------------------------
 
 def parse_ts(v):
@@ -859,18 +929,11 @@ def dedupe(events):
 
 # ---- host detection and drift -----------------------------------------------------------
 
-def classified_ratio(lines, mapping):
-    lines = [ln for ln in lines if ln.strip()][:300]
-    if not lines:
-        return 0.0
-    _, st = parse_lines(lines, mapping)
-    return st["classified"] / max(1, st["lines"])
-
-
 def detect_host(lines, forced):
     if forced != "auto":
         return forced
-    ratios = [(classified_ratio(lines, load_mapping(HOSTS[h])), -n, h) for n, h in enumerate(HOSTS)]
+    ratios = [(choose_variant(load_mapping(HOSTS[h]), lines, want_score=True)[1]["score"], -n, h)
+              for n, h in enumerate(HOSTS)]
     return max(ratios)[2]
 
 
@@ -1257,10 +1320,11 @@ def main(argv=None):
     host = detect_host(first_lines, args.host)
     if args.mapping:
         text = sys.stdin.read() if args.mapping == "-" else Path(args.mapping).read_text(encoding="utf-8")
-        mapping, source = load_mapping(text=text), "override"
-        mapping.setdefault("capabilities", {})
+        raw_mapping, source = load_mapping(text=text), "override"
+        raw_mapping.setdefault("capabilities", {})
     else:
-        mapping, source = load_mapping(HOSTS[host]), "builtin"
+        raw_mapping, source = load_mapping(HOSTS[host]), "builtin"
+    mapping, variant_info = choose_variant(raw_mapping, first_lines)
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
              "truncated_last_line": False, "version": None}
@@ -1333,13 +1397,16 @@ def main(argv=None):
                 lag = "latest turn may be incomplete: last record is under %ds old" % LAG_SECONDS
             drift = drift_report(mapping, stats, window, args.drift_threshold)
             out["coverage"] = {"host": host, "tested_versions": mapping.get("tested_versions"),
-                               "mapping_source": source, "drift": drift,
+                               "mapping_source": source, "variant": variant_info["variant"], "drift": drift,
                                "ignored_types": with_other(stats["ignored_types"], TOP_TYPES), "transcript_version": stats["version"],
                                "version_note": version_note(stats["version"], mapping.get("tested_versions"), drift),
                                "not_measurable": not_measurable(mapping),
                                "capabilities": mapping["capabilities"], "last_record_ts": iso(last_ts),
                                "lag_note": lag, "window_note": window_note,
                                "truncated_last_line": stats["truncated_last_line"]}
+            if variant_info["scores"]:
+                out["coverage"]["variant_choice"] = {"scores": variant_info["scores"],
+                                                     "reason": variant_info["reason"]}
             non_turn = {}
             for e in window:
                 if e["actor"] == "main" and e["role"] == "user" and e["non_turn"] and e["text"].strip():
