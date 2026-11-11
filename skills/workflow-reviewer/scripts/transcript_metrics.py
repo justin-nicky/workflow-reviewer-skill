@@ -223,10 +223,9 @@ def js_string(literal):
         return body
 
 
-def command_from_script(script, pattern):
-    """Commands a tool script passes as cmd:"…" (pattern's group 1 is the quoted literal), newline-joined."""
-    found = [js_string(m.group(1)) for m in re.finditer(pattern, script)]
-    return "\n".join(found) if found else None
+def commands_from_script(script, pattern):
+    """Each command a tool script passes as cmd:"…" (pattern's group 1 is the quoted literal), in order."""
+    return [js_string(m.group(1)) for m in re.finditer(pattern, script)]
 
 
 def skill_names_in(text, block_pattern, item_pattern):
@@ -292,12 +291,14 @@ def parse_lines(lines, mapping, actor="main"):
                         inp = json.loads(inp)
                     except ValueError:
                         pass
-                name = get_first(c, rule.get("call_name")) or ""
-                if rule.get("call_command_regex") and isinstance(inp, str):
-                    cmd = command_from_script(inp, rule["call_command_regex"])
-                    if cmd is not None:               # a script that runs a shell command is that command
-                        name, inp = rule.get("call_command_name", name), {"cmd": cmd}
-                ev["calls"].append({"name": name, "input": inp, "id": get_first(c, rule.get("call_id"))})
+                name, call_id = get_first(c, rule.get("call_name")) or "", get_first(c, rule.get("call_id"))
+                cmds = commands_from_script(inp, rule["call_command_regex"]) \
+                    if rule.get("call_command_regex") and isinstance(inp, str) else []
+                if cmds:                  # a script that runs shell commands: one call per command, never joined
+                    ev["calls"] += [{"name": rule.get("call_command_name", name), "input": {"cmd": cmd}, "id": call_id}
+                                    for cmd in cmds]
+                else:
+                    ev["calls"].append({"name": name, "input": inp, "id": call_id})
         if "results" in rule:
             for r in get_all(obj, rule["results"]):
                 code = get_first(r, rule.get("result_exit_code"))

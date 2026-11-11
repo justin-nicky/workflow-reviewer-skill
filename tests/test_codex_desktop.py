@@ -342,3 +342,15 @@ def test_the_skill_list_is_labelled_in_events_without_its_names(cli, tmp_path):
     _, out = cli.json(path, "--host", "codex", "--events", "0:3")
     labels = [e["text"] for e in out["events"] if e["text"].startswith("skill listing")]
     assert labels == ["skill listing (3 names)"] and "imagegen" not in str(out["events"])
+
+
+
+def test_several_cmds_in_one_exec_are_separate_commands_with_their_own_verify_check(cli, tmp_path):
+    js = ('const a = await tools.exec_command({cmd:"pytest -q"});\ntext(a.output);\n'
+          'const b = await tools.exec_command({cmd:"ls"});\ntext(b.output);\n')
+    out = run_cmds(cli, tmp_path, (dx_exec(js, "c1", 3), dx_exec_output("c1", 4)))
+    assert out["tools"]["by_category"] == {"shell": 2}
+    assert out["verify"]["total"] == 1 and out["verify"]["by_kind"] == {"test": 1}
+    _, ev = cli.json(session(cli, tmp_path / "e", dx_task_started("t1", 1), dx_exec(js, "c1", 3)),
+                     "--host", "codex", "--events", "0:9")
+    assert [c["command"] for e in ev["events"] for c in e["calls"]] == ["pytest -q", "ls"]
