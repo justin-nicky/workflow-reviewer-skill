@@ -19,6 +19,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import subprocess
 import time
 import tomllib
@@ -1132,6 +1133,9 @@ def link_subagents(events, metas, mapping, placed, main_ids=()):
         evs = [e for e in events if e["actor"] == actor]
         stem = actor.split(":", 1)[1]
         call_id = metas.get(actor, {}).get("call_id")
+        if metas.get(actor, {}).get("fixed_link"):           # the storage itself says whose chain this is
+            info[actor] = {"link": metas[actor]["fixed_link"], "call_id": None}
+            continue
         if call_id not in spawners:
             call_id = by_agent.get(stem[len(prefix):] if prefix and stem.startswith(prefix) else stem)
         spawner = spawners.get(call_id)
@@ -1639,6 +1643,192 @@ class JsonlReader:
                 yield Source(read_lines(file), str(file), main_file, file.stem, file)
 
 
+class ContainerProblem(Exception):
+    """A mapping or database that cannot be read: reported as exit 2 (drift)."""
+
+    def __init__(self, message, missing=None):
+        super().__init__(message)
+        self.missing = missing
+
+
+SQLITE_TABLES = {
+    "sessions": ("table", "id", "cwd", "created", "last_activity", "head"),
+    "nodes": ("table", "session", "id", "parent", "payload", "created"),
+    "subagent_heads": ("table", "session", "agent", "head"),          # optional
+}
+IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def sqlite_spec(raw):
+    """The mapping's table and column names, each checked to be a plain identifier before anything is opened."""
+    cfg = raw.get("container") or {}
+    spec = {}
+    for name, keys in SQLITE_TABLES.items():
+        part = cfg.get(name)
+        if part is None:
+            if name == "subagent_heads":
+                continue
+            raise ContainerProblem(f"mapping [container.{name}] is missing")
+        for key in keys:
+            value = part.get(key)
+            if value is None:
+                raise ContainerProblem(f"mapping [container.{name}] is missing '{key}'")
+            if not isinstance(value, str) or not IDENT_RE.match(value):
+                raise ContainerProblem(f"mapping [container.{name}] {key} is not a plain identifier; refusing to query")
+        spec[name] = dict(part)
+    return spec
+
+
+def quote_ident(name):
+    return '"' + name.replace('"', '""') + '"'
+
+
+def open_sqlite_readonly(path):
+    """Read-only, not immutable: a running app's WAL data is still included."""
+    try:
+        return sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        raise ContainerProblem(f"cannot open the database read-only: {exc}")
+
+
+def check_schema_in_db(conn, spec):
+    """Every named table and column must exist (checked against sqlite_master and table_info), and no table may be virtual."""
+    try:
+        tables = dict(conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'").fetchall())
+    except sqlite3.DatabaseError as exc:
+        raise ContainerProblem(f"not a readable SQLite database: {exc}")
+    missing = []
+    for name, part in spec.items():
+        table = part["table"]
+        if table not in tables:
+            missing.append(f"table {table}")
+            continue
+        if (tables[table] or "").lstrip().upper().startswith("CREATE VIRTUAL"):
+            raise ContainerProblem(f"table {table} is a virtual table; virtual and FTS tables are never read")
+        have = {row[1] for row in conn.execute(f"PRAGMA table_info({quote_ident(table)})")}
+        missing += [f"column {table}.{part[k]}" for k in SQLITE_TABLES[name] if k != "table" and part[k] not in have]
+    if missing:
+        raise ContainerProblem("the database does not match the mapping: missing " + ", ".join(missing), missing)
+
+
+def select_rows(conn, table, columns, where=None, params=()):
+    sql = f"SELECT {', '.join(quote_ident(c) for c in columns)} FROM {quote_ident(table)}"
+    if where:
+        sql += f" WHERE {quote_ident(where)} = ?"
+    return conn.execute(sql, params).fetchall()
+
+
+class SqliteReader:
+    """One session of a SQLite database: the chain of nodes from the head, plus one chain per subagent head."""
+    kind = "sqlite"
+
+    def __init__(self, conn, spec, session):
+        self.spec, self.session, self.notes = spec, session, []
+        self._build(conn)
+
+    def _build(self, conn):
+        nodes, sessions = self.spec["nodes"], self.spec["sessions"]
+        cols = [nodes[k] for k in ("session", "id", "parent", "created", "payload")]
+        rows = {}
+        for sess, nid, parent, created, payload in select_rows(conn, nodes["table"], cols, nodes["session"], (self.session["raw_id"],)):
+            rows[nid] = {"parent": parent, "payload": payload,
+                         "row": {nodes["session"]: sess, nodes["id"]: nid, nodes["parent"]: parent, nodes["created"]: created}}
+        self.main_lines, seen = self._chain(rows, self.session["head"])
+        self.sub_chains = []
+        heads = self.spec.get("subagent_heads")
+        if heads:
+            for _, agent, head in select_rows(conn, heads["table"], [heads["session"], heads["agent"], heads["head"]],
+                                              heads["session"], (self.session["raw_id"],)):
+                lines, ids = self._chain(rows, head)
+                self.sub_chains.append((str(agent), lines))
+                seen |= ids
+        self.off_chain = len(set(rows) - seen)
+        if self.off_chain:
+            self.notes.append(f"off-chain nodes: {self.off_chain}")
+
+    @staticmethod
+    def _chain(rows, head):
+        """Records from the root to `head` (a missing or looping parent ends the chain), and the node ids on it."""
+        chain, ids, nid = [], set(), head
+        while nid in rows and nid not in ids:
+            ids.add(nid)
+            chain.append(rows[nid])
+            nid = rows[nid]["parent"]
+        lines = []
+        for node in reversed(chain):
+            payload = node["payload"]
+            try:
+                record = json.loads(payload) if isinstance(payload, (str, bytes)) else payload
+            except ValueError:
+                record = {"payload": payload if isinstance(payload, str) else repr(payload)}
+            record = dict(record) if isinstance(record, dict) else {"payload": record}
+            record["$row"] = node["row"]
+            lines.append(json.dumps(record, ensure_ascii=False, default=str))
+        return lines, ids
+
+    def first_lines(self):
+        return self.main_lines
+
+    def sources(self, mapping):
+        label = f"sqlite:{self.session['id']}"
+        yield Source(self.main_lines, label, True)
+        for agent, lines in self.sub_chains:
+            yield Source(lines, f"{label}:{agent}", False, agent, None, "subagent_heads")
+
+
+def list_sqlite_sessions(conn, spec):
+    part = spec["sessions"]
+    cols = [part[k] for k in ("id", "cwd", "created", "last_activity", "head")]
+    return [{"raw_id": r[0], "id": str(r[0]), "cwd": r[1] or "", "created": parse_ts(r[2]), "last": parse_ts(r[3]),
+             "head": r[4]} for r in select_rows(conn, part["table"], cols)]
+
+
+def choose_sqlite_session(sessions, args, repo):
+    """(session, ambiguous_output). Same rules as jsonl: --session-id, else working-directory match and the most recent."""
+    if args.session_id:
+        return next((s for s in sessions if s["id"] == args.session_id), None), None
+    here = {str(repo.resolve()), str(repo)}
+    mine = sorted((s for s in sessions if s["cwd"] in here or str(Path(s["cwd"]).resolve()) in here),
+                  key=lambda s: s["last"] or 0, reverse=True)
+    recent = [s for s in mine if s["last"] is not None and time.time() - s["last"] < RECENT_SECONDS]
+    if len(recent) >= 2:
+        return None, {"ambiguous": [{"session": s["id"], "working_directory": mask_home(s["cwd"]),
+                                     "created": iso(s["created"]), "last_activity": iso(s["last"])} for s in recent],
+                      "note": "Several recent sessions; ask the user which one, then pass --session-id."}
+    return (mine[0] if mine else None), None
+
+
+
+def open_sqlite_session(args, repo, raw):
+    """(reader, None), or (None, (output, exit code)) when the database cannot be used."""
+    host = raw.get("host", "unknown")
+    conn = None
+    try:
+        spec = sqlite_spec(raw)                       # identifiers are vetted before the file is even looked at
+        default = (raw.get("container") or {}).get("default_path")
+        db = Path(args.paths[0]) if args.paths else (Path(os.path.expanduser(default)) if default else None)
+        if db is None or not db.is_file():
+            return None, (degraded_report(host, repo, [mask_home(str(db))] if db else []), EXIT_NO_TRANSCRIPT)
+        conn = open_sqlite_readonly(db)
+        check_schema_in_db(conn, spec)
+        session, ambiguous = choose_sqlite_session(list_sqlite_sessions(conn, spec), args, repo)
+        if ambiguous:
+            return None, (ambiguous, 3)
+        if session is None:
+            return None, (degraded_report(host, repo, [mask_home(str(db))]), EXIT_NO_TRANSCRIPT)
+        return SqliteReader(conn, spec, session), None
+    except ContainerProblem as exc:
+        out = {"error": str(exc)}
+        if exc.missing:
+            out["missing"] = exc.missing
+        return None, (out, 2)
+    except sqlite3.Error as exc:
+        return None, ({"error": f"database error: {exc}"}, 2)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -1663,41 +1853,49 @@ def main(argv=None):
         if error:
             emit({"error": error}, args.format, redact_on)
             return 2
-    paths = [Path(p) for p in args.paths]
-    resolved = []
-    for p in paths:
-        if p.is_dir():
-            main_file = main_transcript(p.resolve())
-            if main_file is None:
-                emit({"error": f"no main transcript found for session folder {p}",
-                      "note": "pass the .jsonl transcript, or a folder that holds or sits beside one"},
-                     args.format, redact_on)
-                return EXIT_NO_TRANSCRIPT
-            p = main_file
-        resolved.append(p)
-    paths = resolved
-    zst = [str(p) for p in paths if p.suffix == ".zst"]
-    if zst:
-        emit({"unsupported": zst, "note": "compressed rollouts are not supported; use a live .jsonl"},
-             args.format, redact_on)
-        return 4
-    if not paths:
-        paths, ambiguous = discover(args, repo)
-        if ambiguous:
-            emit(ambiguous, args.format, redact_on)
-            return 3
-    if not paths:
-        emit(degraded_report(args.host, repo, searched_locations(args.host, repo)), args.format, redact_on)
-        return EXIT_NO_TRANSCRIPT
-    reader = JsonlReader(paths)
-    first_lines = reader.first_lines()
-    host = detect_host(first_lines, args.host)
+    if override is not None and container_kind(override) == "sqlite":
+        reader, early = open_sqlite_session(args, repo, override)
+        if early:
+            emit(early[0], args.format, redact_on)
+            return early[1]
+        host = override.get("host", "unknown")
+        first_lines = reader.first_lines()
+    else:
+        paths = [Path(p) for p in args.paths]
+        resolved = []
+        for p in paths:
+            if p.is_dir():
+                main_file = main_transcript(p.resolve())
+                if main_file is None:
+                    emit({"error": f"no main transcript found for session folder {p}",
+                          "note": "pass the .jsonl transcript, or a folder that holds or sits beside one"},
+                         args.format, redact_on)
+                    return EXIT_NO_TRANSCRIPT
+                p = main_file
+            resolved.append(p)
+        paths = resolved
+        zst = [str(p) for p in paths if p.suffix == ".zst"]
+        if zst:
+            emit({"unsupported": zst, "note": "compressed rollouts are not supported; use a live .jsonl"},
+                 args.format, redact_on)
+            return 4
+        if not paths:
+            paths, ambiguous = discover(args, repo)
+            if ambiguous:
+                emit(ambiguous, args.format, redact_on)
+                return 3
+        if not paths:
+            emit(degraded_report(args.host, repo, searched_locations(args.host, repo)), args.format, redact_on)
+            return EXIT_NO_TRANSCRIPT
+        reader = JsonlReader(paths)
+        first_lines = reader.first_lines()
+        host = detect_host(first_lines, args.host)
     if override is not None:
         raw_mapping, source = override, "override"
     else:
         raw_mapping, source = load_mapping(HOSTS[host]), "builtin"
     schema_note = schema_check(raw_mapping)[1]
-    notes = [schema_note] if schema_note else []
+    notes = ([schema_note] if schema_note else []) + list(getattr(reader, "notes", []))
     mapping, variant_info = choose_variant(raw_mapping, first_lines)
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
@@ -1709,6 +1907,8 @@ def main(argv=None):
         lines = src.lines
         if not src.main:
             metas[actor] = read_subagent_meta(src.file, mapping, lines) if src.file else {}
+            if src.link:
+                metas[actor]["fixed_link"] = src.link
             lines, history = skip_copied_history(lines, mapping)
             if history:
                 metas[actor]["history"] = history
@@ -1787,6 +1987,8 @@ def main(argv=None):
                                "truncated_last_line": stats["truncated_last_line"]}
             if notes:
                 out["coverage"]["notes"] = notes
+            if reader.kind != "jsonl":
+                out["coverage"]["container"] = reader.kind
             if stats["skill_list_unparsed"]:
                 out["coverage"]["warnings"] = ["skill list found but not parsed; offered list may be incomplete"]
             if variant_info["scores"]:
