@@ -56,3 +56,53 @@ def test_desktop_version_is_a_tested_version_and_needs_no_note(cli, tmp_path):
     assert out["coverage"]["transcript_version"] == "0.162.0-alpha.17.2"
     assert "0.162.0-alpha.17.2" in out["coverage"]["tested_versions"]
     assert out["coverage"]["version_note"] is None
+
+
+# ---- turns: one per task_started ---------------------------------------------------------------
+
+ENV = "<environment_context>cwd</environment_context>"
+PAGE = "<external_codex_apps_open_page>page</external_codex_apps_open_page>"
+SKILL = "<skill><name>hello</name><path>/x/SKILL.md</path>steps</skill>"
+
+
+def test_a_turn_is_one_task_started_and_injected_context_is_counted_apart(cli, tmp_path):
+    path = session(cli, tmp_path,
+                   dx_task_started("t1", 1), dx_user(ENV, 2), dx_user(PAGE, 3), dx_user("first prompt", 4),
+                   dx_assistant("a", 5), dx_task_complete("t1", 6),
+                   dx_task_started("t2", 7), dx_user("[$hello](/x/SKILL.md) go", 8), dx_user(SKILL, 9),
+                   dx_assistant("b", 10), dx_task_complete("t2", 11))
+    _, out = cli.json(path, "--host", "codex")
+    assert out["window"]["turns_total"] == 2
+    assert [t["turn"] for t in out["turns"]] == [1, 2]
+    assert out["window"]["non_turn_user_records"] == {
+        "prefix:<environment_context>": 1, "prefix:<external_codex_apps_open_page>": 1, "prefix:<skill>": 1}
+
+
+def test_a_task_started_without_a_prompt_still_opens_a_turn(cli, tmp_path):
+    path = session(cli, tmp_path,
+                   dx_task_started("t1", 1), dx_user("one", 2), dx_assistant("a", 3),
+                   dx_task_started("t2", 4), dx_assistant("woken by an agent", 5),
+                   dx_task_started("t3", 6), dx_user("three", 7), dx_assistant("c", 8))
+    _, out = cli.json(path, "--host", "codex")
+    assert out["window"]["turns_total"] == 3
+
+
+def test_turn_previews_show_the_prompt_not_the_injected_context(cli, tmp_path):
+    path = session(cli, tmp_path, dx_task_started("t1", 1), dx_user(ENV, 2), dx_user("fix the bug", 3),
+                   dx_assistant("ok", 4))
+    _, out = cli.json(path, "--host", "codex", "--list-turns")
+    assert [t["preview"] for t in out["turns"]] == ["fix the bug"]
+
+
+def test_the_classic_variant_still_counts_user_messages(cli, tmp_path):
+    path = write_jsonl(tmp_path / "rollout-c.jsonl", [cx_meta("i", cli.repo), cx_user("a", 1), cx_user("b", 2)])
+    _, out = cli.json(path, "--host", "codex")
+    assert out["window"]["turns_total"] == 2
+
+
+def test_the_reviewer_invocation_turn_is_cut_whole_including_its_task_started(cli, tmp_path):
+    path = session(cli, tmp_path,
+                   dx_task_started("t1", 1), dx_user("build it", 2), dx_assistant("done", 3),
+                   dx_task_started("t2", 4), dx_user(ENV, 5), dx_user("$workflow-reviewer", 6), dx_assistant("x", 7))
+    _, out = cli.json(path, "--host", "codex")
+    assert out["window"]["reviewer_invocation_found"] and out["window"]["turns_total"] == 1

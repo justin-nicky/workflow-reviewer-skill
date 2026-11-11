@@ -249,7 +249,7 @@ def parse_lines(lines, mapping, actor="main"):
               "usage": None, "calls": [], "results": [],
               "ts": parse_ts(get_first(obj, rule.get("timestamp", fields.get("timestamp")))),
               "event_id": get_first(obj, fields.get("event_id")), "non_turn": None,
-              "interrupted": bool(rule.get("interrupt")),
+              "interrupted": bool(rule.get("interrupt")), "turn_start": bool(rule.get("turn_start")),
               "spawned_agent": get_first(obj, rule.get("spawned_agent")),
               "offered": get_first(obj, rule.get("offered_skills"))}
         if ev["role"] == "user":
@@ -577,21 +577,30 @@ def is_turn_start(ev):
 
 
 def assign_turns(events):
-    """Number main-agent user prompts as turns; every other event joins the current turn."""
+    """Number turns; every other event joins the current turn.
+
+    A host that marks turns itself (a rule with turn_start = true, e.g. Codex task_started) gets
+    one turn per marker. Otherwise each main-agent user prompt starts a turn.
+    """
+    marked = any(ev["actor"] == "main" and ev["turn_start"] for ev in events)
     turn = 1
     started = False
     for ev in events:
-        if is_turn_start(ev):
+        ev["turn_open"] = False
+        if (ev["actor"] == "main" and ev["turn_start"]) if marked else is_turn_start(ev):
             if started:
                 turn += 1
             started = True
+            ev["turn_open"] = True
         ev["turn"] = turn
 
 
 def reviewer_cut(events):
+    """Index of the event that opens the turn holding the latest /workflow-reviewer prompt."""
     for ev in reversed(events):
         if is_turn_start(ev) and REVIEWER_RE.search(ev["text"]):
-            return ev["i"]
+            opener = next((e for e in events if e["turn_open"] and e["turn"] == ev["turn"]), ev)
+            return min(opener["i"], ev["i"])
     return None
 
 

@@ -91,6 +91,15 @@ name = "desktop"
 versions = "0.162.0 to 9.0.0"
 requires = { fields = ["ordinal"] }
 
+# Injected context sent as user-role messages; not what the user typed.
+not_a_turn_prefixes = ["<environment_context>", "<external_codex_apps_open_page>", "<skill>"]
+
+# One turn per task_started.
+[[variants.records]]
+match = { type = "event_msg", "payload.type" = "task_started" }
+role = "meta"
+turn_start = true
+
 [[variants.records]]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
 role = "ignore"
@@ -144,7 +153,7 @@ match = { type = ["session_meta", "turn_context", "world_state", "inter_agent_co
 role = "ignore"
 
 [[variants.records]]
-match = { type = "event_msg", "payload.type" = ["task_started", "task_complete", "item_completed", "thread_settings_applied", "turn_aborted"] }
+match = { type = "event_msg", "payload.type" = ["task_complete", "item_completed", "thread_settings_applied", "turn_aborted"] }
 role = "ignore"
 
 [[variants.records]]
