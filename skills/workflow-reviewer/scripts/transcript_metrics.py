@@ -1422,7 +1422,7 @@ def is_offered(name, offered):
 
 def skills_summary(events, host, repo, offered=None):
     results = {r["id"]: r for e in events for r in e["results"] if r["id"] is not None}
-    loaded = {}
+    loaded, reads = {}, []
     for name, how, size in invoked_skills(events, host):
         loaded.setdefault(name, {"name": name, "detected_by": how, "bytes": size})
     for ev in events:
@@ -1437,10 +1437,15 @@ def skills_summary(events, host, repo, offered=None):
                 parts = tuple(p for p in re.split(r"[\\/]+", path) if p)
                 if "skills" not in parts or parts.index("skills") + 1 >= len(parts) - 1:
                     continue
-                name = parts[parts.index("skills") + 1]
-                entry = loaded.setdefault(name, {"name": name, "detected_by": "SKILL.md read", "bytes": 0})
                 res = results.get(c["id"])
-                entry["bytes"] = (entry["bytes"] or 0) + (res["bytes"] if res else 0)
+                reads.append((parts[parts.index("skills") + 1], parts[-1] == "SKILL.md" and parts[-2] == parts[parts.index("skills") + 1],
+                              res["bytes"] if res else 0))
+    for name, is_skill_md, _ in reads:         # only a read of <name>/SKILL.md means the skill was used
+        if is_skill_md:
+            loaded.setdefault(name, {"name": name, "detected_by": "read SKILL.md", "bytes": 0})
+    for name, _, size in reads:                # other files of a used skill add to its size
+        if name in loaded:
+            loaded[name]["bytes"] = (loaded[name]["bytes"] or 0) + size
     inventory = skill_inventory(host, repo)
     sizes = {i["name"]: i["bytes"] for i in inventory}
     for entry in loaded.values():

@@ -104,3 +104,29 @@ def test_without_a_link_the_brief_fallback_is_named(cli, tmp_path):
                          [cu_user("explore the repo layout"), cu_assistant("done")])
     _, out = cli.json(sid, "--host", "cursor")
     assert out["actors"][1]["link"] == "brief"
+
+
+# ---- automatic skill use: a read of <name>/SKILL.md ------------------------------------------------------
+
+def loaded(out):
+    return {s["name"]: s["detected_by"] for s in out["skills"]["loaded"]}
+
+
+def test_a_read_of_skill_md_without_an_attached_block_is_automatic_use(cli, tmp_path):
+    out = run(cli, tmp_path, cu_user("greet me"),
+              cu_assistant("ok", [("Read", {"path": "/x/.cursor/skills/mango-greeting/SKILL.md"})]), cu_turn_ended())
+    assert loaded(out) == {"mango-greeting": "read SKILL.md"}
+    assert out["skills"]["used"] == ["mango-greeting"]
+
+
+def test_an_attached_skill_that_is_also_read_stays_attached(cli, tmp_path):
+    attached = ("<manually_attached_skills>\nSkill Name: hello\nPath: /x/.cursor/skills/hello/SKILL.md\nsteps\n"
+                "</manually_attached_skills>")
+    out = run(cli, tmp_path, cu_user(attached),
+              cu_assistant("ok", [("Read", {"path": "/x/.cursor/skills/hello/SKILL.md"})]), cu_turn_ended())
+    assert loaded(out) == {"hello": "attached skill"}
+
+
+def test_reading_a_file_that_merely_sits_under_a_skills_folder_is_not_a_use(cli, tmp_path):
+    out = run(cli, tmp_path, cu_user("x"), cu_assistant("ok", [("Read", {"path": "/x/.cursor/skills/hello/notes.md"})]))
+    assert loaded(out) == {}

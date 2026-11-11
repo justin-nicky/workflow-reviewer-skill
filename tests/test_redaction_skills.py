@@ -87,7 +87,7 @@ def test_skills_loaded_inventory_and_instruction_files(cli, tmp_path):
     _, out = cli.json(path, "--host", "claude-code")
     loaded = {s["name"]: s for s in out["skills"]["loaded"]}
     assert loaded["tdd"]["detected_by"] == "skill-tool"
-    assert loaded["foo"]["detected_by"] == "SKILL.md read"
+    assert loaded["foo"]["detected_by"] == "read SKILL.md"
     assert loaded["foo"]["bytes"] == 1734
     names = sorted(s["name"] for s in out["skills"]["inventory"])
     assert names == ["bar", "foo"]                       # deduped, host-limited
