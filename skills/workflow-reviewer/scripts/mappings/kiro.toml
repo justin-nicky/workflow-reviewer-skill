@@ -1,0 +1,13 @@
+# Kiro: no readable transcript yet (IDE storage is internal; the CLI keeps an undocumented SQLite file).
+# Only the skill folders are known, so the degraded report can list them.
+host = "kiro"
+schema_version = 1
+tested_versions = "no transcript support"
+
+[[skill_folders]]
+path = ".kiro/skills"
+scope = "project"
+walk = false
+[[skill_folders]]
+path = "~/.kiro/skills"
+scope = "user"

@@ -14,6 +14,15 @@ not_a_turn_prefixes = [
   "<task-notification>", "<system-reminder>", "[Request interrupted by user",
 ]
 
+[[skill_folders]]
+path = ".claude/skills"
+scope = "project"
+[[skill_folders]]
+path = "skills"
+base = "~/.claude"
+base_env = "CLAUDE_CONFIG_DIR"
+scope = "user"
+
 # Where a subagent's sidecar file sits and which of its fields name the spawning call and model.
 [subagents]
 meta_file = "{stem}.meta.json"

@@ -10,6 +10,10 @@ host = "dbhost"
 schema_version = 1
 type_path = "type"
 
+[[skill_folders]]
+path = ".dbhost/skills"
+scope = "project"
+
 [container]
 kind = "sqlite"
 default_path = "~/dbhost/sessions.db"

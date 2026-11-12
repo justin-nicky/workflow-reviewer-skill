@@ -7,6 +7,19 @@ type_path = ["type", "payload.type"]
 # A rollout whose first record has this field is a subagent's, never the main conversation.
 subagent_marker = "payload.source.subagent"
 
+[[skill_folders]]
+path = ".agents/skills"
+scope = "project"
+[[skill_folders]]
+path = "~/.agents/skills"
+scope = "user"
+[[skill_folders]]
+path = "~/.codex/skills"
+scope = "user"
+[[skill_folders]]
+path = "/etc/codex/skills"
+scope = "system"
+
 # A subagent's rollout names its parent thread. When it was forked it starts with a copy of the parent's
 # history; its own records begin at the ordinal in its first record.
 [subagents]

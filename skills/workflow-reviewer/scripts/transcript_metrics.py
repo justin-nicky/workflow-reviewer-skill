@@ -27,7 +27,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 MAPPING_DIR = Path(__file__).resolve().parent / "mappings"
-HOSTS = {"claude-code": "claude_code", "codex": "codex", "cursor": "cursor"}
+HOSTS = {"claude-code": "claude_code", "codex": "codex", "cursor": "cursor"}      # picked by auto-detection
+SQLITE_HOSTS = {"devin": "devin"}                  # named with --host; kept out of auto-detection
 
 
 # ---- mapping engine: dotted paths, [] wildcards, [k=v] filters, no eval ----------------
@@ -1374,29 +1375,39 @@ def emit(out, fmt, do_redact):
 
 # ---- skills, instruction files, degraded mode ---------------------------------------------
 
-def skill_dirs(host, repo):
-    """Skill folders the host loads, as (path, scope): user-level, system-wide or project."""
+def skill_dirs(folders, repo):
+    """Skill folders a mapping declares, as (path, scope). `path` is relative (the repo and up to four
+    parents, or the repo alone with walk = false), starts with ~ (home), is absolute, or sits under a
+    `base` that an environment variable (`base_env`) may replace."""
     home = Path.home()
     parents = [p for p in [repo, *list(repo.parents)[:4]] if p != home]       # home holds user-level skills
-    project = lambda *rel: [(p.joinpath(*rel), "project") for p in parents]
-    if host == "claude-code":
-        cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude")
-        return project(".claude", "skills") + [(cfg / "skills", "user")]
-    if host == "codex":
-        return (project(".agents", "skills") + [(home / ".agents" / "skills", "user"),
-                (home / ".codex" / "skills", "user"), (Path("/etc/codex/skills"), "system")])
-    if host == "cursor":
-        return ([(repo / ".cursor" / "skills", "project"), (home / ".cursor" / "skills", "user")]
-                + project(".agents", "skills") + [(home / ".agents" / "skills", "user"),
-                   (repo / ".claude" / "skills", "project"), (home / ".claude" / "skills", "user"),
-                   (repo / ".codex" / "skills", "project")])
-    return [(repo / ".kiro" / "skills", "project"), (home / ".kiro" / "skills", "user")]
+    found = []
+    for f in folders or []:
+        path, scope = f["path"], f.get("scope", "project")
+        if f.get("base") or f.get("base_env"):
+            base = os.environ.get(f.get("base_env", "")) or f.get("base", "~")
+            found.append((Path(os.path.expanduser(base)) / path, scope))
+        elif path.startswith("~") or Path(path).is_absolute():
+            found.append((Path(os.path.expanduser(path)), scope))
+        elif f.get("walk", True):
+            found += [(p / path, scope) for p in parents]
+        else:
+            found.append((repo / path, scope))
+    return found
 
 
-def skill_inventory(host, repo):
-    """One entry per distinct (name, content); `scopes` says where its copies live."""
+def builtin_folders(host):
+    """The skill folders of a built-in host's mapping (None for a host with no mapping of its own)."""
+    name = {**HOSTS, "kiro": "kiro", **SQLITE_HOSTS}.get("claude-code" if host == "auto" else host)
+    return load_mapping(name).get("skill_folders") if name else None
+
+
+def skill_inventory(folders, repo):
+    """One entry per distinct (name, content); `scopes` says where its copies live. None when no folders are declared."""
+    if not folders:
+        return None
     entries = {}
-    for base, scope in skill_dirs(host, repo):
+    for base, scope in skill_dirs(folders, repo):
         for md in sorted(base.glob("*/SKILL.md")):
             try:
                 data = md.read_bytes()
@@ -1412,6 +1423,9 @@ def skill_inventory(host, repo):
             entries[key] = {"name": md.parent.name, "description_chars": len(desc), "bytes": len(data),
                             "scopes": [scope]}
     return list(entries.values())
+
+
+NO_FOLDERS = "skill folders unknown for this host"
 
 
 def instruction_files(repo):
@@ -1481,7 +1495,7 @@ def is_offered(name, offered):
     return name in offered or any(o.endswith(":" + name) for o in offered)
 
 
-def skills_summary(events, host, repo, offered=None):
+def skills_summary(events, host, repo, offered=None, folders=None):
     results = {r["id"]: r for e in events for r in e["results"] if r["id"] is not None}
     loaded, reads = {}, []
     for name, how, size in invoked_skills(events, host):
@@ -1507,7 +1521,9 @@ def skills_summary(events, host, repo, offered=None):
     for name, _, size in reads:                # other files of a used skill add to its size
         if name in loaded:
             loaded[name]["bytes"] = (loaded[name]["bytes"] or 0) + size
-    inventory = skill_inventory(host, repo)
+    inventory = skill_inventory(folders, repo)
+    no_folders = inventory is None
+    inventory = inventory or []
     sizes = {i["name"]: i["bytes"] for i in inventory}
     for entry in loaded.values():
         if entry["bytes"] is None:
@@ -1523,7 +1539,10 @@ def skills_summary(events, host, repo, offered=None):
         summary["offered"] = {"total": len(offered), "names": offered[:TOP_OFFERED]}
         summary["used_not_offered"] = [n for n in loaded if not is_offered(n, offered)][:TOP_LOADED_SKILLS]
         summary["offered_note"] = "a skill used but not offered is normal for explicit-only skills"
-    summary.update(inventory=shown, inventory_total=len(inventory), instruction_files=instruction_files(repo))
+    summary.update(inventory=shown, inventory_total=None if no_folders else len(inventory),
+                   instruction_files=instruction_files(repo))
+    if no_folders:
+        summary["inventory_note"] = NO_FOLDERS
     return summary
 
 
@@ -1551,12 +1570,12 @@ def searched_locations(host, repo):
     return [str(where[h]) for h in (HOSTS if host == "auto" else [host]) if h in where]
 
 
-def degraded_report(host, repo, searched=None):
+def degraded_report(host, repo, searched=None, folders=None):
     report = {"mode": "degraded", "confidence_cap": "medium",
               "evidence_rule": "No usable transcript. The agent's own recollection is never evidence; "
                                "only the working tree, the diff and repo records below count.",
               "git": working_tree_report(repo),
-              "skills": {"inventory": skill_inventory(host if host != "auto" else "claude-code", repo),
+              "skills": {"inventory": skill_inventory(folders or builtin_folders(host), repo) or [],
                          "instruction_files": instruction_files(repo)}}
     if searched is not None:
         report.update(transcript_found=False, searched=searched)
@@ -1819,14 +1838,14 @@ def open_sqlite_session(args, repo, raw):
         default = (raw.get("container") or {}).get("default_path")
         db = Path(args.paths[0]) if args.paths else (Path(os.path.expanduser(default)) if default else None)
         if db is None or not db.is_file():
-            return None, (degraded_report(host, repo, [mask_home(str(db))] if db else []), EXIT_NO_TRANSCRIPT)
+            return None, (degraded_report(host, repo, [mask_home(str(db))] if db else [], raw.get("skill_folders")), EXIT_NO_TRANSCRIPT)
         conn = open_sqlite_readonly(db)
         check_schema_in_db(conn, spec)
         session, ambiguous = choose_sqlite_session(list_sqlite_sessions(conn, spec), args, repo)
         if ambiguous:
             return None, (ambiguous, 3)
         if session is None:
-            return None, (degraded_report(host, repo, [mask_home(str(db))]), EXIT_NO_TRANSCRIPT)
+            return None, (degraded_report(host, repo, [mask_home(str(db))], raw.get("skill_folders")), EXIT_NO_TRANSCRIPT)
         return SqliteReader(conn, spec, session), None
     except ContainerProblem as exc:
         out = {"error": str(exc)}
@@ -1896,7 +1915,8 @@ def main(argv=None):
                 emit(ambiguous, args.format, redact_on)
                 return 3
         if not paths:
-            emit(degraded_report(args.host, repo, searched_locations(args.host, repo)), args.format, redact_on)
+            emit(degraded_report(args.host, repo, searched_locations(args.host, repo),
+                              override.get("skill_folders") if override else None), args.format, redact_on)
             return EXIT_NO_TRANSCRIPT
         reader = JsonlReader(paths)
         first_lines = reader.first_lines()
@@ -2027,7 +2047,9 @@ def main(argv=None):
             out["turns"] = cap_rows(all_turns, TOP_ROWS, "turn", "turns", "other")
             out["actors"] = cap_rows(actor_rows(window, mapping, args.verify_patterns, links, metas), TOP_ROWS,
                                      "actor", "actors", "other", keep="main")
-            out["skills"] = skills_summary(window, host, repo, offered_skills(events))
+            out["skills"] = skills_summary(window, host, repo, offered_skills(events), raw_mapping.get("skill_folders"))
+            if out["skills"].get("inventory_note"):
+                out["coverage"].setdefault("notes", []).append(out["skills"]["inventory_note"])
     emit(out, args.format, redact_on)
     return 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
 

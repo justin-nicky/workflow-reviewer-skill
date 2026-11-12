@@ -6,7 +6,7 @@ import pytest
 from fixtures.builders import cu_assistant, cu_user, write_jsonl
 
 MAPPINGS = Path(__file__).resolve().parent.parent / "skills" / "workflow-reviewer" / "scripts" / "mappings"
-BODY = ('host = "x"\ntype_path = "role"\n[capabilities]\nhas_tokens = false\n'
+BODY = ('host = "x"\ntype_path = "role"\n[[skill_folders]]\npath = ".x/skills"\n[capabilities]\nhas_tokens = false\n'
         '[[records]]\nmatch = { role = "user" }\nrole = "user"\ntext = ["message.content[type=text].text"]\n'
         '[[records]]\nmatch = { role = "assistant" }\nrole = "assistant"\n')
 

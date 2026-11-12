@@ -4,6 +4,31 @@ schema_version = 1
 tested_versions = "version not recorded"
 type_path = ["role", "type"]
 
+[[skill_folders]]
+path = ".cursor/skills"
+scope = "project"
+walk = false
+[[skill_folders]]
+path = "~/.cursor/skills"
+scope = "user"
+[[skill_folders]]
+path = ".agents/skills"
+scope = "project"
+[[skill_folders]]
+path = "~/.agents/skills"
+scope = "user"
+[[skill_folders]]
+path = ".claude/skills"
+scope = "project"
+walk = false
+[[skill_folders]]
+path = "~/.claude/skills"
+scope = "user"
+[[skill_folders]]
+path = ".codex/skills"
+scope = "project"
+walk = false
+
 # The parent's assistant text links to each subagent by id: [description](<subagent-id>).
 [subagents]
 link_regex = "\\]\\(<?([0-9A-Fa-f-]{36})>?\\)"
