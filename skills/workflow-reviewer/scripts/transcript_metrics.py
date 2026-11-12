@@ -21,6 +21,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import tempfile
 import time
 import tomllib
 from datetime import datetime, timedelta, timezone
@@ -1708,6 +1709,505 @@ def load_config(repo):
         return {}
 
 
+# ---- report: judgments from the agent, every number from the metrics run ----------------------------------------
+
+EXIT_FINDINGS = 7
+IMPACT, EFFORT, RISK, CONFIDENCE = ("high", "medium", "low"), ("low", "medium", "high"), ("low", "medium", "high"), ("high", "medium", "low")
+VERDICTS = ("keep", "improve", "merge", "gap", "overlap", "none")
+METRIC_IDS = ("calls", "output", "cache", "fresh", "context", "tools", "time", "verify", "subagents", "interruptions", "tokens")
+FINDINGS_KEYS = ("schema_version", "title", "bottom_line", "actions", "skills", "closing_question", "metric_notes")
+ACTION_KEYS = ("title", "impact", "effort", "risk", "confidence", "why", "what")
+LIMIT = {"title": 80, "bottom_line": 300, "action_title": 100, "text": 300, "evidence": 160, "skill_name": 60,
+         "skill_evidence": 240, "closing": 300, "note": 120, "actions": 5, "evidence_items": 3, "skills": 20, "overlaps": 5}
+MD_LINES = 80
+
+
+def _text(errors, path, value, limit):
+    if not isinstance(value, str):
+        errors.append(f"{path}: must be text")
+    elif not value.strip():
+        errors.append(f"{path}: must not be empty")
+    elif len(value) > limit:
+        errors.append(f"{path}: {len(value)} characters, the limit is {limit}")
+
+
+def _object(errors, path, value, required, optional=()):
+    if not isinstance(value, dict):
+        errors.append(f"{path}: must be an object")
+        return False
+    errors += [f"{path}: unknown key '{k}' (allowed: {', '.join((*required, *optional))})" for k in value if k not in (*required, *optional)]
+    errors += [f"{path}: missing key '{k}'" for k in required if k not in value]
+    return True
+
+
+def _enum(errors, path, value, allowed):
+    if value not in allowed:
+        errors.append(f"{path}: must be one of {', '.join(allowed)} (got {value!r})")
+
+
+def validate_findings(data):
+    """Every problem in the agent's findings, as readable lines; an empty list means they are valid."""
+    errors = []
+    if not _object(errors, "findings", data, ("schema_version", "title", "bottom_line", "actions"), FINDINGS_KEYS[4:]):
+        return errors
+    if data.get("schema_version") != 1 or isinstance(data.get("schema_version"), bool):
+        errors.append(f"schema_version: must be 1 (got {data.get('schema_version')!r})")
+    if "title" in data:
+        _text(errors, "title", data["title"], LIMIT["title"])
+    if "bottom_line" in data:
+        _text(errors, "bottom_line", data["bottom_line"], LIMIT["bottom_line"])
+    actions = data.get("actions", [])
+    if not isinstance(actions, list):
+        errors.append("actions: must be a list")
+        actions = []
+    elif len(actions) > LIMIT["actions"]:
+        errors.append(f"actions: {len(actions)} items, the limit is {LIMIT['actions']}")
+    ranks = []
+    for i, action in enumerate(actions):
+        at = f"actions[{i}]"
+        if not _object(errors, at, action, ACTION_KEYS):
+            continue
+        if "title" in action:
+            _text(errors, f"{at}.title", action["title"], LIMIT["action_title"])
+        for key, allowed in (("impact", IMPACT), ("effort", EFFORT), ("risk", RISK), ("confidence", CONFIDENCE)):
+            if key in action:
+                _enum(errors, f"{at}.{key}", action[key], allowed)
+        if action.get("impact") in IMPACT:
+            ranks.append((i, IMPACT.index(action["impact"])))
+        if "why" in action and _object(errors, f"{at}.why", action["why"], ("cause", "cost", "evidence")):
+            for key in ("cause", "cost"):
+                if key in action["why"]:
+                    _text(errors, f"{at}.why.{key}", action["why"][key], LIMIT["text"])
+            ev = action["why"].get("evidence")
+            if "evidence" in action["why"]:
+                if not isinstance(ev, list):
+                    errors.append(f"{at}.why.evidence: must be a list")
+                else:
+                    if len(ev) > LIMIT["evidence_items"]:
+                        errors.append(f"{at}.why.evidence: {len(ev)} items, the limit is {LIMIT['evidence_items']}")
+                    for j, item in enumerate(ev):
+                        _text(errors, f"{at}.why.evidence[{j}]", item, LIMIT["evidence"])
+        if "what" in action and _object(errors, f"{at}.what", action["what"], ("change", "safe_because", "watch_for")):
+            for key in ("change", "safe_because", "watch_for"):
+                if key in action["what"]:
+                    _text(errors, f"{at}.what.{key}", action["what"][key], LIMIT["text"])
+    for (_, before), (i, after) in zip(ranks, ranks[1:]):
+        if after < before:
+            errors.append(f"actions[{i}].impact: {actions[i]['impact']} comes after a lower impact; order actions high, then medium, then low")
+    skills = data.get("skills", [])
+    if not isinstance(skills, list):
+        errors.append("skills: must be a list")
+        skills = []
+    elif len(skills) > LIMIT["skills"]:
+        errors.append(f"skills: {len(skills)} items, the limit is {LIMIT['skills']}")
+    for i, skill in enumerate(skills):
+        at = f"skills[{i}]"
+        if not _object(errors, at, skill, ("name", "verdict", "evidence"), ("overlaps_with",)):
+            continue
+        if "name" in skill:
+            _text(errors, f"{at}.name", skill["name"], LIMIT["skill_name"])
+        if "verdict" in skill:
+            _enum(errors, f"{at}.verdict", skill["verdict"], VERDICTS)
+        if "evidence" in skill:
+            _text(errors, f"{at}.evidence", skill["evidence"], LIMIT["skill_evidence"])
+        if "overlaps_with" in skill:
+            names = skill["overlaps_with"]
+            if not isinstance(names, list) or len(names) > LIMIT["overlaps"]:
+                errors.append(f"{at}.overlaps_with: must be a list of at most {LIMIT['overlaps']} names")
+            else:
+                for j, name in enumerate(names):
+                    _text(errors, f"{at}.overlaps_with[{j}]", name, LIMIT["skill_name"])
+    if "closing_question" in data:
+        _text(errors, "closing_question", data["closing_question"], LIMIT["closing"])
+        if not any(isinstance(s, dict) and s.get("verdict") == "gap" for s in skills):
+            errors.append("closing_question: allowed only when at least one skill has the verdict gap")
+    notes = data.get("metric_notes")
+    if "metric_notes" in data:
+        if not isinstance(notes, dict):
+            errors.append("metric_notes: must be an object")
+        else:
+            for key, value in notes.items():
+                if key not in METRIC_IDS:
+                    errors.append(f"metric_notes: unknown metric '{key}' (allowed: {', '.join(METRIC_IDS)})")
+                else:
+                    _text(errors, f"metric_notes.{key}", value, LIMIT["note"])
+    return errors
+
+
+def read_findings(stream):
+    """(findings, errors). Not JSON is an error like any other."""
+    try:
+        data = json.loads(stream.read())
+    except ValueError as exc:
+        return None, [f"findings must be one JSON object: {exc}"]
+    errors = validate_findings(data)
+    return (None if errors else data), errors
+
+
+def fmt_tokens(n):
+    n = int(n)
+    if n >= 1_000_000:
+        return f"{n / 1e6:.2f}M"
+    if n >= 100_000:
+        return f"{round(n / 1000)}K"
+    if n >= 1000:
+        return f"{n / 1000:.1f}K"
+    return str(n)
+
+
+def fmt_pct(p):
+    return "under 0.1%" if 0 < p < 0.1 else f"{p:.1f}%"
+
+
+def fmt_secs(s):
+    s = int(s)
+    return f"{s} s" if s < 60 else f"{s / 60:.0f} min" if s < 3600 else f"{s / 3600:.1f} h"
+
+
+HOST_NAMES = {"claude-code": "Claude Code", "codex": "Codex", "cursor": "Cursor", "devin": "Devin"}
+
+
+def scope_line(out, now):
+    cov, win = out["coverage"], out["window"]
+    host = HOST_NAMES.get(cov["host"], str(cov["host"]).title())
+    lo, total = win["from_turn"], win["turns_total"]
+    span = "No turns" if not total else f"Turn {lo}" if total == 1 else f"Turns {lo}–{lo + total - 1}"
+    return f"{span} of one {host} session, reviewed on {now.day} {now:%b %Y}"
+
+
+def token_parts(out):
+    t = out["tokens"]
+    if "not_measurable" in t:
+        return None
+    parts = [("read", "Cache read", t["cache_read"]), ("write", "Cache write", t["cache_write"]),
+             ("output", "Output", t["output"]), ("fresh", "Fresh input", t["fresh_input"])]
+    total = sum(v for _, _, v in parts)
+    return [(k, label, v, 100.0 * v / total) for k, label, v in parts], total
+
+
+def metric_rows(out):
+    """(id, label, value) rows; every value is computed here from the metrics run."""
+    t, rows = out["tokens"], []
+    if "not_measurable" in t:
+        rows.append(("tokens", "Tokens", "not measurable on this host"))
+    else:
+        rows += [("calls", "API calls", str(t["api_calls"])), ("output", "Output tokens", fmt_tokens(t["output"])),
+                 ("cache", "Cache read / write", f"{fmt_tokens(t['cache_read'])} / {fmt_tokens(t['cache_write'])}"),
+                 ("fresh", "Fresh input", fmt_tokens(t["fresh_input"]))]
+        if t.get("context_at_invocation") is not None:
+            rows.append(("context", "Context at invocation", fmt_tokens(t["context_at_invocation"])))
+    tools = out["tools"]
+    shell = tools["by_category"].get("shell")
+    errs = tools["errors"]
+    rows.append(("tools", "Tool calls", f"{tools['total']}" + (f" ({shell} shell)" if shell else "")
+                 + (f", {errs} error{'' if errs == 1 else 's'}" if errs is not None else ", errors not measurable")))
+    tm_ = out["time"]
+    if "not_measurable" in tm_:
+        value = "not measurable on this host"
+    elif "active_s" in tm_:
+        value = f"{fmt_secs(tm_['active_s'])} active, {fmt_secs(tm_['tool_s'])} in tools, {fmt_secs(tm_['waiting_s'])} waiting on you"
+    else:
+        value = f"about {fmt_secs(tm_['wall_s'])} wall clock (coarse)"
+    rows.append(("time", "Time", value))
+    v = out["verify"]
+    rows.append(("verify", "Verify runs", f"{v['total']}" + (f" ({v['before_last_edit']} before the last edit)" if v["before_last_edit"] else "")))
+    subs = sum(a.get("actors", 1) for a in out["actors"] if a["actor"] != "main")
+    rows.append(("subagents", "Subagents", str(subs) if subs else "none"))
+    if isinstance(out["interruptions"], dict) and out["interruptions"].get("count"):
+        rows.append(("interruptions", "Interruptions", str(out["interruptions"]["count"])))
+    return rows
+
+
+def coverage_items(out):
+    cov, items = out["coverage"], []
+    if not cov["drift"]["ok"] and cov["drift"].get("warning"):
+        items.append(cov["drift"]["warning"])
+    items += cov.get("warnings", [])
+    if cov.get("version_note"):
+        items.append(cov["version_note"])
+    items += [f"not measurable: {n}" for n in cov.get("not_measurable", [])]
+    return items
+
+
+VERDICT_LABEL = {"keep": "Keep", "improve": "Improve", "merge": "Merge or cut", "gap": "Gap", "overlap": "Overlaps", "none": "No verdict"}
+
+
+def skill_rows(findings):
+    """(label, verdict, evidence, overlaps) with gaps numbered G1, G2, ... in order."""
+    rows, gap = [], 0
+    for s in findings.get("skills", []):
+        name = s["name"]
+        if s["verdict"] == "gap":
+            gap += 1
+            name = f"G{gap}: {name}"
+        rows.append((name, s["verdict"], s["evidence"], s.get("overlaps_with", [])))
+    return rows
+
+
+def flags(action):
+    return [w for w, on in (("High risk", action["risk"] == "high"), ("Low confidence", action["confidence"] == "low"),
+                            ("High effort", action["effort"] == "high")) if on]
+
+
+def clean_findings(findings, do_redact):
+    """Findings with every string redacted like the metrics, newlines folded to spaces."""
+    def walk(v):
+        if isinstance(v, str):
+            v = " ".join(v.split())
+            return redact(v) if do_redact else v
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        if isinstance(v, dict):
+            return {k: walk(x) for k, x in v.items()}
+        return v
+    return walk(findings)
+
+
+def _esc(text):
+    from html import escape
+    return escape(text, quote=True)
+
+
+def _inline(text):
+    """Escape, then let `backticks` (and nothing else) become <code>."""
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", _esc(text))
+
+
+REPORT_CSS = """
+:root{color-scheme:light;--page:#eef1f2;--sheet:#fcfcfb;--ink:#1d2733;--ink-2:#4a5562;--ink-3:#6b7580;--rule:#d9dee2;--code-bg:#f1f3f4;
+--impact-high:#d03b3b;--impact-medium:#ec835a;--impact-low:#8a949e;--warn:#fab219;--warn-edge:#c98500;
+--v-keep:#0ca30c;--v-improve:#fab219;--v-merge:#6250d6;--v-gap:#e87ba4;--v-overlap:#2a78d6;
+--s-read:#2a78d6;--s-write:#eb6834;--s-output:#1baf7a;--s-fresh:#eda100;
+--serif:Charter,"Bitstream Charter","Sitka Text",Cambria,Georgia,serif;
+--sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+--mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+@media (prefers-color-scheme: dark){:root{color-scheme:dark;--page:#121416;--sheet:#1a1a19;--ink:#eceae6;--ink-2:#c3c2b7;--ink-3:#9a9a92;
+--rule:#34363a;--code-bg:#232427;--impact-low:#7d858c;--warn-edge:#fab219;--s-read:#3987e5;--s-write:#d95926;--s-output:#199e70;
+--s-fresh:#c98500;--v-merge:#9085e9;--v-gap:#d55181;--v-overlap:#3987e5}}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page);color:var(--ink);font:16px/1.55 var(--sans);font-variant-numeric:tabular-nums}
+.sheet{max-width:52rem;margin:2.5rem auto;padding:2.5rem 3rem 3rem;background:var(--sheet);border-radius:6px;box-shadow:0 1px 0 var(--rule),0 0 0 1px var(--rule)}
+@media (max-width:640px){.sheet{margin:0;padding:1.5rem 1.25rem 2rem;border-radius:0;box-shadow:none}}
+code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);padding:.08em .35em;border-radius:3px}
+:focus-visible{outline:2px solid var(--s-read);outline-offset:2px;border-radius:3px}
+header h1{font:600 1.5rem/1.25 var(--serif);margin:0 0 .35rem;letter-spacing:-.005em}
+.scope{margin:0;color:var(--ink-2);font-size:.95rem}
+.bottom-line{margin:2rem 0 1.25rem;font:400 1.42rem/1.42 var(--serif);max-width:38em}
+figure.anatomy{margin:0 0 2.25rem}
+.bar{display:flex;gap:2px;height:22px;width:100%}.bar span{display:block;height:100%;min-width:0}
+.bar span:first-child{border-radius:4px 0 0 4px}.bar span:last-child{border-radius:0 4px 4px 0}
+.seg-read{background:var(--s-read)}.seg-write{background:var(--s-write)}.seg-output{background:var(--s-output)}.seg-fresh{background:var(--s-fresh)}
+.legend{display:flex;flex-wrap:wrap;gap:.4rem 1.4rem;margin:.7rem 0 0;padding:0;list-style:none;font-size:.88rem;color:var(--ink-2)}
+.legend li{display:flex;align-items:baseline;gap:.45rem}.legend i{width:10px;height:10px;border-radius:2px;display:inline-block;transform:translateY(1px)}
+.legend b{color:var(--ink);font-weight:600}
+figcaption{margin-top:.4rem;font-size:.85rem;color:var(--ink-3)}
+h2{font:600 1.12rem/1.3 var(--serif);margin:2.5rem 0 .9rem;padding-top:1.1rem;border-top:1px solid var(--rule)}
+table.metrics{border-collapse:collapse;width:100%;font-size:.93rem}
+table.metrics th,table.metrics td{text-align:left;padding:.42rem 0;border-bottom:1px solid var(--rule);vertical-align:top}
+table.metrics th{font-weight:500;color:var(--ink-2);width:42%;padding-right:1rem}
+table.metrics tr:last-child th,table.metrics tr:last-child td{border-bottom:0}
+.muted{color:var(--ink-3)}
+ol.actions{list-style:none;margin:0;padding:0;counter-reset:rank}
+ol.actions>li{counter-increment:rank;position:relative;margin:0 0 1.25rem;padding:1.1rem 1.25rem .6rem 1.35rem;border:1px solid var(--rule);border-left:5px solid var(--impact,var(--impact-low));border-radius:5px}
+ol.actions>li.impact-high{--impact:var(--impact-high)}ol.actions>li.impact-medium{--impact:var(--impact-medium)}ol.actions>li.impact-low{--impact:var(--impact-low)}
+.action-head{display:flex;gap:.75rem;align-items:baseline}
+.rank{font:600 1.05rem/1 var(--serif);color:var(--ink-3);min-width:1.1rem}.rank::before{content:counter(rank)}
+.action-head h3{margin:0;font:600 1.08rem/1.35 var(--sans)}
+.tags{display:flex;flex-wrap:wrap;gap:.35rem;margin:.6rem 0 .4rem 1.85rem;padding:0;list-style:none}
+.tag{display:inline-flex;align-items:center;min-height:1.6rem;font-size:.78rem;line-height:1;padding:0 .55rem;border:1px solid var(--rule);border-radius:999px;color:var(--ink-2)}
+.tag.impact{border-color:var(--impact);color:var(--ink);font-weight:600}
+.tag.impact::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--impact);margin-right:.4rem}
+.tag.warn{border:1.5px solid var(--warn-edge);color:var(--ink);font-weight:600}
+.tag.warn::before{content:"!";display:inline-grid;place-items:center;width:.95rem;height:.95rem;margin-right:.35rem;border-radius:50%;background:var(--warn);color:#1d2733;font-size:.68rem;font-weight:700}
+details{margin:.35rem 0 0 1.85rem;border-top:1px solid var(--rule)}details:first-of-type{border-top:0}
+summary{cursor:pointer;list-style:none;padding:.55rem 0;font-weight:600;font-size:.95rem}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"\\25B8";display:inline-block;width:1rem;color:var(--ink-3);transition:transform 120ms ease}
+details[open]>summary::before{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){summary::before{transition:none}}
+details ul{margin:0 0 .75rem;padding-left:1.1rem}details li{margin:.3rem 0;max-width:40em}
+.label{font-weight:600}
+ul.skills{list-style:none;margin:0;padding:0}
+ul.skills li{display:grid;grid-template-columns:minmax(9rem,13rem) 8.5rem 1fr;gap:.25rem 1rem;padding:.55rem 0;border-bottom:1px solid var(--rule);font-size:.93rem}
+ul.skills li:last-child{border-bottom:0}
+.skill-name{font-family:var(--mono);font-size:.86rem;overflow-wrap:anywhere}
+.verdict{display:flex;align-items:baseline;gap:.45rem;font-weight:600}
+.verdict::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--v);transform:translateY(1px);flex:none}
+.v-keep{--v:var(--v-keep)}.v-improve{--v:var(--v-improve)}.v-merge{--v:var(--v-merge)}.v-gap{--v:var(--v-gap)}.v-overlap{--v:var(--v-overlap)}
+.v-none{--v:transparent;font-weight:500;color:var(--ink-3)}.v-none::before{border:1px solid var(--ink-3)}
+.skill-evidence{color:var(--ink-2)}
+@media (max-width:640px){ul.skills li{grid-template-columns:1fr auto}.skill-evidence{grid-column:1/-1}}
+.closing{margin:2rem 0 0;padding:1rem 1.2rem;border-radius:5px;background:var(--code-bg);font-size:.98rem}.closing p{margin:0}
+@media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none;padding:0}
+details>summary::before{content:"";width:0}details:not([open])>*:not(summary){display:block}ol.actions>li{break-inside:avoid}}
+"""
+
+
+def render_html(out, findings, now):
+    """The report page. `findings` is already cleaned; `out` is the metrics run."""
+    notes = findings.get("metric_notes", {})
+    h = ["<!DOCTYPE html>", '<html lang="en">', "<head>", '<meta charset="utf-8">',
+         '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'">',
+         '<meta name="viewport" content="width=device-width, initial-scale=1">',
+         f"<title>Workflow review: {_esc(findings['title'])}</title>", "<style>" + REPORT_CSS + "</style>", "</head>", "<body>",
+         '<main class="sheet">', "<header>", f"<h1>Workflow review: {_inline(findings['title'])}</h1>",
+         f'<p class="scope">{_esc(scope_line(out, now))}</p>', "</header>",
+         f'<p class="bottom-line">{_inline(findings["bottom_line"])}</p>']
+    parts = token_parts(out)
+    if parts and parts[1]:
+        shown, total = parts
+        h.append('<figure class="anatomy" aria-labelledby="anatomy-cap">')
+        label = ", ".join(f"{name.lower()} {fmt_pct(p)}" for _, name, _, p in shown)
+        h.append(f'<div class="bar" role="img" aria-label="Token composition: {_esc(label)}">')
+        h += [f'<span class="seg-{k}" style="flex: {p:.4f}" title="{_esc(name)}: {fmt_tokens(v)} tokens ({fmt_pct(p)})"></span>'
+              for k, name, v, p in shown if v]
+        h.append("</div>")
+        h.append('<ul class="legend">' + "".join(
+            f'<li><i style="background: var(--s-{k})"></i>{_esc(name)} <b>{fmt_tokens(v)}</b> ({fmt_pct(p)})</li>' for k, name, v, p in shown) + "</ul>")
+        small = " Output is too small to see on the bar." if shown[2][3] < 1 else ""
+        h.append(f'<figcaption id="anatomy-cap">Where this window’s {fmt_tokens(total)} tokens went.{small}</figcaption>')
+        h.append("</figure>")
+    h += ['<section aria-labelledby="h-metrics">', '<h2 id="h-metrics">Metrics</h2>', '<table class="metrics">', "<tbody>"]
+    for rid, label, value in metric_rows(out):
+        note = f' <span class="muted">({_esc(notes[rid])})</span>' if rid in notes else ""
+        h.append(f'<tr><th scope="row">{_esc(label)}</th><td>{_esc(value)}{note}</td></tr>')
+    cov = coverage_items(out)
+    if cov:
+        h.append('<tr><th scope="row">Coverage</th><td>' + "<br>".join(_esc(c) for c in cov) + "</td></tr>")
+    h += ["</tbody>", "</table>", "</section>", '<section aria-labelledby="h-actions">',
+          '<h2 id="h-actions">Do these, ranked by impact</h2>']
+    if not findings["actions"]:
+        h.append("<p>No changes recommended.</p>")
+    else:
+        h.append('<ol class="actions">')
+        for a in findings["actions"]:
+            h += [f'<li class="impact-{a["impact"]}">',
+                  f'<div class="action-head"><span class="rank" aria-hidden="true"></span><h3>{_inline(a["title"])}</h3></div>',
+                  '<ul class="tags" aria-label="Ratings">', f'<li class="tag impact">{a["impact"].capitalize()} impact</li>']
+            for key, bad in (("effort", "high"), ("risk", "high"), ("confidence", "low")):
+                cls = "tag warn" if a[key] == bad else "tag"
+                h.append(f'<li class="{cls}">{a[key].capitalize()} {key}</li>')
+            w, wh = a["what"], a["why"]
+            h += ["</ul>", "<details>", "<summary>Why</summary>", "<ul>", f"<li>{_inline(wh['cause'])}</li>",
+                  f'<li><span class="label">Cost:</span> {_inline(wh["cost"])}</li>']
+            if wh["evidence"]:
+                h.append('<li><span class="label">Evidence:</span> ' + "; ".join(_inline(e) for e in wh["evidence"]) + "</li>")
+            h += ["</ul>", "</details>", "<details>", "<summary>What to do</summary>", "<ul>", f"<li>{_inline(w['change'])}</li>",
+                  f'<li><span class="label">Safe because:</span> {_inline(w["safe_because"])}</li>',
+                  f'<li><span class="label">Watch for:</span> {_inline(w["watch_for"])}</li>', "</ul>", "</details>", "</li>"]
+        h.append("</ol>")
+    h.append("</section>")
+    rows = skill_rows(findings)
+    if rows:
+        h += ['<section aria-labelledby="h-skills">', '<h2 id="h-skills">Skills audit</h2>', '<ul class="skills">']
+        for name, verdict, evidence, overlaps in rows:
+            extra = " Overlaps with " + ", ".join(f"<code>{_esc(o)}</code>" for o in overlaps) + "." if overlaps else ""
+            h += ["<li>", f'<span class="skill-name">{_esc(name)}</span>', f'<span class="verdict v-{verdict}">{VERDICT_LABEL[verdict]}</span>',
+                  f'<span class="skill-evidence">{_inline(evidence)}{extra}</span>', "</li>"]
+        h += ["</ul>", "</section>"]
+    if findings.get("closing_question"):
+        h.append(f'<aside class="closing" aria-label="Next step"><p>{_inline(findings["closing_question"])}</p></aside>')
+    h += ["</main>", "</body>", "</html>", ""]
+    return "\n".join(h)
+
+
+def render_report_md(out, findings, now):
+    """The same report as markdown, at most MD_LINES lines."""
+    lines = [f"# Workflow review: {findings['title']}", scope_line(out, now), f"**Bottom line:** {findings['bottom_line']}", "## Metrics"]
+    notes = findings.get("metric_notes", {})
+    lines += [f"- {label}: {value}" + (f" ({notes[rid]})" if rid in notes else "") for rid, label, value in metric_rows(out)]
+    parts = token_parts(out)
+    if parts and parts[1]:
+        lines.append("- Token composition: " + ", ".join(f"{name.lower()} {fmt_tokens(v)} ({fmt_pct(p)})" for _, name, v, p in parts[0]))
+    lines += [f"- Coverage: {c}" for c in coverage_items(out)]
+    lines.append("## Do these, ranked by impact")
+    if not findings["actions"]:
+        lines.append("No changes recommended.")
+    for n, a in enumerate(findings["actions"], 1):
+        warn = flags(a)
+        lines.append(f"{n}. **{a['title']}**: {a['impact'].capitalize()} impact, {a['effort']} effort, {a['risk']} risk, "
+                     f"{a['confidence']} confidence" + (f" (! {', '.join(warn)})" if warn else ""))
+        lines += [f"   - Why: {a['why']['cause']}", f"   - Cost: {a['why']['cost']}"]
+        if a["why"]["evidence"]:
+            lines.append("   - Evidence: " + "; ".join(a["why"]["evidence"]))
+        lines += [f"   - Change: {a['what']['change']}", f"   - Safe because: {a['what']['safe_because']}",
+                  f"   - Watch for: {a['what']['watch_for']}"]
+    rows = skill_rows(findings)
+    tail = [f"> {findings['closing_question']}"] if findings.get("closing_question") else []
+    if rows:
+        lines.append("## Skills audit")
+        skill_lines = [f"- {name}: {VERDICT_LABEL[v]}. {ev}" + (f" Overlaps with {', '.join(o)}." if o else "") for name, v, ev, o in rows]
+        room = MD_LINES - len(lines) - len(tail)
+        if len(skill_lines) > room:
+            hidden = len(skill_lines) - (room - 1)
+            skill_lines = skill_lines[:room - 1] + [f"- (+{hidden} more skills not shown)"]
+        lines += skill_lines
+    return "\n".join((lines + tail)[:MD_LINES]) + "\n"
+
+
+def write_report(text):
+    """<tempdir>/workflow-reviewer/review-<UTC>.html, file mode 0600 inside a 0700 folder. Returns the path."""
+    base = Path(tempfile.gettempdir()) / "workflow-reviewer"
+    fresh = not base.exists()
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if fresh:
+        os.chmod(base, 0o700)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    n = 0
+    while True:
+        path = base / f"review-{stamp}{f'-{n + 1}' if n else ''}.html"
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            break
+        except FileExistsError:
+            n += 1
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.chmod(path, 0o600)
+    return path
+
+
+def can_open(env=None, platform=None):
+    """Open the report only on a desktop: not over SSH, not in CI, and on Linux only with a display."""
+    env = os.environ if env is None else env
+    platform = sys.platform if platform is None else platform
+    if any(env.get(k) for k in ("SSH_CONNECTION", "SSH_TTY", "SSH_CLIENT", "CI", "GITHUB_ACTIONS")):
+        return False
+    if platform.startswith("linux") and not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")):
+        return False
+    return True
+
+
+def open_file(path):
+    """The platform opener, without a shell."""
+    if sys.platform == "win32":
+        os.startfile(path)
+    else:
+        subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", path], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=15, check=False)
+
+
+def report_main(out, findings, args, redact_on):
+    """Render the report for this metrics run. Returns 0."""
+    now = datetime.now(timezone.utc)
+    findings = clean_findings(findings, redact_on)
+    if args.report_format == "md":
+        sys.stdout.write(render_report_md(out, findings, now))
+        return 0
+    path = write_report(render_html(out, findings, now))
+    if not args.no_open and can_open():
+        try:
+            open_file(str(path))
+        except (OSError, subprocess.SubprocessError, AttributeError):
+            pass                                          # a missing opener is not an error; the path is printed
+    top = findings["actions"][0]["title"] if findings["actions"] else None
+    if args.format == "json":
+        print(json.dumps({"bottom_line": findings["bottom_line"], "top_action": top, "report_path": str(path)}, ensure_ascii=False, indent=2))
+    else:
+        print(f"Bottom line: {findings['bottom_line']}\nTop action: {top or 'none'}\nReport: {path}")
+    return 0
+
+
 # ---- cli ------------------------------------------------------------------------------
 
 def build_parser():
@@ -1727,6 +2227,9 @@ def build_parser():
     p.add_argument("--drift-threshold", type=float)
     p.add_argument("--no-redact", action="store_true")
     p.add_argument("--idle-threshold", type=float)
+    p.add_argument("--report", metavar="-", help="read the agent's findings JSON from stdin and render the report")
+    p.add_argument("--report-format", default="html", choices=["html", "md"])
+    p.add_argument("--no-open", action="store_true", help="with --report: do not open the HTML file")
     return p
 
 
@@ -2027,6 +2530,22 @@ def main(argv=None):
     if args.drift_threshold is None:
         args.drift_threshold = cfg.get("drift_threshold", 90)
     redact_on = not args.no_redact
+    findings = None
+    if args.report:
+        problem = None
+        if args.report != "-":
+            problem = "--report reads the findings from stdin: use --report -"
+        elif args.mapping == "-":
+            problem = "--report and --mapping cannot both read stdin; pass the mapping as a file"
+        elif args.events or args.sample is not None or args.list_turns:
+            problem = "--report cannot be combined with --events, --sample or --list-turns"
+        if problem:
+            emit({"error": problem}, args.format, redact_on)
+            return 2
+        findings, errors = read_findings(sys.stdin)
+        if errors:
+            emit({"error": "findings are not valid; fix these and send them again", "errors": errors}, args.format, redact_on)
+            return EXIT_FINDINGS
     if args.host == "kiro":
         emit(degraded_report("kiro", repo), args.format, redact_on)
         return 0
@@ -2220,8 +2739,12 @@ def main(argv=None):
             out["skills"] = skills_summary(window, host, repo, offered_skills(events), raw_mapping.get("skill_folders"), mapping)
             if out["skills"].get("inventory_note"):
                 out["coverage"].setdefault("notes", []).append(out["skills"]["inventory_note"])
+    code = 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
+    if findings is not None and "coverage" in out:
+        report_main(out, findings, args, redact_on)
+        return code
     emit(out, args.format, redact_on)
-    return 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
+    return code
 
 
 if __name__ == "__main__":

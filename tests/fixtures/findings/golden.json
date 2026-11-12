@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "title": "Spec 042 close-out checks",
+  "bottom_line": "Most of this session's cost is re-reading a large context: `CURRENT_STATE.md` is loaded on every call and has grown to mostly history.",
+  "actions": [
+    {
+      "title": "Trim `CURRENT_STATE.md`",
+      "impact": "high", "effort": "low", "risk": "low", "confidence": "medium",
+      "why": {
+        "cause": "`CLAUDE.md` loads it and nothing says to prune it, so it keeps growing.",
+        "cost": "About 12% of the context, re-read on every call.",
+        "evidence": ["68,252 bytes (about 17K tokens)", "re-cached after each long gap"]
+      },
+      "what": {
+        "change": "Move closed entries into `docs/HISTORY.md`, read on demand.",
+        "safe_because": "No gate, role or approval changes.",
+        "watch_for": "An open carry-over moved by mistake."
+      }
+    },
+    {
+      "title": "Keep one review skill",
+      "impact": "medium", "effort": "medium", "risk": "high", "confidence": "low",
+      "why": {
+        "cause": "Both descriptions match the same request, so both load.",
+        "cost": "About 9K extra tokens in context.",
+        "evidence": ["71% description overlap"]
+      },
+      "what": {
+        "change": "Keep `code-review`; narrow the other description.",
+        "safe_because": "The blocking rule stays.",
+        "watch_for": "A summary you relied on disappearing."
+      }
+    },
+    {
+      "title": "Resolve the duplicate `workflow-reviewer`",
+      "impact": "low", "effort": "high", "risk": "low", "confidence": "high",
+      "why": {"cause": "Two copies under one name.", "cost": "Not measurable here.", "evidence": ["two skills with one name"]},
+      "what": {"change": "Rename one copy.", "safe_because": "No role depends on the name.", "watch_for": "The wrong copy loading."}
+    }
+  ],
+  "skills": [
+    {"name": "hello", "verdict": "keep", "evidence": "Used once, small."},
+    {"name": "code-review", "verdict": "overlap", "evidence": "Loaded together with its twin.", "overlaps_with": ["pr-review"]},
+    {"name": "pr-review", "verdict": "merge", "evidence": "See action 2."},
+    {"name": "tdd", "verdict": "improve", "evidence": "Conflicts with `AGENTS.md`."},
+    {"name": "state-doc pruning", "verdict": "gap", "evidence": "Nothing prunes `CURRENT_STATE.md` at close-out."},
+    {"name": "commit-helper", "verdict": "none", "evidence": "Not loaded."}
+  ],
+  "closing_question": "Search for skills or host features that cover G1? Reply yes in the chat and the review will check official sources only.",
+  "metric_notes": {"verify": "expected: this session only reads"}
+}
