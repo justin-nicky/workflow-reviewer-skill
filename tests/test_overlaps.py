@@ -117,9 +117,16 @@ def test_an_offered_skill_with_no_file_is_not_scanned_not_guessed(cli, tmp_path)
     assert o["scanned"]["skills"] == 1 and o["scanned"]["not_scanned"] == 2
 
 
-def test_plugin_skill_folders_are_part_of_the_corpus(cli, tmp_path):
-    skill(cli.home / ".claude" / "plugins" / "cache" / "mkt" / "plug" / "1.0" / "skills", "from-plugin", "Alpha description about origami")
-    assert run(cli, tmp_path)["scanned"]["skills"] == 1
+APP = ("Library", "Application Support", "Claude", "local-agent-mode-sessions")
+
+
+def test_plugin_skill_folders_are_the_desktop_apps_plugin_folders(cli, tmp_path):
+    root = cli.home.joinpath(*APP)
+    skill(root / "skills-plugin" / "acc" / "org" / "skills", "from-skills-plugin", "Alpha description about origami")
+    skill(root / "acc" / "org" / "rpm" / "plugin_x" / "skills", "from-rpm", "Beta description about volcano monitoring")
+    skill(root / "acc" / "org" / "rpm" / "plugin_x" / "skills" / "engineering", "from-category", "Gamma description about telescopes")
+    skill(cli.home / ".claude" / "plugins" / "cache" / "mkt" / "plug" / "1.0" / "skills", "guessed-location", "Never read")
+    assert run(cli, tmp_path)["scanned"]["skills"] == 3
 
 
 def test_the_threshold_flag_moves_the_cut(cli, tmp_path):
@@ -137,7 +144,7 @@ def test_lists_are_capped_with_a_more_count(cli, tmp_path):
     filler_skills(root)
     for i in range(8):
         skill(root, f"twin-{i}", REVIEW_A)
-    o = run(cli, tmp_path)["skill_pairs"]
+    o = run(cli, tmp_path, "--overlap-threshold", "0.5")["skill_pairs"]
     assert o["total"] == 28 and len(o["top"]) == 10 and o["more"] == 18
     assert [p["score_pct"] for p in o["top"]] == sorted((p["score_pct"] for p in o["top"]), reverse=True)
 
@@ -303,3 +310,175 @@ def test_a_host_that_declares_no_hook_files_says_unknown(cli, tmp_path):
     path = write_jsonl(tmp_path / "rollout-x.jsonl", [{"type": "session_meta", "payload": {"id": "i", "cwd": str(cli.repo), "cli_version": "0.1.0"}}])
     code, out = cli.json(path, "--host", "codex")
     assert out["skills"]["overlaps"]["hooks"] == {"unknown": "hooks unknown for this host"}
+
+
+# ---- descriptions from the transcript's own skill list -------------------------------------------------------------------
+
+def listing_with(descriptions, t=0):
+    """A Claude Code skill_listing attachment: names[] plus one '- name: description' line per skill (and two other lines)."""
+    content = "TRIGGER notes for the model.\n" + "\n".join(f"- {n}: {d}" for n, d in descriptions.items()) + "\nSKIP notes."
+    rec = listing(list(descriptions), t)
+    rec["attachment"]["content"] = content
+    return rec
+
+
+def run_listing(cli, tmp_path, descriptions, *args, session_extra=()):
+    path = write_jsonl(tmp_path / "s.jsonl", [listing_with(descriptions), cc_user("go", 1), *session_extra, cc_assistant("mz", 90, usage=usage(1, 1))])
+    code, out = cli.json(path, "--host", "claude-code", *args)
+    assert code == 0
+    return out["skills"]["overlaps"]
+
+
+def twins(**extra):
+    descriptions = {"plug:review-a": REVIEW_A, "plug:review-b": REVIEW_B, "other": "Calibrate telescope mirrors with interferometry"}
+    descriptions.update(extra)
+    return descriptions
+
+
+def test_a_missing_file_uses_the_listing_description(cli, tmp_path):
+    o = run_listing(cli, tmp_path, twins())
+    assert o["scanned"] == {"skills": 3, "from_files": 0, "from_listing": 3, "unreadable": 0, "not_scanned": 0,
+                            "instruction_files": o["scanned"]["instruction_files"], "directive_lines": o["scanned"]["directive_lines"]}
+    p = pair(o, "plug:review-a", "plug:review-b")
+    assert p and p["score_pct"] >= 70 and p["a_status"] == "offered"
+
+
+def test_a_file_wins_over_the_listing_and_is_counted_once(cli, tmp_path):
+    skill(cli.home / ".claude" / "skills", "hello", REVIEW_A)
+    o = run_listing(cli, tmp_path, {"hello": "Calibrate telescope mirrors", "twin": REVIEW_B, "z": "Origami folding guide for paper cranes"})
+    assert o["scanned"]["from_files"] == 1 and o["scanned"]["from_listing"] == 2 and o["scanned"]["skills"] == 3
+    assert pair(o, "hello", "twin")["score_pct"] >= 70                      # the file's description, not the listing's
+
+
+def test_a_listing_name_with_a_plugin_prefix_matches_its_file(cli, tmp_path):
+    skill(cli.home / ".claude" / "skills", "tdd", "Test driven development workflow")
+    o = run_listing(cli, tmp_path, {"mattpocock-skills:tdd": "Something else entirely about pottery"})
+    assert o["scanned"]["from_files"] == 1 and o["scanned"]["from_listing"] == 0
+
+
+def test_an_offered_name_with_no_file_and_no_listing_line_is_not_scanned(cli, tmp_path):
+    rec = listing_with({"a": "Alpha text about origami"})
+    rec["attachment"]["names"] = ["a", "ghost"]
+    path = write_jsonl(tmp_path / "s.jsonl", [rec, cc_user("go", 1), cc_assistant("mz", 90, usage=usage(1, 1))])
+    o = cli.json(path, "--host", "claude-code")[1]["skills"]["overlaps"]
+    assert o["scanned"]["skills"] == 1 and o["scanned"]["not_scanned"] == 1
+
+
+def test_a_subagent_skill_listing_adds_no_descriptions(cli, tmp_path):
+    main = write_jsonl(tmp_path / "proj" / "s1.jsonl", [listing_with({"a": "Alpha text about origami"}), cc_user("go", 1),
+                                                         cc_assistant("m", 3, usage=usage(1, 1))])
+    write_jsonl(tmp_path / "proj" / "s1" / "subagents" / "agent-x.jsonl", [listing_with({"only-sub": "Sub text about volcano"}, 4), cc_user("brief", 5, uuid="su")])
+    o = cli.json(main, "--host", "claude-code")[1]["skills"]["overlaps"]
+    assert o["scanned"]["skills"] == 1
+
+
+CODEX_LISTING = ("<skills_instructions>\n## Skills\n### Skill roots\n- `r0` = `/x/.codex/skills`\n### Available skills\n"
+                 f"- review-a: {REVIEW_A}. (file: r0/review-a/SKILL.md)\n- review-b: {REVIEW_B}. (file: r0/review-b/SKILL.md)\n"
+                 "- data:analyze: Answer data questions about pottery. (file: r0/analyze/SKILL.md)\n"
+                 "### How to use skills\n- Discovery: read the list.\n</skills_instructions>")
+
+
+def test_codex_descriptions_come_from_the_developer_message_without_the_file_suffix(cli, tmp_path):
+    from fixtures.builders import cx_developer, cx_meta, cx_user
+    path = write_jsonl(tmp_path / "rollout-x.jsonl", [cx_meta("i", cli.repo), cx_developer(CODEX_LISTING, 0), cx_user("go", 1)])
+    code, out = cli.json(path, "--host", "codex")
+    o = out["skills"]["overlaps"]
+    assert code == 0 and o["scanned"]["from_listing"] == 3
+    p = pair(o, "review-a", "review-b")
+    assert p and p["score_pct"] >= 70 and "file" not in p["shared_terms"]
+
+
+def test_devin_descriptions_come_from_skills_loaded(cli, tmp_path):
+    db = dv.DevinDb(tmp_path / "sessions.db")
+    chain = db.session("s1", str(cli.repo.resolve()))
+    chain.add(dv.system(), dv.rules_loaded(["~/a.md"]), dv.user("one"),
+              dv.skills_loaded(["review-a", "review-b"], hidden=["explicit"], descriptions={"review-a": REVIEW_A, "review-b": REVIEW_B, "explicit": "Pottery glazing recipes"}),
+              dv.assistant("ok", tokens=dv.metrics(1, 1, 1)))
+    chain.done()
+    _, out = cli.json(db.path, "--host", "devin")
+    o = out["skills"]["overlaps"]
+    assert o["scanned"]["from_listing"] == 3 and o["scanned"]["not_scanned"] == 0
+    assert pair(o, "review-a", "review-b")["score_pct"] >= 70
+
+
+# ---- instructions Claude Code recorded as loaded ---------------------------------------------------------------------------
+
+def instructions(path, content):
+    return {"type": "attachment", "uuid": "i1", "sessionId": "s1", "timestamp": "2026-11-01T10:00:00.000Z",
+            "attachment": {"type": "instructions", "files": [{"path": str(path), "type": "User", "content": content}]}}
+
+
+def instr_run(cli, tmp_path, rule_text, loaded=True, disk=None):
+    rules = cli.home / ".claude" / "CLAUDE.md"
+    if disk is not None:
+        rules.parent.mkdir(parents=True, exist_ok=True)
+        rules.write_text(disk, encoding="utf-8")
+    skill(cli.home / ".claude" / "skills", "tdd", "Test driven development", body=f"Intro line.\n{DIRECTIVE}.\n")
+    extra = [cc_assistant("s", 5, [tool_use("Skill", {"skill": "tdd"}, "cs")], usage(1, 1)), cc_tool_result("cs", "loaded", 6)] if loaded else []
+    path = write_jsonl(tmp_path / "s.jsonl", [instructions(rules, rule_text), listing(["tdd"], 0), cc_user("go", 1), *extra, cc_assistant("mz", 90, usage=usage(1, 1))])
+    code, out = cli.json(path, "--host", "claude-code")
+    assert code == 0
+    return out, cli.run(path, "--host", "claude-code", "--no-redact").stdout
+
+
+def test_an_instruction_file_recorded_as_loaded_makes_its_pair_eligible(cli, tmp_path):
+    out, text = instr_run(cli, tmp_path, f"# Rules\n{DIRECTIVE}, then push.\n")           # the file is not on disk: the content is used
+    o = out["skills"]["overlaps"]
+    assert o["scanned"]["instruction_files"] == 1
+    top = o["directive_pairs"]["top"][0]
+    assert (top["skill"], top["instruction"], top["instruction_line"], top["judge"], top["both_loaded"]) == ("tdd", "~/.claude/CLAUDE.md", 2, "eligible", True)
+    assert o["directive_pairs"]["eligible"] == 1 and DIRECTIVE not in text and "then push" not in text
+
+
+def test_a_skill_that_was_not_loaded_stays_static_even_with_a_loaded_instruction(cli, tmp_path):
+    out, _ = instr_run(cli, tmp_path, f"{DIRECTIVE}.\n", loaded=False)
+    top = out["skills"]["overlaps"]["directive_pairs"]["top"][0]
+    assert top["judge"] == "static" and top["both_loaded"] is False
+
+
+def test_the_recorded_content_beats_the_file_on_disk(cli, tmp_path):
+    out, _ = instr_run(cli, tmp_path, f"{DIRECTIVE}.\n", disk="Nothing relevant here at all\n")
+    assert out["skills"]["overlaps"]["directive_pairs"]["total"] == 1
+
+
+def test_a_repo_file_with_no_loaded_record_is_static(cli, tmp_path):
+    rules = cli.repo / "CLAUDE.md"
+    rules.write_text(f"{DIRECTIVE}.\n")
+    skill(cli.home / ".claude" / "skills", "tdd", "Test driven development", body=f"{DIRECTIVE}.\n")
+    o = run(cli, tmp_path, names=("tdd",), session_extra=[cc_assistant("s", 5, [tool_use("Skill", {"skill": "tdd"}, "cs")], usage(1, 1)), cc_tool_result("cs", "loaded", 6)])
+    assert o["directive_pairs"]["top"][0]["judge"] == "static"
+
+
+def test_instruction_content_is_never_printed(cli, tmp_path):
+    secret = "API_KEY=sk_" "live_abcdefghijklmnop0123456789"
+    out, text = instr_run(cli, tmp_path, f"Never print {secret}. {DIRECTIVE}.\n")
+    assert "sk_live" not in text and "abcdefghijklmnop0123456789" not in text
+
+
+# ---- realistic, long descriptions ---------------------------------------------------------------------------------------------
+
+LONG = {
+    "charts-a": "Create publication-quality chart visualizations with Python. Use when turning query results or a DataFrame into a chart or plot, selecting the right chart type for a trend or comparison, generating a plot for a report or presentation, or needing an interactive chart with hover and zoom.",
+    "charts-b": "Create effective data visualizations and chart plots with Python (matplotlib, seaborn, plotly). Use when building charts, choosing the right chart type for a dataset, creating publication-quality plots for a report, or applying design principles like accessibility and color theory.",
+    "charts-c": "Use this skill whenever you are about to create ANY chart, plot, dashboard, or data visualization, in ANY output medium: an HTML artifact, inline SVG, Python plotting code in any library, or an image of a chart for a report. Read it BEFORE writing the first line of chart code, choosing chart colors, picking a chart type, or laying out a dashboard. Produces accessible visualizations that read as one system, consistent in light and dark. Triggers on: chart, plot, visualization, dashboard, palette, legend, axis, tooltip, heatmap.",
+    "sql-a": "Write correct, performant SQL across all major data warehouse dialects. Use when writing queries, optimizing slow SQL, translating between dialects, or building complex analytical queries with CTEs, window functions, or aggregations.",
+    "sql-b": "Write optimized SQL for your dialect with best practices. Use when translating a natural-language data need into SQL, building a multi-CTE query with joins and aggregations, optimizing a query against a large partitioned table, or getting dialect-specific syntax.",
+    "browser-a": "Read this skill before the first step that uses the built-in browser, the browser pane inside the desktop app, covering tabs, reading pages as text, site approvals, and what the pane cannot open. It is not for the external browser extension, which has its own skill.",
+    "browser-b": "Read this skill before the first step that uses the browser extension, the external browser with the person's own sign-ins. It covers loading the tools, checking open tabs, site permissions, recordings, console logs, and when to stop and ask. It is not for the built-in browser pane, which has its own skill.",
+    "docs-a": "Editable documents people share and comment on: the default for any document, report, proposal, resume, letter, contract, template or guide that people keep, share, or collaborate on, with tracked changes and comments.",
+    "docs-b": "Use this skill whenever the user wants to create, read, edit, or manipulate Word documents: reports, letters and templates, with tracked changes, comments, find-and-replace, and inserting or replacing images in the document file.",
+    "pdf": "Use this skill whenever the user wants to do anything with PDF files: reading or extracting text and tables, merging, splitting, rotating pages, adding watermarks, filling forms, encrypting, extracting images, and OCR on scanned pages.",
+    "slides": "Build slide decks and presentations from outlines, with speaker notes, layouts, themes and exportable files for meetings and talks.",
+    "calendar": "Schedule meetings, propose times, resolve conflicts between invitations, and summarise the week ahead from the person's calendar.",
+    "email": "Draft, summarise and triage email threads, extract action items, and prepare replies in the person's own tone.",
+    "pottery": "Plan kiln firing schedules, glaze combinations and clay body recipes for ceramics studios.",
+}
+
+
+def test_long_realistic_descriptions_find_the_real_overlaps_and_little_else(cli, tmp_path):
+    o = run_listing(cli, tmp_path, LONG)
+    assert o["scanned"]["from_listing"] == len(LONG)
+    found = {frozenset((p["a"], p["b"])) for p in o["skill_pairs"]["top"]}
+    for a, b in (("charts-a", "charts-b"), ("charts-b", "charts-c"), ("charts-a", "charts-c"), ("sql-a", "sql-b"), ("browser-a", "browser-b"), ("docs-a", "docs-b")):
+        assert frozenset((a, b)) in found, (a, b)
+    assert o["skill_pairs"]["threshold"] == 0.15 and o["skill_pairs"]["total"] <= 12

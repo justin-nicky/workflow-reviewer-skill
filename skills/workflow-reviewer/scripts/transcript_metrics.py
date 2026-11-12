@@ -289,6 +289,14 @@ def skill_names_in(text, block_pattern, item_pattern):
     return re.findall(item_pattern, block.group(1)) if block else None
 
 
+def skill_descriptions_in(text, block_pattern, item_pattern):
+    """{name: description} for each listing line the item pattern (groups: name, description) finds in the block."""
+    if block_pattern:
+        block = re.search(block_pattern, text)
+        text = block.group(1) if block else ""
+    return {name: " ".join(desc.split()) for name, desc in re.findall(item_pattern, text)}
+
+
 def parse_lines(lines, mapping, actor="main"):
     """Return (events, stats). Each line is classified by the first matching rule."""
     fields = mapping.get("fields", {})
@@ -331,7 +339,23 @@ def parse_lines(lines, mapping, actor="main"):
               "prompt_ts": prompt_time(get_text(obj, rule["text"]), rule["prompt_time"]) if rule.get("prompt_time") else None,
               "spawned_agent": get_first(obj, rule.get("spawned_agent")),
               "offered": get_first(obj, rule.get("offered_skills")),
-              "usage_context": None, "slash_skill": None, "instruction": None, "spawned_model": None}
+              "usage_context": None, "slash_skill": None, "instruction": None, "spawned_model": None, "descriptions": {}}
+        if rule.get("offered_desc_item"):                  # descriptions printed in the same listing as the names
+            listing_text = get_text(obj, rule.get("offered_desc_from") or rule.get("offered_from", []))
+            ev["descriptions"] = skill_descriptions_in(listing_text, None if rule.get("offered_desc_from") else rule.get("offered_block"),
+                                                       rule["offered_desc_item"])
+        if rule.get("offered_desc_pairs"):                 # a list of {name, description} entries
+            cfg = rule["offered_desc_pairs"]
+            for item in get_all(obj, cfg["list"]):
+                name, desc = get_first(item, cfg["name"]), get_first(item, cfg["description"])
+                if isinstance(name, str) and isinstance(desc, str):
+                    ev["descriptions"][name] = " ".join(desc.split())
+        if rule.get("instruction_items"):                  # loaded instruction files whose content the record carries
+            cfg = rule["instruction_items"]
+            items = [(get_first(i, cfg["path"]), get_first(i, cfg["content"])) for i in get_all(obj, cfg["list"])]
+            items = [(p, c) for p, c in items if isinstance(p, str)]
+            ev["instruction"] = {"paths": [p for p, _ in items], "contents": [c if isinstance(c, str) else None for _, c in items],
+                                 "bytes": 0, "always_on": True}
         if rule.get("offered_each"):                       # one name per match of a wildcard path
             ev["offered"] = [n for n in get_all(obj, rule["offered_each"]) if isinstance(n, str)]
         if rule.get("spawned_model"):
@@ -1260,7 +1284,7 @@ def _event_keys(events):
         if key is None:
             base = json.dumps([ev["role"], ev["text"], [(c["name"], c["input"], c["id"]) for c in ev["calls"]],
                                [r["id"] for r in ev["results"]], ev["msg_id"], ev["usage"], ev["model"], ev["ts"], ev["turn_start"],
-                               ev["interrupted"], ev["offered"], ev["instruction"], ev["spawned_agent"]], sort_keys=True, default=str)
+                               ev["interrupted"], ev["offered"], ev["instruction"], ev["spawned_agent"], ev["descriptions"]], sort_keys=True, default=str)
             n = ordinal[(ev["file"], base)] = ordinal.get((ev["file"], base), -1) + 1
             key = (base, n)
         keys.append(key)
@@ -1598,6 +1622,7 @@ should may might into onto over under than then them they their there these thos
 each every both such own same too very just also via per use used using uses when whenever about after before again once only more most
 some other out off its our""".split())
 DIRECTIVE_RE = re.compile(r"\b(always|never|must|don't|do not|only|run|use|prefer|should)\b", re.I)
+DESCRIPTION_TERMS = 15          # terms kept per skill description (calibrated on real descriptions)
 MAX_SKILL_FILES = 2000
 MAX_FILE_BYTES = 256 * 1024
 MAX_SHARED_TERMS = 5
@@ -1614,25 +1639,29 @@ def _stem(word):
     return word
 
 
-def term_list(text, surface):
-    """Unigrams and bigrams of the informative words: lowercase, no stopwords or short words, simple stems."""
+def term_list(text, surface, bigrams=True):
+    """Unigrams (and bigrams) of the informative words: lowercase, no stopwords or short words, simple stems."""
     words = [w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) >= 3 and w not in STOPWORDS]
     stems = [_stem(w) for w in words]
     for st, w in zip(stems, words):
         surface.setdefault(st, w)
+    if not bigrams:
+        return list(stems)
     grams = list(stems) + [f"{a} {b}" for a, b in zip(stems, stems[1:])]
     for a, b, wa, wb in zip(stems, stems[1:], words, words[1:]):
         surface.setdefault(f"{a} {b}", f"{wa} {wb}")
     return grams
 
 
-def tfidf(documents):
-    """L2-normalised TF-IDF vectors; the IDF is ln(1 + N/df) over all the documents, so words every document uses count for little."""
+def tfidf(documents, bigrams=True, top=None):
+    """L2-normalised TF-IDF vectors; the IDF is ln(1 + N/df) over all the documents, so words every document uses count for little.
+
+    With `top`, each document keeps only its `top` heaviest terms, so a long description is not diluted by its length."""
     surface = {}
     counts = []
     for text in documents:
         c = {}
-        for t in term_list(text, surface):
+        for t in term_list(text, surface, bigrams):
             c[t] = c.get(t, 0) + 1
         counts.append(c)
     n, df = len(counts), {}
@@ -1642,6 +1671,8 @@ def tfidf(documents):
     vectors = []
     for c in counts:
         v = {t: (1 + math.log(tf)) * math.log(1 + n / df[t]) for t, tf in c.items()}
+        if top:
+            v = dict(sorted(v.items(), key=lambda kv: (-kv[1], kv[0]))[:top])
         norm = math.sqrt(sum(x * x for x in v.values()))
         vectors.append({t: x / norm for t, x in v.items()} if norm else {})
     return vectors, surface
@@ -1751,21 +1782,27 @@ def always_on_files(events, repo):
     """[{path, display, loaded, lines}]: what the host says it loaded, plus the repo's CLAUDE.md, AGENTS.md and always-on Cursor rules."""
     files = {}
 
-    def add(path, loaded):
+    def add(path, loaded, content=None):
         real = os.path.realpath(os.path.expanduser(path))
-        if real in files:
+        if real in files and content is None:
             files[real]["loaded"] |= loaded
             return
-        try:
-            text = Path(real).read_bytes()[:MAX_FILE_BYTES].decode("utf-8", "replace")
-        except OSError:
-            return
-        files[real] = {"display": display_path(real, repo), "loaded": loaded, "lines": text.split("\n")}
+        if content is None:
+            try:
+                content = Path(real).read_bytes()[:MAX_FILE_BYTES].decode("utf-8", "replace")
+            except OSError:
+                return
+        else:
+            content = content[:MAX_FILE_BYTES]               # what the host recorded as loaded wins over the file on disk
+        files[real] = {"display": display_path(real, repo), "loaded": loaded or files.get(real, {}).get("loaded", False),
+                       "lines": content.split("\n")}
 
-    for ev in events:
-        if ev["actor"] == "main" and ev.get("instruction"):
-            for path in ev["instruction"]["paths"]:
-                add(path, True)
+    for ev in events:                                        # the main session and each subagent
+        info = ev.get("instruction")
+        if info:
+            contents = info.get("contents") or [None] * len(info["paths"])
+            for path, content in zip(info["paths"], contents):
+                add(path, True, content)
     for name in ("CLAUDE.md", "AGENTS.md"):
         if (repo / name).is_file():
             add(str(repo / name), False)
@@ -1778,6 +1815,21 @@ def always_on_files(events, repo):
             if str(frontmatter(head)[0].get("alwaysApply", "")).lower() == "true":
                 add(str(rule), False)
     return list(files.values())
+
+
+def listed_descriptions(events):
+    """{name: description} from the skill lists the host printed for the main agent (first one wins)."""
+    found = {}
+    for ev in events:
+        if ev["actor"] == "main":
+            for name, desc in (ev.get("descriptions") or {}).items():
+                found.setdefault(name, desc)
+    return found
+
+
+def named_in_files(listed_name, file_names):
+    """Does a skill file carry this listed name, either exactly or as the part after a plugin prefix?"""
+    return listed_name in file_names or listed_name.split(":")[-1] in file_names
 
 
 def named_in(name, names):
@@ -1845,18 +1897,23 @@ def overlaps_summary(events, mapping, repo, loaded, offered, thresholds):
     skill_threshold, directive_threshold = thresholds
     files, unreadable = skill_files(mapping.get("skill_folders"), mapping.get("plugin_skill_folders"), repo)
     loaded_names, offered_names = list(loaded), offered or []
+    listed = listed_descriptions(events)
+    file_names = {f["name"] for f in files}
+    from_listing = [{"name": n, "description": d, "path": None, "display": None, "lines": [], "body_start": 0}
+                    for n, d in listed.items() if not named_in_files(n, file_names)]
+    corpus = files + from_listing
 
     def status(name):
         return "loaded this session" if named_in(name, loaded_names) else "offered" if named_in(name, offered_names) else "installed only"
 
-    scanned_names = {f["name"] for f in files}
-    not_scanned = sum(1 for n in offered_names if n.split(":")[-1] not in scanned_names and n not in scanned_names)
-    out = {"scanned": {"skills": len(files), "unreadable": unreadable, "not_scanned": not_scanned}}
+    not_scanned = sum(1 for n in offered_names if not named_in_files(n, file_names) and n not in listed)
+    out = {"scanned": {"skills": len(corpus), "from_files": len(files), "from_listing": len(from_listing),
+                       "unreadable": unreadable, "not_scanned": not_scanned}}
 
-    described = [f for f in files if f["description"]]
-    vectors, surface = tfidf([f["description"] for f in described])
+    described = [f for f in corpus if f["description"]]
+    vectors, surface = tfidf([f["description"] for f in described], bigrams=False, top=DESCRIPTION_TERMS)
     pairs = [(described[i], described[j], score, shared) for i, j, score, shared in similar_pairs(vectors, vectors, skill_threshold, surface, same=True)
-             if described[i]["path"] != described[j]["path"]]
+             if not (described[i]["path"] and described[i]["path"] == described[j]["path"])]
     out["skill_pairs"] = {"threshold": skill_threshold, "total": len(pairs), "more": max(0, len(pairs) - TOP_OVERLAPS),
                           "top": [{"a": a["name"], "b": b["name"], "score_pct": round(100 * s), "shared_terms": t,
                                    "a_status": status(a["name"]), "b_status": status(b["name"])} for a, b, s, t in pairs[:TOP_OVERLAPS]]}
@@ -1965,7 +2022,8 @@ def skills_summary(events, host, repo, offered=None, folders=None, mapping=None,
     if host_rules:
         known = {f["path"] for f in summary["instruction_files"]}
         summary["instruction_files"] += [f for f in host_rules["files"] if f["path"] not in known]
-        summary["instruction_bytes_always_on"] = host_rules["bytes"]
+        if host_rules["bytes"]:
+            summary["instruction_bytes_always_on"] = host_rules["bytes"]
     if no_folders:
         summary["inventory_note"] = NO_FOLDERS
     return summary
@@ -2574,7 +2632,7 @@ def build_parser():
     p.add_argument("--drift-threshold", type=float)
     p.add_argument("--no-redact", action="store_true")
     p.add_argument("--idle-threshold", type=float)
-    p.add_argument("--overlap-threshold", type=float, default=0.5, help="skill description similarity to report (0 to 1)")
+    p.add_argument("--overlap-threshold", type=float, default=0.15, help="skill description similarity to report (0 to 1)")
     p.add_argument("--directive-threshold", type=float, default=0.45, help="directive line similarity to report (0 to 1)")
     p.add_argument("--report", metavar="-", help="read the agent's findings JSON from stdin and render the report")
     p.add_argument("--report-format", default="html", choices=["html", "md"])

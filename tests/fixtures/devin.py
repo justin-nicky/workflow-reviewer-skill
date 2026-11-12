@@ -24,11 +24,12 @@ def system(text="placeholder system text", **ext):
             "metadata": {"is_user_input": None, "metrics": None, "finish_reason": None, "extensions": _ext(**ext)}}
 
 
-def skills_loaded(names, hidden=()):
+def skills_loaded(names, hidden=(), descriptions=None):
     """A skills-loaded listing: model-invocable skills, and some that are hidden from the model."""
-    listing = [{"name": n, "description": "d", "path": f"~/proj/.cognition/skills/{n}/SKILL.md", "model_invocable": True,
+    descriptions = descriptions or {}
+    listing = [{"name": n, "description": descriptions.get(n, "d"), "path": f"~/proj/.cognition/skills/{n}/SKILL.md", "model_invocable": True,
                 "provider": "devin"} for n in names]
-    listing += [{"name": n, "description": "d", "path": f"~/proj/.cognition/skills/{n}/SKILL.md", "model_invocable": False,
+    listing += [{"name": n, "description": descriptions.get(n, "d"), "path": f"~/proj/.cognition/skills/{n}/SKILL.md", "model_invocable": False,
                  "provider": "devin"} for n in hidden]
     return system("", **{"agent-ext__skills-loaded": {"skills": listing, "is_initial_listing": True}})
 

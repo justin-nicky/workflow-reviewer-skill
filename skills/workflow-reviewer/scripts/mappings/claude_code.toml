@@ -25,10 +25,20 @@ base_env = "CLAUDE_CONFIG_DIR"
 scope = "user"
 
 # Plugin skills are scanned for overlaps only (not listed in the inventory above).
+# The desktop app keeps plugin skills in its own data folder (macOS path; other systems are unverified).
 [[plugin_skill_folders]]
-path = "plugins/cache/*/*/*/skills"
-base = "~/.claude"
-base_env = "CLAUDE_CONFIG_DIR"
+path = "local-agent-mode-sessions/skills-plugin/*/*/skills"
+base = "~/Library/Application Support/Claude"
+glob = true
+scope = "plugin"
+[[plugin_skill_folders]]
+path = "local-agent-mode-sessions/*/*/rpm/*/skills"
+base = "~/Library/Application Support/Claude"
+glob = true
+scope = "plugin"
+[[plugin_skill_folders]]
+path = "local-agent-mode-sessions/*/*/rpm/*/skills/*"
+base = "~/Library/Application Support/Claude"
 glob = true
 scope = "plugin"
 
@@ -128,6 +138,15 @@ call_id = "id"
 match = { type = "attachment", "attachment.type" = "skill_listing" }
 role = "meta"
 offered_skills = "attachment.names"
+# The same record carries one "- name: description" line per offered skill.
+offered_desc_from = "attachment.content"
+offered_desc_item = "(?m)^- ([\\w:.\\-]+): (.*)$"
+
+# Instruction files the host loaded (CLAUDE.md and the like), with their content, for the main session and each subagent.
+[[records]]
+match = { type = "attachment", "attachment.type" = "instructions" }
+role = "meta"
+instruction_items = { list = "attachment.files[]", path = "path", content = "content" }
 
 [[records]]
 match = { type = ["summary", "system", "file-history-snapshot", "queue-operation", "attachment", "progress", "last-prompt", "custom-title", "agent-name", "permission-mode", "pr-link", "api-request", "api-request-blob", "api-request-shape", "mode", "cost-state", "atis-latch", "bridge-session", "file-history-delta", "relocated", "tools-used"] }

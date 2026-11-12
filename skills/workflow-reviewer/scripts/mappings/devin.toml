@@ -83,6 +83,8 @@ brief_key = "task"
 match = { role = "system", "metadata.extensions.agent-ext/skills-loaded" = "$present" }
 role = "meta"
 offered_each = "metadata.extensions.agent-ext/skills-loaded.skills[model_invocable=true].name"
+# Every listed skill carries its description, including those hidden from the model.
+offered_desc_pairs = { list = "metadata.extensions.agent-ext/skills-loaded.skills[]", name = "name", description = "description" }
 
 [[records]]
 match = { role = "system", "metadata.extensions.agent-ext/rules-loaded" = "$present" }
