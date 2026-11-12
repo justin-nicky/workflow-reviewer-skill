@@ -3511,6 +3511,11 @@ def id_like(text):
                 or "@" in text or re.search(r"[0-9a-f]{8}-[0-9a-f]{4}", text, re.I))
 
 
+def safe_ident(name):
+    """A table or column name that is a plain identifier and does not look like an id or a secret."""
+    return bool(IDENT_RE.match(name)) and len(name) <= 64 and not id_like(name) and redact(name) == name
+
+
 def safe_value(text):
     return bool(TYPE_VALUE_RE.match(text)) and not id_like(text) and redact(text) == text
 
@@ -3578,7 +3583,7 @@ class Structure:
                 count = self.paths[path[:i + 1]][0]
                 if key == "[]":
                     parts.append("[]")
-                elif len(siblings) > PROBE_MAX_KEYS or id_like(key):
+                elif id_like(key) or (len(siblings) > PROBE_MAX_KEYS and count < 3):      # many keys, each seen once or twice: ids, not structure
                     parts.append("<key>")
                 elif KEY_RE.match(key) or (NAMESPACED_KEY_RE.match(key) and count >= 3):
                     parts.append(key)
@@ -3605,7 +3610,8 @@ class Structure:
         type_groups = {}
         for field, counts in sorted(groups.items()):
             kept = sorted(((v, n) for v, n in counts.items() if n >= 2 and safe_value(v)), key=lambda vn: (-vn[1], vn[0]))
-            type_groups[field] = {"values": dict(kept[:PROBE_MAX_VALUES]), "more": len(counts) - min(len(kept), PROBE_MAX_VALUES)}
+            if kept:                                   # a field whose values are all hidden is not worth a group
+                type_groups[field] = {"values": dict(kept[:PROBE_MAX_VALUES]), "more": len(counts) - min(len(kept), PROBE_MAX_VALUES)}
         times = {}
         for path, shapes in self.times.items():
             slot = times.setdefault(name_of(path), {})
@@ -3669,7 +3675,7 @@ def probe_folder(path, depth=3):
                     if level < depth:
                         walk(e, level + 1)
                 elif e.is_file():
-                    ext = e.suffix.lower() if re.fullmatch(r"\.[a-z0-9]{1,8}", e.suffix.lower()) else "(other)"
+                    ext = e.suffix.lower() if re.fullmatch(r"\.[a-z0-9]{1,8}", e.suffix.lower()) and safe_value(e.suffix.lower()[1:]) else "(other)"
                     slot = kinds.setdefault(ext or "(none)", {"count": 0, "bytes": 0})
                     slot["count"] += 1
                     slot["bytes"] += e.stat().st_size
@@ -3688,15 +3694,15 @@ def probe_sqlite(path):
         tables, other = [], 0
         for name, sql in sorted(master):
             shadow = any(name.startswith(v + "_") for v in virtual)
-            if name in virtual or shadow or name.startswith("sqlite_") or not IDENT_RE.match(name) or len(name) > 64:
+            if name in virtual or shadow or name.startswith("sqlite_") or not safe_ident(name):
                 other += 1
                 continue
             cols = [(c[1], c[2]) for c in conn.execute(f"PRAGMA table_info({quote_ident(name)})")]
-            entry = {"name": name, "columns": [{"name": c if IDENT_RE.match(c) and len(c) <= 64 else "<col>",
+            entry = {"name": name, "columns": [{"name": c if safe_ident(c) else "<col>",
                                                 "type": re.sub(r"[^A-Za-z]", "", t or "")[:12].upper()} for c, t in cols],
                      "rows": conn.execute(f"SELECT COUNT(*) FROM {quote_ident(name)}").fetchone()[0], "json_columns": {}}
             for c, t in cols:
-                if not IDENT_RE.match(c):
+                if not safe_ident(c):
                     continue
                 samples = []
                 for (v,) in conn.execute(f"SELECT {quote_ident(c)} FROM {quote_ident(name)} WHERE {quote_ident(c)} IS NOT NULL LIMIT {PROBE_MAX_ELEMENTS}"):
