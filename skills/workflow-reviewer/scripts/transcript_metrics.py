@@ -396,8 +396,9 @@ def parse_lines(lines, mapping, actor="main"):
                     raw_in = get_first(obj, at_id(rule["call_raw"])) if rule.get("call_raw") else None
                     inp = raw_in if raw_in is not None else inp
                     kind = get_first(obj, at_id(rule["call_kind"]))
-                    category = (mapping.get("call_categories") or {}).get(kind) \
-                        or (mapping.get("call_name_categories") or {}).get(name.lower())
+                    category = (mapping.get("call_categories") or {}).get(kind)
+                if category is None:               # a host that names its tools plainly needs no kind: the name decides
+                    category = (mapping.get("call_name_categories") or {}).get(name.lower())
                 cmds = commands_from_script(inp, rule["call_command_regex"]) \
                     if rule.get("call_command_regex") and isinstance(inp, str) else []
                 if cmds:                  # a script that runs shell commands: one call per command, never joined

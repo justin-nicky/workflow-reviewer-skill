@@ -212,3 +212,23 @@ def test_the_documents_are_never_written(cli, tmp_path):
     before = {f: f.read_bytes() for f in (root / "s1").iterdir()}
     run(cli, tmp_path, mapping(root))
     assert {f: f.read_bytes() for f in (root / "s1").iterdir()} == before and sorted(p.name for p in (root / "s1").iterdir()) == sorted(f.name for f in before)
+
+
+def test_tool_names_alone_can_set_the_category_without_a_kind_field(cli, tmp_path):
+    root = tmp_path / "sessions"
+    make_session(root, "s1", cli.repo.resolve(), ui=[], api=[
+        {"role": "user", "text": "go", "ts": 1},
+        {"role": "assistant", "text": "a", "ts": 2, "calls": [{"name": "read_file", "input": {"path": "a.py"}, "id": "c1"},
+                                                              {"name": "execute_command", "input": {"command": "python3 -m pytest -q"}, "id": "c2"},
+                                                              {"name": "write_to_file", "input": {"path": "a.py"}, "id": "c3"}]}])
+    text = mapping(root) + '''
+[call_name_categories]
+read_file = "read"
+write_to_file = "edit"
+execute_command = "shell"
+''' 
+    text = text.replace('[[records]]\nmatch = { role = "assistant" }\nrole = "assistant"\ntext = ["text"]',
+                        '[[records]]\nmatch = { role = "assistant" }\nrole = "assistant"\ntext = ["text"]\ncalls = "calls[]"\ncall_name = "name"\ncall_input = "input"\ncall_id = "id"')
+    # the call_name_categories table must sit before the first [[records]]; TOML tables can come in any order
+    proc, out = run(cli, tmp_path, text, root / "s1")
+    assert proc.returncode == 0 and out["tools"]["by_category"] == {"read": 1, "shell": 1, "edit": 1} and out["verify"]["total"] == 1
