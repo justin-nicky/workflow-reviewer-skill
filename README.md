@@ -33,6 +33,18 @@ Copy or symlink `skills/workflow-reviewer/` into your host's skill folder, or us
 
 See [examples/sample-report.md](examples/sample-report.md) (synthetic data).
 
+## How the report is made
+
+The agent sends only judgments (ranked actions, skill verdicts, a bottom line) as one JSON object on stdin. The script runs the metrics again for the same selection, computes every number itself, and renders the report: an HTML page by default, markdown with `--report-format md`.
+
+```bash
+python3 scripts/transcript_metrics.py <same selection args> --report - < findings.json
+```
+
+- The findings are checked strictly (schema_version 1: unknown keys, bad values and exceeded limits give exit 7 with a list of errors). The agent cannot supply numbers.
+- The HTML file is self-contained (inline CSS, no JavaScript, no external URL, a restrictive CSP) and every string is escaped and redacted like the metrics. It is written to `<tempdir>/workflow-reviewer/review-<UTC>.html` (mode 0600 in a 0700 folder) and opened with the platform opener, except with `--no-open`, over SSH, in CI, or on Linux without a display.
+- Stdout carries what the chat reply needs: the bottom line, the top action and the file path (`--format json` for JSON). `--report-format md` prints the report as markdown (80 lines at most), writes no file, and suits hosts with no browser, such as cloud Devin.
+
 ## Privacy
 
 - The script reads the local transcript and prints to stdout only. It writes nothing and imports no network module.

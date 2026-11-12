@@ -48,6 +48,10 @@ The skill's scope ends at the report. A later "apply item 1" is an ordinary requ
 - host-specific advice without a host label;
 - removing a skill because one task did not use it.
 
+## How the report is made
+
+Send only judgments; the script works out every number. Run the same selection arguments as the metrics run with `--report -` and the findings JSON on stdin (`schema_version` 1: `title`, `bottom_line`, `actions` 0 to 5 in rank order, `skills`, optional `closing_question` (only with a gap) and `metric_notes`). Exit 7 lists what to fix. The script writes the HTML report, opens it where a display exists, and prints the bottom line, the top action and the file path. Use `--report-format md` where there is no browser, and `--no-open` to skip opening. The full flow rewrite comes later.
+
 ## Script flags
 
-`--session-id` `--host auto|claude-code|codex|cursor|kiro` `--list-turns [--all]` `--from-turn/--to-turn` `--events I:J` `--sample N` `--mapping FILE|-` `--verify-pattern RE` `--idle-threshold S` `--drift-threshold PCT` `--format md|json` `--no-redact`. Optional `.workflow-review.toml` in the repo holds `verify_patterns`, `idle_threshold`, `drift_threshold`.
+`--session-id` `--host auto|claude-code|codex|cursor|kiro` `--list-turns [--all]` `--from-turn/--to-turn` `--events I:J` `--sample N` `--mapping FILE|-` `--verify-pattern RE` `--idle-threshold S` `--drift-threshold PCT` `--format md|json` `--no-redact` `--report -` `--report-format html|md` `--no-open`. Optional `.workflow-review.toml` in the repo holds `verify_patterns`, `idle_threshold`, `drift_threshold`.
