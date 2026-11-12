@@ -54,4 +54,4 @@ Send only judgments; the script works out every number. Run the same selection a
 
 ## Script flags
 
-`--session-id` `--host auto|claude-code|codex|cursor|kiro` `--list-turns [--all]` `--from-turn/--to-turn` `--events I:J` `--sample N` `--mapping FILE|-` `--verify-pattern RE` `--idle-threshold S` `--drift-threshold PCT` `--overlap-threshold 0..1` `--directive-threshold 0..1` `--format md|json` `--no-redact` `--health-all` `--report -` `--report-format html|md` `--no-open`. Optional `.workflow-review.toml` in the repo holds `verify_patterns`, `idle_threshold`, `drift_threshold`.
+`--session-id` `--host auto|claude-code|codex|cursor|kiro` `--list-turns [--all]` `--from-turn/--to-turn` `--events I:J` `--sample N` `--mapping FILE|-` `--verify-pattern RE` `--idle-threshold S` `--drift-threshold PCT` `--overlap-threshold 0..1` `--directive-threshold 0..1` `--format md|json` `--no-redact` `--health-all` `--probe PATH` `--save-adapter NAME [--replace]` `--report -` `--report-format html|md` `--no-open`. Optional `.workflow-review.toml` in the repo holds `verify_patterns`, `idle_threshold`, `drift_threshold`.
