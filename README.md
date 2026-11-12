@@ -26,6 +26,7 @@ Copy or symlink `skills/workflow-reviewer/` into your host's skill folder, or us
 | Claude Code | `~/.claude/skills/` or `.claude/skills/` | `disable-model-invocation: true` keeps it explicit-only |
 | Codex | `.agents/skills/` or `~/.agents/skills/` | `agents/openai.yaml` sets `allow_implicit_invocation: false` |
 | Cursor | `.cursor/skills/` or `.agents/skills/` | `disable-model-invocation: true` (checked in both folders). Reduced capabilities: no tokens, tool results or ids; interruptions, turn errors and a coarse wall time are reported |
+| Devin (desktop app and CLI) | `.cognition/skills/` or `~/.claude/skills/` | Supported through `--host devin`: sessions are read from Devin's local SQLite database (read-only, WAL included). `disable-model-invocation: true` hides a skill from the model, so it can be typed by hand but is never offered. Cloud Devin keeps no local database and runs in degraded mode |
 | Kiro | `.kiro/skills/` | Degraded mode (working tree and repo records only). Explicit-only is not documented for Kiro, so it may occasionally trigger on its own |
 
 ## Example
