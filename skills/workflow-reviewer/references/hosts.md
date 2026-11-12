@@ -113,3 +113,17 @@ Outside the tested range the script adds `coverage.version_note`: `newer than te
 - `[container.sessions] model`, `[container.version] table/column` (the database's schema number, also the variant tiebreak: `versions = "schema 18 to 25"` or `"schema 20 and newer"`).
 - Rules: `call_kind` and `call_raw` (paths with `{id}` for the call id) with top-level `[call_categories]` (kind to category) and `[call_name_categories]`; `results = "."` (the record itself); `result_started`/`result_finished` with `tool_time_source = "result_spans"`; `usage_context`, `usage_present`; `offered_each`; `instruction_paths`/`instruction_bytes`/`instruction_always_on`; `skill_command = { path, regex }`; `spawned_model`. Top level: `skill_tool_label`, `skill_detections = "all"`. A `match` value of `"$present"` means the field exists. Paths starting `$row.` read the node row; `$session.model` reads the session's model.
 - Broken chains: "chain broken: N earlier nodes unreachable" and "chain loop at node <masked id>" appear in `coverage.notes`.
+
+## Skill, plugin and hook locations (read by the overlap scan)
+
+The scan reads these files and writes nothing. A host lists its folders in its mapping; a host with none says "hooks unknown for this host" (hooks) or "skill folders unknown for this host" (skills).
+
+| Host | Skill folders (`skill_folders`) | Plugin skill folders (`plugin_skill_folders`) | Hook files (`hook_files`) |
+|---|---|---|---|
+| Claude Code | `.claude/skills/` (repo and parents), `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`) | `~/.claude/plugins/cache/*/*/*/skills/` | `.claude/settings.json`, `.claude/settings.local.json`, `~/.claude/settings.json` (format `claude-settings`: `hooks.<Event>[].matcher` and `.hooks[].command`) |
+| Codex | `.agents/skills/`, `~/.agents/skills/`, `~/.codex/skills/`, `/etc/codex/skills/` | none declared | unknown |
+| Cursor | `.cursor/skills/`, `~/.cursor/skills/`, `.agents/skills/`, `~/.agents/skills/`, `.claude/skills/`, `.codex/skills/` | none declared | unknown |
+| Devin | `.cognition/skills/`, `~/.claude/skills/` | none declared | unknown |
+| Kiro | `.kiro/skills/`, `~/.kiro/skills/` | none declared | unknown |
+
+Mapping keys: `[[plugin_skill_folders]]` and `[[hook_files]]` take the same fields as `[[skill_folders]]` (`path`, `scope`, `walk`, `base`, `base_env`), plus `glob = true` for a pattern under the base. `hooks_format` names the file shape. Always-on instructions are what the host reported loading this session (for example Devin's `rules-loaded`), plus the repo's `CLAUDE.md`, `AGENTS.md`, `~/.claude/CLAUDE.md` and Cursor rules with `alwaysApply: true`.
