@@ -1,0 +1,145 @@
+# Devin (desktop app and CLI) mapping. The sessions live in a SQLite database; this file only names tables, columns
+# and paths. Data only: no code. Unofficial format, read from a live database with the WAL included.
+host = "devin"
+schema_version = 1
+tested_versions = "Devin desktop app 3000.12.43 (database schema 20)"
+type_path = "role"
+
+# Tool time is the host's own start and end on each tool result, not the gap between records.
+tool_time_source = "result_spans"
+# A skill called by the model is a "skill tool call"; every way a skill was seen is reported with its turn.
+skill_tool_label = "skill tool call"
+skill_detections = "all"
+token_method = "metadata.metrics per message id; input_tokens is fresh only (cache excluded); input + cache_read is cross-checked against context_input_tokens"
+
+# Skills the app reads: the project's .cognition/skills and the Claude user folder (seen in its own skill listing).
+[[skill_folders]]
+path = ".cognition/skills"
+scope = "project"
+walk = false
+[[skill_folders]]
+path = "~/.claude/skills"
+scope = "user"
+
+[container]
+kind = "sqlite"
+default_path = "~/.local/share/devin/cli/sessions.db"
+
+[container.sessions]
+table = "sessions"
+id = "id"
+cwd = "working_directory"
+created = "created_at"
+last_activity = "last_activity_at"
+head = "main_chain_id"
+model = "model"
+
+[container.nodes]
+table = "message_nodes"
+session = "session_id"
+id = "node_id"
+parent = "parent_node_id"
+payload = "chat_message"
+created = "created_at"
+
+[container.subagent_heads]
+table = "subagent_heads"
+session = "session_id"
+agent = "agent_id"
+head = "chain_node_id"
+
+# The schema version the app's migration tool records.
+[container.version]
+table = "refinery_schema_history"
+column = "version"
+
+[capabilities]
+has_tokens = true
+has_timestamps = true
+has_tool_results = true
+has_ids = true
+
+[fields]
+timestamp = "$row.created_at"
+model = "$session.model"
+msg_id = "message_id"
+
+# A tool call's kind (on the message, keyed by call id) decides its category. Only kind "execute" is a shell command.
+[call_categories]
+read = "read"
+edit = "edit"
+execute = "shell"
+search = "search"
+
+# Calls of kind "other" are told apart by tool name.
+[call_name_categories]
+skill = "skill"
+run_subagent = "agent"
+
+[subagents]
+brief_key = "task"
+
+[[records]]
+match = { role = "system", "metadata.extensions.agent-ext/skills-loaded" = "$present" }
+role = "meta"
+offered_each = "metadata.extensions.agent-ext/skills-loaded.skills[model_invocable=true].name"
+
+[[records]]
+match = { role = "system", "metadata.extensions.agent-ext/rules-loaded" = "$present" }
+role = "meta"
+instruction_paths = "metadata.extensions.agent-ext/rules-loaded.rule_paths[]"
+instruction_bytes = "metadata.extensions.agent-ext/rules-loaded.content_bytes"
+instruction_always_on = "metadata.extensions.agent-ext/rules-loaded.is_always_on"
+
+[[records]]
+match = { role = "system", content = "[Response interrupted by user]" }
+role = "meta"
+interrupt = true
+
+[[records]]
+match = { role = "system" }
+role = "ignore"
+
+# A turn is a user message the person typed. A leading /name there is a skill started by hand.
+[[records]]
+match = { role = "user", "metadata.is_user_input" = true }
+role = "user"
+text = ["content"]
+skill_command = { path = "metadata.extensions.chisel/acp-content-blocks[type=text].text", regex = "^\\s*/([A-Za-z0-9_.:-]+)" }
+
+[[records]]
+match = { role = "user" }
+role = "user"
+turn = false
+non_turn_reason = "not user input"
+text = ["content"]
+
+[[records]]
+match = { role = "assistant" }
+role = "assistant"
+text = ["content"]
+calls = "tool_calls[]"
+call_name = "name"
+call_input = "arguments"
+call_id = "id"
+call_kind = "metadata.extensions.chisel/tool_call_content.{id}.kind"
+call_raw = "metadata.extensions.chisel/tool_call_content.{id}.rawInput"
+usage_input = "metadata.metrics.input_tokens"
+usage_output = "metadata.metrics.output_tokens"
+usage_cache_read = "metadata.metrics.cache_read_tokens"
+usage_cache_write = "metadata.metrics.cache_creation_tokens"
+usage_context = "metadata.metrics.context_input_tokens"
+usage_present = "metadata.metrics"      # an interrupted reply has metrics with no tokens: still one call
+
+# A tool result. A nonzero exit code is an error even when the host says success (it does, for exit code 2).
+[[records]]
+match = { role = "tool" }
+role = "meta"
+results = "."
+result_id = "tool_call_id"
+result_text = "content"
+result_exit_code = "metadata.extensions.chisel/terminal_output.exit.exit_code"
+result_started = "metadata.extensions.chisel/tool_call_timing.started_at"
+result_finished = "metadata.extensions.chisel/tool_call_timing.finished_at"
+spawned_agent = "metadata.extensions.subagent/agent_id"
+spawned_model = "metadata.extensions.subagent/model"

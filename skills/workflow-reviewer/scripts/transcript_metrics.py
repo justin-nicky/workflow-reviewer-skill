@@ -61,7 +61,7 @@ def get_all(obj, path):
             elif isinstance(c, list):
                 key, eq, val = bracket.partition("=")
                 for e in c:
-                    if not eq or (isinstance(e, dict) and str(e.get(key)) == val):
+                    if not eq or (isinstance(e, dict) and _norm(e.get(key)) == val):
                         nxt.append(e)
         cur = nxt
     return cur
@@ -99,6 +99,10 @@ def get_text(obj, paths):
 def _matches(obj, match):
     for path, want in match.items():
         got = get_first(obj, path)
+        if want == "$present":                       # the field exists, whatever it holds
+            if got is None:
+                return False
+            continue
         wants = want if isinstance(want, list) else [want]
         if got is None or _norm(got) not in [_norm(w) for w in wants]:
             return False
@@ -160,6 +164,11 @@ def version_in(version, spec):
 
     False when either side has no version.
     """
+    if str(spec or "").strip().startswith("schema"):          # a database schema number: "schema 18 to 25", "schema 20 and newer"
+        nums = [int(n) for n in re.findall(r"\d+", str(spec))]
+        if not (str(version).isdigit() and nums):
+            return False
+        return nums[0] <= int(version) if re.search(r"\band newer\b", str(spec)) else nums[0] <= int(version) <= nums[-1]
     seen = _version_tuple(version) if version else None
     bounds = VERSION_RE.findall(str(spec or ""))
     if not (seen and bounds):
@@ -188,7 +197,7 @@ def score_variant(m, lines):
             "version": st["version"], "missing": missing}
 
 
-def choose_variant(raw, lines, want_score=False):
+def choose_variant(raw, lines, want_score=False, version=None):
     """Pick the variant by shape: best classified ratio among those whose required markers appear.
 
     The optional `versions` range only breaks ties between equal shapes; listing order breaks the rest.
@@ -200,6 +209,8 @@ def choose_variant(raw, lines, want_score=False):
         return variants[0], {"variant": variants[0].get("variant") or "default", "score": score,
                              "scores": None, "reason": None}
     scored = [(m, score_variant(m, lines)) for m in variants]
+    for _, sc in scored:
+        sc["version"] = sc["version"] or version                  # e.g. the database's own schema number
     qualified = [ms for ms in scored if not ms[1]["missing"]]
     pool = qualified or scored
     top = max(round(sc["ratio"], 6) for _, sc in pool)
@@ -318,7 +329,20 @@ def parse_lines(lines, mapping, actor="main"):
               "usage_fallback": bool(rule.get("usage_fallback")), "turn_error": bool(rule.get("turn_error")),
               "prompt_ts": prompt_time(get_text(obj, rule["text"]), rule["prompt_time"]) if rule.get("prompt_time") else None,
               "spawned_agent": get_first(obj, rule.get("spawned_agent")),
-              "offered": get_first(obj, rule.get("offered_skills"))}
+              "offered": get_first(obj, rule.get("offered_skills")),
+              "usage_context": None, "slash_skill": None, "instruction": None, "spawned_model": None}
+        if rule.get("offered_each"):                       # one name per match of a wildcard path
+            ev["offered"] = [n for n in get_all(obj, rule["offered_each"]) if isinstance(n, str)]
+        if rule.get("spawned_model"):
+            ev["spawned_model"] = get_first(obj, rule["spawned_model"])
+        if rule.get("skill_command"):                      # a typed /name at the start of the prompt
+            cmd = rule["skill_command"]
+            found = re.match(cmd["regex"], get_text(obj, cmd["path"]))
+            ev["slash_skill"] = found.group(1) if found else None
+        if rule.get("instruction_paths"):                  # always-on rule files the host loaded
+            ev["instruction"] = {"paths": [p for p in get_all(obj, rule["instruction_paths"]) if isinstance(p, str)],
+                                 "bytes": _int(get_first(obj, rule.get("instruction_bytes"))),
+                                 "always_on": bool(get_first(obj, rule.get("instruction_always_on")))}
         if rule.get("offered_from"):                       # a skill list written as prose: block, then one name per item
             listing = get_text(obj, rule["offered_from"])
             ev["offered"] = skill_names_in(listing, rule["offered_block"], rule["offered_item"])
@@ -339,6 +363,14 @@ def parse_lines(lines, mapping, actor="main"):
                     except ValueError:
                         pass
                 name, call_id = get_first(c, rule.get("call_name")) or "", get_first(c, rule.get("call_id"))
+                category = None
+                if rule.get("call_kind"):         # the kind and raw input sit on the message, keyed by call id
+                    at_id = lambda path: path.replace("{id}", str(call_id))
+                    raw_in = get_first(obj, at_id(rule["call_raw"])) if rule.get("call_raw") else None
+                    inp = raw_in if raw_in is not None else inp
+                    kind = get_first(obj, at_id(rule["call_kind"]))
+                    category = (mapping.get("call_categories") or {}).get(kind) \
+                        or (mapping.get("call_name_categories") or {}).get(name.lower())
                 cmds = commands_from_script(inp, rule["call_command_regex"]) \
                     if rule.get("call_command_regex") and isinstance(inp, str) else []
                 if cmds:                  # a script that runs shell commands: one call per command, never joined
@@ -346,6 +378,8 @@ def parse_lines(lines, mapping, actor="main"):
                                     for cmd in cmds]
                 else:
                     ev["calls"].append({"name": name, "input": inp, "id": call_id})
+                    if category:
+                        ev["calls"][-1]["category"] = category
         if "results" in rule:
             for r in get_all(obj, rule["results"]):
                 code = get_first(r, rule.get("result_exit_code"))
@@ -357,6 +391,10 @@ def parse_lines(lines, mapping, actor="main"):
                     isinstance(code, (int, float)) and code != 0)
                 ev["results"].append({"id": get_first(r, rule.get("result_id")), "error": err,
                                       "bytes": len(text.encode("utf-8"))})
+                if rule.get("result_started"):         # the host's own start and end of the tool call
+                    span = (parse_ts(get_first(r, rule["result_started"])), parse_ts(get_first(r, rule.get("result_finished"))))
+                    if None not in span:
+                        ev["results"][-1]["span"] = span
         if "usage_output" in rule or "usage_input" in rule:
             u = {k: _int(get_first(obj, rule.get(f"usage_{k}"))) for k in
                  ("input", "output", "cache_read", "cache_write")}
@@ -367,8 +405,10 @@ def parse_lines(lines, mapping, actor="main"):
             if total is not None and total == last_total:
                 u = dict.fromkeys(u, 0)               # the same cumulative total re-emitted
             last_total = total if total is not None else last_total
-            if any(u.values()):
-                ev["usage"] = u
+            if any(u.values()) or (rule.get("usage_present") and get_first(obj, rule["usage_present"]) is not None):
+                ev["usage"] = u                       # usage_present: a call whose metrics are all zero still counts as a call
+            if rule.get("usage_context"):
+                ev["usage_context"] = get_first(obj, rule["usage_context"])
         events.append(ev)
     if any(e["usage"] and not e["usage_fallback"] for e in events):
         for e in events:                    # primary usage records exist: fallback rows would count twice
@@ -392,10 +432,17 @@ def token_summary(events):
         for k, v in u.items():
             cur[k] = max(cur[k], v)
     calls = list(by_id.values()) + no_id
+    contexts = {}
+    for ev in events:                     # a second way of counting: input + cache_read must equal the host's context size
+        if ev["usage"] and ev.get("usage_context") is not None and ev["msg_id"] is not None:
+            contexts[ev["msg_id"]] = (ev["usage"]["input"] + ev["usage"]["cache_read"], _int(ev["usage_context"]))
     main = [e["usage"] for e in events if e["usage"] and e["actor"] == "main"]
     last = main[-1] if main else None
     total = {k: sum(c[k] for c in calls) for k in ("input", "output", "cache_read", "cache_write")}
+    check = {"calls": len(contexts), "context_input_total": sum(c for _, c in contexts.values()),
+             "mismatches": sum(1 for a, c in contexts.values() if a != c)} if contexts else None
     return {
+        **({"context_check": check} if check else {}),
         "fresh_input": total["input"], "output": total["output"],
         "cache_read": total["cache_read"], "cache_write": total["cache_write"],
         "api_calls": len(calls), "calls_without_id": len(no_id),
@@ -560,6 +607,11 @@ def categorise(name):
     return next((c for c, names in CATEGORIES.items() if low in names), "other")
 
 
+def call_cat(call):
+    """The call's category: the mapping's own (from the host's kind) when it gave one, else by tool name."""
+    return call.get("category") or categorise(call["name"])
+
+
 def call_path(call):
     inp = call["input"]
     if isinstance(inp, dict):
@@ -582,7 +634,7 @@ def tool_summary(events, custom_patterns, has_results):
     seq, last_edit, errors = [], -1, 0
     for ev in events:
         for c in ev["calls"]:
-            cat = categorise(c["name"])
+            cat = call_cat(c)
             by_cat[cat] = by_cat.get(cat, 0) + 1
             paths = call_path(c)
             if cat == "read":
@@ -690,16 +742,20 @@ def reviewer_cut(events):
     return None
 
 
-def tool_seconds(events):
-    """Seconds spent waiting on tools by these events' calls, with overlapping intervals merged."""
+def tool_seconds(events, spans_only=False):
+    """Seconds spent waiting on tools by these events' calls, with overlapping intervals merged.
+
+    A result may carry the host's own start and end (a span); with spans_only those are all that count.
+    """
     starts, spans = {}, []
     for e in events:
-        if e["ts"] is None:
+        spans += [r["span"] for r in e["results"] if r.get("span")]
+        if e["ts"] is None or spans_only:
             continue
         for c in e["calls"]:
             if c["id"] is not None:
                 starts[c["id"]] = e["ts"]
-        spans += [(starts[r["id"]], e["ts"]) for r in e["results"] if r["id"] in starts]
+        spans += [(starts[r["id"]], e["ts"]) for r in e["results"] if r["id"] in starts and not r.get("span")]
     total, end = 0.0, None
     for lo, hi in sorted(spans):
         if end is None or lo > end:
@@ -748,13 +804,13 @@ def coarse_time_summary(events):
             "tool_s": na, "waiting_s": na}
 
 
-def time_summary(events, idle):
+def time_summary(events, idle, spans_only=False):
     stamped = [e for e in events if e["ts"] is not None]
     if not stamped:
         return {"not_measurable": "host records no timestamps"}
     wall = stamped[-1]["ts"] - stamped[0]["ts"]
     waiting, prev = 0.0, None
-    tool = tool_seconds([e for e in stamped if e["actor"] == "main"])
+    tool = tool_seconds([e for e in stamped if e["actor"] == "main"], spans_only)
     for e in stamped:
         if is_turn_start(e) and prev is not None:
             gap = e["ts"] - prev
@@ -764,8 +820,9 @@ def time_summary(events, idle):
             prev = e["ts"]
     return {"wall_s": round(wall), "waiting_s": round(waiting), "tool_s": round(tool),
             "active_s": round(max(0.0, wall - waiting - tool)),
-            "tool_note": "main agent only, overlapping calls merged; may include permission prompts; "
-                         "subagent time is reported per actor"}
+            "tool_note": ("main agent only, from the host's own tool timing, overlapping calls merged; "
+                          if spans_only else "main agent only, overlapping calls merged; may include permission prompts; ")
+                         + "subagent time is reported per actor"}
 
 
 def preview(text, n=80):
@@ -795,7 +852,12 @@ ROW_TOKEN_KEYS = ("fresh_input", "output", "cache_read", "cache_write", "api_cal
 def row_tokens(events, mapping):
     """Token fields for a per-turn or per-actor row (the method note stays in the top-level summary)."""
     tokens = tokens_for(events, mapping)
-    return tokens if "not_measurable" in tokens else {k: tokens[k] for k in ROW_TOKEN_KEYS}
+    if "not_measurable" in tokens:
+        return tokens
+    row = {k: tokens[k] for k in ROW_TOKEN_KEYS}
+    if "context_check" in tokens:
+        row["context_check"] = tokens["context_check"]
+    return row
 
 
 def short_path(path, n=60):
@@ -843,6 +905,8 @@ def with_other(counts, n):
 def turn_rows(events, mapping, custom):
     rows = []
     by_turn = {}
+    if not any(is_turn_start(e) for e in events):        # no prompt at all: records without a prompt are not a turn
+        return rows
     for e in events:
         by_turn.setdefault(e["turn"], []).append(e)
     for t in sorted(by_turn):
@@ -869,7 +933,7 @@ def actor_rows(events, mapping, custom, links=None, metas=None):
                                                              len(first["text"].encode()) if first else 0),
                      "tokens": row_tokens(evs, mapping), "tool_calls": tools["total"],
                      "verify_runs": verify["total"],
-                     "tool_s": round(tool_seconds(evs)) if mapping["capabilities"].get("has_timestamps") else None})
+                     "tool_s": round(tool_seconds(evs, mapping.get("tool_time_source") == "result_spans")) if mapping["capabilities"].get("has_timestamps") else None})
         if actor in links:
             rows[-1]["link"] = links[actor]["link"]
         history = metas.get(actor, {}).get("history")
@@ -1016,7 +1080,7 @@ def place_subagents(events):
     for evs in subs.values():
         brief = next((e["text"] for e in evs if e["role"] == "user" and e["text"].strip()), "")[:80]
         pos = next((k for k, e in enumerate(out) if e["actor"] == "main" and brief and any(
-            categorise(c["name"]) == "agent" and brief in spawn_text(c) for c in e["calls"])), None)
+            call_cat(c) == "agent" and brief in spawn_text(c) for c in e["calls"])), None)
         if pos is None:
             out += evs
             continue
@@ -1098,7 +1162,7 @@ def spawn_for(events, mapping, agent_path):
     for ev in events:
         for c in ev["calls"]:
             inp = c["input"]
-            if ev["actor"] == "main" and categorise(c["name"]) == "agent" and isinstance(inp, dict) \
+            if ev["actor"] == "main" and call_cat(c) == "agent" and isinstance(inp, dict) \
                     and isinstance(inp.get(cfg["spawn_key"]), str) and isinstance(inp.get(cfg["brief_key"]), str) \
                     and (agent_path == inp[cfg["spawn_key"]] or agent_path.endswith("/" + inp[cfg["spawn_key"]].lstrip("/"))):
                 return ev, len(inp[cfg["brief_key"]].encode("utf-8"))
@@ -1136,6 +1200,19 @@ def link_subagents(events, metas, mapping, placed, main_ids=()):
         call_id = metas.get(actor, {}).get("call_id")
         if metas.get(actor, {}).get("fixed_link"):           # the storage itself says whose chain this is
             info[actor] = {"link": metas[actor]["fixed_link"], "call_id": None}
+            spawner = spawners.get(by_agent.get(stem))        # the spawning call's result names the agent id
+            if spawner is not None:
+                for e in evs:
+                    e["turn"] = spawner["turn"]
+                info[actor]["call_id"] = by_agent[stem]
+                brief_key = (mapping.get("subagents") or {}).get("brief_key")
+                call = next((c for c in spawner["calls"] if c["id"] == by_agent[stem]), None)
+                if brief_key and call and isinstance(call["input"], dict) and isinstance(call["input"].get(brief_key), str):
+                    info[actor]["brief_bytes"] = len(call["input"][brief_key].encode("utf-8"))
+                model = next((e["spawned_model"] for e in events if e.get("spawned_agent") is not None
+                              and str(e["spawned_agent"]) == stem and e["spawned_model"]), None)
+                if model:
+                    metas[actor]["model"] = model
             continue
         if call_id not in spawners:
             call_id = by_agent.get(stem[len(prefix):] if prefix and stem.startswith(prefix) else stem)
@@ -1170,7 +1247,7 @@ def _event_keys(events):
         if key is None:
             base = json.dumps([ev["role"], ev["text"], [(c["name"], c["input"], c["id"]) for c in ev["calls"]],
                                [r["id"] for r in ev["results"]], ev["msg_id"], ev["usage"], ev["model"], ev["ts"], ev["turn_start"],
-                               ev["interrupted"]], sort_keys=True, default=str)
+                               ev["interrupted"], ev["offered"], ev["instruction"], ev["spawned_agent"]], sort_keys=True, default=str)
             n = ordinal[(ev["file"], base)] = ordinal.get((ev["file"], base), -1) + 1
             key = (base, n)
         keys.append(key)
@@ -1455,6 +1532,9 @@ def invoked_skills(events, host):
     main = [e for e in events if e["actor"] == "main"]
     found = []
     for k, ev in enumerate(main):
+        if ev.get("slash_skill"):                      # the mapping read a typed /name from the prompt
+            found.append((ev["slash_skill"], "slash command", None, ev["turn"]))
+            continue
         if host == "claude-code" and ev["role"] == "user" and not ev["non_turn"]:
             m = CC_COMMAND_RE.search(ev["text"])
             if not m:
@@ -1463,18 +1543,18 @@ def invoked_skills(events, host):
                 if is_turn_start(nxt):
                     break
                 if nxt["role"] == "user" and nxt["text"].lstrip().startswith(CC_SKILL_BODY):
-                    found.append((m.group(1), "slash command", len(nxt["text"].encode("utf-8"))))
+                    found.append((m.group(1), "slash command", len(nxt["text"].encode("utf-8")), ev["turn"]))
                     break
         elif host == "codex" and ev["role"] in ("user", "meta"):
             for link in CODEX_LINK_RE.finditer(ev["text"]):
                 for nxt in main[k + 1:k + 6]:
                     block = CODEX_BLOCK_RE.search(nxt["text"])
                     if block and block.group(1) == link.group(1):
-                        found.append((link.group(1), "$skill link", len(nxt["text"].encode("utf-8"))))
+                        found.append((link.group(1), "$skill link", len(nxt["text"].encode("utf-8")), ev["turn"]))
                         break
         elif host == "cursor" and ev["role"] == "user" and "<manually_attached_skills>" in ev["text"]:
             size = len(ev["text"].encode("utf-8"))
-            found += [(name, "attached skill", size) for name in CURSOR_ATTACHED_RE.findall(ev["text"])]
+            found += [(name, "attached skill", size, ev["turn"]) for name in CURSOR_ATTACHED_RE.findall(ev["text"])]
     return found
 
 
@@ -1495,17 +1575,36 @@ def is_offered(name, offered):
     return name in offered or any(o.endswith(":" + name) for o in offered)
 
 
-def skills_summary(events, host, repo, offered=None, folders=None):
+def host_instruction_files(events):
+    """Always-on rule files the host says it loaded (paths masked), and the bytes it reports for them."""
+    files, seen, total = [], set(), 0
+    for ev in events:
+        info = ev.get("instruction")
+        if ev["actor"] != "main" or not info:
+            continue
+        total = max(total, info["bytes"])
+        for path in info["paths"]:
+            if path not in seen:
+                seen.add(path)
+                files.append({"path": mask_home(path), "bytes": None, "always_on": info["always_on"]})
+    return {"files": files, "bytes": total} if files else None
+
+
+def skills_summary(events, host, repo, offered=None, folders=None, mapping=None):
+    mapping = mapping or {}
     results = {r["id"]: r for e in events for r in e["results"] if r["id"] is not None}
-    loaded, reads = {}, []
-    for name, how, size in invoked_skills(events, host):
+    loaded, reads, detections = {}, [], {}
+    tool_label = mapping.get("skill_tool_label", "skill-tool")
+    for name, how, size, turn in invoked_skills(events, host):
         loaded.setdefault(name, {"name": name, "detected_by": how, "bytes": size})
+        detections.setdefault(name, []).append({"by": how, "turn": turn})
     for ev in events:
         for c in ev["calls"]:
-            cat = categorise(c["name"])
+            cat = call_cat(c)
             if cat == "skill" and isinstance(c["input"], dict) and c["input"].get("skill"):
-                loaded.setdefault(c["input"]["skill"], {"name": c["input"]["skill"],
-                                                        "detected_by": "skill-tool", "bytes": None})
+                skill = c["input"]["skill"]
+                loaded.setdefault(skill, {"name": skill, "detected_by": tool_label, "bytes": None})
+                detections.setdefault(skill, []).append({"by": tool_label, "turn": ev["turn"]})
             if cat != "read":
                 continue
             for path in call_path(c):
@@ -1521,6 +1620,9 @@ def skills_summary(events, host, repo, offered=None, folders=None):
     for name, _, size in reads:                # other files of a used skill add to its size
         if name in loaded:
             loaded[name]["bytes"] = (loaded[name]["bytes"] or 0) + size
+    if mapping.get("skill_detections") == "all":      # say every way a skill was seen, with its turn
+        for name, found in detections.items():
+            loaded[name]["detections"] = found
     inventory = skill_inventory(folders, repo)
     no_folders = inventory is None
     inventory = inventory or []
@@ -1541,6 +1643,11 @@ def skills_summary(events, host, repo, offered=None, folders=None):
         summary["offered_note"] = "a skill used but not offered is normal for explicit-only skills"
     summary.update(inventory=shown, inventory_total=None if no_folders else len(inventory),
                    instruction_files=instruction_files(repo))
+    host_rules = host_instruction_files(events)
+    if host_rules:
+        known = {f["path"] for f in summary["instruction_files"]}
+        summary["instruction_files"] += [f for f in host_rules["files"] if f["path"] not in known]
+        summary["instruction_bytes_always_on"] = host_rules["bytes"]
     if no_folders:
         summary["inventory_note"] = NO_FOLDERS
     return summary
@@ -1594,7 +1701,7 @@ def load_config(repo):
 def build_parser():
     p = argparse.ArgumentParser(prog="transcript_metrics.py")
     p.add_argument("paths", nargs="*")
-    p.add_argument("--host", default="auto", choices=["auto", *HOSTS, "kiro"])
+    p.add_argument("--host", default="auto", choices=["auto", *HOSTS, *SQLITE_HOSTS, "kiro"])
     p.add_argument("--format", default="md", choices=["md", "json"])
     p.add_argument("--verify-pattern", action="append", default=[], dest="verify_patterns")
     p.add_argument("--list-turns", action="store_true")
@@ -1675,6 +1782,7 @@ SQLITE_TABLES = {
     "nodes": ("table", "session", "id", "parent", "payload", "created"),
     "subagent_heads": ("table", "session", "agent", "head"),          # optional
 }
+SQLITE_OPTIONAL = {"sessions": ("model",)}                  # columns a mapping may add: the session's model
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -1694,7 +1802,16 @@ def sqlite_spec(raw):
                 raise ContainerProblem(f"mapping [container.{name}] is missing '{key}'")
             if not isinstance(value, str) or not IDENT_RE.match(value):
                 raise ContainerProblem(f"mapping [container.{name}] {key} is not a plain identifier; refusing to query")
+        for key in SQLITE_OPTIONAL.get(name, ()):
+            if key in part and (not isinstance(part[key], str) or not IDENT_RE.match(part[key])):
+                raise ContainerProblem(f"mapping [container.{name}] {key} is not a plain identifier; refusing to query")
         spec[name] = dict(part)
+    version = cfg.get("version")                              # a table that records the schema version (optional)
+    if version is not None:
+        for key in ("table", "column"):
+            if not isinstance(version.get(key), str) or not IDENT_RE.match(version[key]):
+                raise ContainerProblem(f"mapping [container.version] {key} is not a plain identifier; refusing to query")
+        spec["version"] = dict(version)
     return spec
 
 
@@ -1723,6 +1840,8 @@ def check_schema_in_db(conn, spec):
         raise ContainerProblem(f"not a readable SQLite database: {exc}")
     missing = []
     for name, part in spec.items():
+        if name == "version":
+            continue                                          # optional: a database without it just has no version
         table = part["table"]
         if table not in tables:
             missing.append(f"table {table}")
@@ -1730,7 +1849,8 @@ def check_schema_in_db(conn, spec):
         if (tables[table] or "").lstrip().upper().startswith("CREATE VIRTUAL"):
             raise ContainerProblem(f"table {table} is a virtual table; virtual and FTS tables are never read")
         have = {row[1] for row in conn.execute(f"PRAGMA table_info({quote_ident(table)})")}
-        missing += [f"column {table}.{part[k]}" for k in SQLITE_TABLES[name] if k != "table" and part[k] not in have]
+        wanted = [k for k in (*SQLITE_TABLES[name], *SQLITE_OPTIONAL.get(name, ())) if k != "table" and k in part]
+        missing += [f"column {table}.{part[k]}" for k in wanted if part[k] not in have]
     if missing:
         raise ContainerProblem("the database does not match the mapping: missing " + ", ".join(missing), missing)
 
@@ -1742,12 +1862,25 @@ def select_rows(conn, table, columns, where=None, params=()):
     return conn.execute(sql, params).fetchall()
 
 
+def read_schema_version(conn, spec):
+    """The newest schema version the database records (None when it keeps none)."""
+    part = spec.get("version")
+    if not part:
+        return None
+    try:
+        row = conn.execute(f"SELECT MAX({quote_ident(part['column'])}) FROM {quote_ident(part['table'])}").fetchone()
+    except sqlite3.Error:
+        return None
+    return row[0] if row and isinstance(row[0], int) else None
+
+
 class SqliteReader:
     """One session of a SQLite database: the chain of nodes from the head, plus one chain per subagent head."""
     kind = "sqlite"
 
     def __init__(self, conn, spec, session):
         self.spec, self.session, self.notes = spec, session, []
+        self.version = read_schema_version(conn, spec)
         self._build(conn)
 
     def _build(self, conn):
@@ -1757,7 +1890,8 @@ class SqliteReader:
         for sess, nid, parent, created, payload in select_rows(conn, nodes["table"], cols, nodes["session"], (self.session["raw_id"],)):
             rows[nid] = {"parent": parent, "payload": payload,
                          "row": {nodes["session"]: sess, nodes["id"]: nid, nodes["parent"]: parent, nodes["created"]: created}}
-        self.main_lines, seen = self._chain(rows, self.session["head"], "")
+        extra = {"$session": {"model": self.session["model"]}} if self.session.get("model") is not None else {}
+        self.main_lines, seen = self._chain(rows, self.session["head"], "", extra)
         main_ids = set(seen)
         self.sub_chains, self.shared_with_main = [], 0
         heads = self.spec.get("subagent_heads")
@@ -1772,7 +1906,7 @@ class SqliteReader:
         if self.off_chain:
             self.notes.append(f"off-chain nodes: {self.off_chain}")
 
-    def _chain(self, rows, head, tag):
+    def _chain(self, rows, head, tag, extra=None):
         """Records from the root to `head`, and the node ids on it. A parent that is missing, or a loop,
         ends the chain and is reported in the notes (ids masked)."""
         chain, ids, nid = [], set(), head
@@ -1793,8 +1927,16 @@ class SqliteReader:
                 record = {"payload": payload if isinstance(payload, str) else repr(payload)}
             record = dict(record) if isinstance(record, dict) else {"payload": record}
             record["$row"] = node["row"]
+            record.update(extra or {})
             lines.append(json.dumps(record, ensure_ascii=False, default=str))
         return lines, ids
+
+    def storage_info(self):
+        info = {"kind": "sqlite", "off_chain_nodes": self.off_chain, "subagent_chains": len(self.sub_chains),
+                "nodes_shared_with_main": self.shared_with_main}
+        if self.version is not None:
+            info.update(schema_version=self.version, schema_version_source=self.spec["version"]["table"])
+        return info
 
     def first_lines(self):
         return self.main_lines
@@ -1809,8 +1951,10 @@ class SqliteReader:
 def list_sqlite_sessions(conn, spec):
     part = spec["sessions"]
     cols = [part[k] for k in ("id", "cwd", "created", "last_activity", "head")]
+    if part.get("model"):
+        cols.append(part["model"])
     return [{"raw_id": r[0], "id": str(r[0]), "cwd": r[1] or "", "created": parse_ts(r[2]), "last": parse_ts(r[3]),
-             "head": r[4]} for r in select_rows(conn, part["table"], cols)]
+             "head": r[4], "model": r[5] if len(r) > 5 else None} for r in select_rows(conn, part["table"], cols)]
 
 
 def choose_sqlite_session(sessions, args, repo):
@@ -1883,12 +2027,16 @@ def main(argv=None):
         if error:
             emit({"error": error}, args.format, redact_on)
             return 2
-    if override is not None and container_kind(override) == "sqlite":
-        reader, early = open_sqlite_session(args, repo, override)
+    sqlite_raw = override if override is not None and container_kind(override) == "sqlite" else None
+    if sqlite_raw is None and override is None and args.host in SQLITE_HOSTS:
+        sqlite_raw = load_mapping(SQLITE_HOSTS[args.host])
+        sqlite_raw.setdefault("capabilities", {})
+    if sqlite_raw is not None:
+        reader, early = open_sqlite_session(args, repo, sqlite_raw)
         if early:
             emit(early[0], args.format, redact_on)
             return early[1]
-        host = override.get("host", "unknown")
+        host = sqlite_raw.get("host", "unknown")
         first_lines = reader.first_lines()
     else:
         paths = [Path(p) for p in args.paths]
@@ -1923,14 +2071,18 @@ def main(argv=None):
         host = detect_host(first_lines, args.host)
     if override is not None:
         raw_mapping, source = override, "override"
+    elif sqlite_raw is not None:
+        raw_mapping, source = sqlite_raw, "builtin"
     else:
         raw_mapping, source = load_mapping(HOSTS[host]), "builtin"
     schema_note = schema_check(raw_mapping)[1]
     notes = ([schema_note] if schema_note else []) + list(getattr(reader, "notes", []))
-    mapping, variant_info = choose_variant(raw_mapping, first_lines)
+    mapping, variant_info = choose_variant(raw_mapping, first_lines, version=getattr(reader, "version", None))
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
              "truncated_last_line": False, "version": None, "skill_list_unparsed": 0}
+    if getattr(reader, "version", None) is not None:
+        stats["version"] = str(reader.version)
     metas, main_ids = {}, set()
     sub_cfg = mapping.get("subagents") or {}
     for src in reader.sources(mapping):
@@ -2020,6 +2172,12 @@ def main(argv=None):
                 out["coverage"]["notes"] = notes
             if reader.kind != "jsonl":
                 out["coverage"]["container"] = reader.kind
+                out["coverage"]["storage"] = reader.storage_info()
+            checked = out["tokens"].get("context_check") if isinstance(out.get("tokens"), dict) else None
+            if checked and checked["mismatches"]:
+                out["coverage"].setdefault("warnings", []).append(
+                    f"token cross-check: {checked['mismatches']} of {checked['calls']} calls where input + cache_read "
+                    "differs from context_input_tokens")
             if stats["skill_list_unparsed"]:
                 out["coverage"]["warnings"] = ["skill list found but not parsed; offered list may be incomplete"]
             if variant_info["scores"]:
@@ -2037,7 +2195,7 @@ def main(argv=None):
             if turn_errors is not None:
                 out["turn_errors"] = turn_errors
             if mapping["capabilities"].get("has_timestamps"):
-                out["time"] = time_summary(window, args.idle_threshold)
+                out["time"] = time_summary(window, args.idle_threshold, mapping.get("tool_time_source") == "result_spans")
             elif has_prompt_clock(mapping):
                 out["time"] = coarse_time_summary(window)
             else:
@@ -2047,7 +2205,7 @@ def main(argv=None):
             out["turns"] = cap_rows(all_turns, TOP_ROWS, "turn", "turns", "other")
             out["actors"] = cap_rows(actor_rows(window, mapping, args.verify_patterns, links, metas), TOP_ROWS,
                                      "actor", "actors", "other", keep="main")
-            out["skills"] = skills_summary(window, host, repo, offered_skills(events), raw_mapping.get("skill_folders"))
+            out["skills"] = skills_summary(window, host, repo, offered_skills(events), raw_mapping.get("skill_folders"), mapping)
             if out["skills"].get("inventory_note"):
                 out["coverage"].setdefault("notes", []).append(out["skills"]["inventory_note"])
     emit(out, args.format, redact_on)
