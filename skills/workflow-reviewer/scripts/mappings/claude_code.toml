@@ -4,6 +4,7 @@ schema_version = 1
 variant = "default"
 tested_versions = "2.1.295 to 2.1.309, 2.1.321"
 type_path = "type"
+hooks_format = "claude-settings"      # the shape of the files listed under hook_files
 
 interruption_prefixes = ["[Request interrupted by user"]
 
@@ -19,6 +20,29 @@ path = ".claude/skills"
 scope = "project"
 [[skill_folders]]
 path = "skills"
+base = "~/.claude"
+base_env = "CLAUDE_CONFIG_DIR"
+scope = "user"
+
+# Plugin skills are scanned for overlaps only (not listed in the inventory above).
+[[plugin_skill_folders]]
+path = "plugins/cache/*/*/*/skills"
+base = "~/.claude"
+base_env = "CLAUDE_CONFIG_DIR"
+glob = true
+scope = "plugin"
+
+# Hook files (settings), read for the overlap scan: event, matcher and the command's first word only.
+[[hook_files]]
+path = ".claude/settings.json"
+scope = "project"
+walk = false
+[[hook_files]]
+path = ".claude/settings.local.json"
+scope = "project"
+walk = false
+[[hook_files]]
+path = "settings.json"
 base = "~/.claude"
 base_env = "CLAUDE_CONFIG_DIR"
 scope = "user"

@@ -1474,7 +1474,10 @@ def skill_dirs(folders, repo):
     found = []
     for f in folders or []:
         path, scope = f["path"], f.get("scope", "project")
-        if f.get("base") or f.get("base_env"):
+        if f.get("glob"):                        # a pattern under the base: every folder it matches
+            base = Path(os.path.expanduser(os.environ.get(f.get("base_env", "")) or f.get("base", "~")))
+            found += [(m, scope) for m in sorted(base.glob(path)) if m.is_dir()]
+        elif f.get("base") or f.get("base_env"):
             base = os.environ.get(f.get("base_env", "")) or f.get("base", "~")
             found.append((Path(os.path.expanduser(base)) / path, scope))
         elif path.startswith("~") or Path(path).is_absolute():
@@ -1588,6 +1591,305 @@ def is_offered(name, offered):
     return name in offered or any(o.endswith(":" + name) for o in offered)
 
 
+# ---- overlaps: descriptions against descriptions, directive lines against always-on instructions, hooks --------
+
+STOPWORDS = frozenset("""the and for with that this from your you are was were been being have has had not but can will would could
+should may might into onto over under than then them they their there these those when where which while what who whom why how all any
+each every both such own same too very just also via per use used using uses when whenever about after before again once only more most
+some other out off its our""".split())
+DIRECTIVE_RE = re.compile(r"\b(always|never|must|don't|do not|only|run|use|prefer|should)\b", re.I)
+MAX_SKILL_FILES = 2000
+MAX_FILE_BYTES = 256 * 1024
+MAX_SHARED_TERMS = 5
+MAX_TERM_CHARS = 20
+TOP_OVERLAPS = 10
+MIN_DIRECTIVE_TERMS = 3
+COMMON_CATEGORIES = ("shell", "read", "edit", "search")
+
+
+def _stem(word):
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[:-len(suffix)]
+    return word
+
+
+def term_list(text, surface):
+    """Unigrams and bigrams of the informative words: lowercase, no stopwords or short words, simple stems."""
+    words = [w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) >= 3 and w not in STOPWORDS]
+    stems = [_stem(w) for w in words]
+    for st, w in zip(stems, words):
+        surface.setdefault(st, w)
+    grams = list(stems) + [f"{a} {b}" for a, b in zip(stems, stems[1:])]
+    for a, b, wa, wb in zip(stems, stems[1:], words, words[1:]):
+        surface.setdefault(f"{a} {b}", f"{wa} {wb}")
+    return grams
+
+
+def tfidf(documents):
+    """L2-normalised TF-IDF vectors; the IDF is ln(1 + N/df) over all the documents, so words every document uses count for little."""
+    surface = {}
+    counts = []
+    for text in documents:
+        c = {}
+        for t in term_list(text, surface):
+            c[t] = c.get(t, 0) + 1
+        counts.append(c)
+    n, df = len(counts), {}
+    for c in counts:
+        for t in c:
+            df[t] = df.get(t, 0) + 1
+    vectors = []
+    for c in counts:
+        v = {t: (1 + math.log(tf)) * math.log(1 + n / df[t]) for t, tf in c.items()}
+        norm = math.sqrt(sum(x * x for x in v.values()))
+        vectors.append({t: x / norm for t, x in v.items()} if norm else {})
+    return vectors, surface
+
+
+def similar_pairs(left, right, threshold, surface, same=False):
+    """[(i, j, score, shared terms)] for vector pairs at or over the threshold, best first (ties by position)."""
+    index = {}
+    for j, v in enumerate(right):
+        for t, w in v.items():
+            index.setdefault(t, []).append((j, w))
+    found = []
+    for i, v in enumerate(left):
+        scores = {}
+        for t, w in v.items():
+            for j, x in index.get(t, ()):
+                if not same or j > i:
+                    scores[j] = scores.get(j, 0.0) + w * x
+        for j, score in scores.items():
+            if score >= threshold - 1e-9:
+                shared = sorted(((v[t] * right[j][t], t) for t in v if t in right[j]), reverse=True)
+                names = []
+                for _, t in shared:
+                    word = surface.get(t, t)
+                    if len(word) <= MAX_TERM_CHARS and word not in names:
+                        names.append(word)
+                found.append((i, j, score, names[:MAX_SHARED_TERMS]))
+    found.sort(key=lambda f: (-f[2], f[0], f[1]))
+    return found
+
+
+def display_path(path, repo):
+    """Relative to the repo, else ~/…, else with the home folder masked."""
+    p = Path(os.path.realpath(path))
+    for base, prefix in ((Path(os.path.realpath(repo)), ""), (Path(os.path.realpath(Path.home())), "~/")):
+        try:
+            return prefix + p.relative_to(base).as_posix()
+        except ValueError:
+            continue
+    return mask_home(str(path))
+
+
+def frontmatter(lines):
+    """({key: value}, index of the first body line). Handles plain, quoted and folded/literal block values."""
+    if not lines or lines[0].strip() != "---":
+        return {}, 0
+    end = next((i for i, ln in enumerate(lines[1:], 1) if ln.strip() == "---"), None)
+    if end is None:
+        return {}, 0
+    meta, i = {}, 1
+    while i < end:
+        m = re.match(r"^([A-Za-z_][\w-]*):[ \t]*(.*)$", lines[i])
+        i += 1
+        if not m:
+            continue
+        key, value = m.group(1), m.group(2).strip()
+        block = []
+        while i < end and (lines[i].startswith((" ", "\t")) or not lines[i].strip()):
+            block.append(lines[i].strip())
+            i += 1
+        if value in (">", "|", ">-", "|-", ">+", "|+") or not value:
+            value = " ".join(b for b in block if b)
+        elif block:
+            value = " ".join([value, *[b for b in block if b]])
+        meta[key] = value.strip().strip("\"'")
+    return meta, end + 1
+
+
+def skill_files(folders, plugin_folders, repo):
+    """Every SKILL.md the host reads: [{name, description, path, display, lines, body_start}] and the number unreadable."""
+    seen, found, unreadable = set(), [], 0
+    for base, _ in skill_dirs(folders, repo) + skill_dirs(plugin_folders, repo):
+        for md in sorted(base.glob("*/SKILL.md")):
+            real = os.path.realpath(md)
+            if real in seen or len(found) >= MAX_SKILL_FILES:
+                continue
+            seen.add(real)
+            try:
+                text = Path(real).read_bytes()[:MAX_FILE_BYTES].decode("utf-8", "replace")
+            except OSError:
+                unreadable += 1
+                continue
+            lines = text.split("\n")
+            meta, body_start = frontmatter(lines)
+            found.append({"name": meta.get("name") or md.parent.name, "description": meta.get("description", ""), "path": real,
+                          "display": display_path(real, repo), "lines": lines, "body_start": body_start})
+    return found, unreadable
+
+
+def directive_lines(lines, start=0):
+    """[(line number, text)] for lines holding a directive word, outside code blocks, with enough informative words."""
+    found, fenced = [], False
+    for n, line in enumerate(lines[start:], start + 1):
+        stripped = line.strip()
+        if stripped.startswith(("```", "~~~")):
+            fenced = not fenced
+            continue
+        text = stripped.replace("’", "'")
+        if fenced or not text or not DIRECTIVE_RE.search(text):
+            continue
+        if len(term_list(text, {})) >= MIN_DIRECTIVE_TERMS:
+            found.append((n, text[:400]))
+    return found
+
+
+def always_on_files(events, repo):
+    """[{path, display, loaded, lines}]: what the host says it loaded, plus the repo's CLAUDE.md, AGENTS.md and always-on Cursor rules."""
+    files = {}
+
+    def add(path, loaded):
+        real = os.path.realpath(os.path.expanduser(path))
+        if real in files:
+            files[real]["loaded"] |= loaded
+            return
+        try:
+            text = Path(real).read_bytes()[:MAX_FILE_BYTES].decode("utf-8", "replace")
+        except OSError:
+            return
+        files[real] = {"display": display_path(real, repo), "loaded": loaded, "lines": text.split("\n")}
+
+    for ev in events:
+        if ev["actor"] == "main" and ev.get("instruction"):
+            for path in ev["instruction"]["paths"]:
+                add(path, True)
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        if (repo / name).is_file():
+            add(str(repo / name), False)
+    global_md = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "CLAUDE.md"
+    if global_md.is_file():
+        add(str(global_md), False)
+    for rule in sorted((repo / ".cursor" / "rules").glob("*")) if (repo / ".cursor" / "rules").is_dir() else []:
+        if rule.is_file():
+            head = rule.read_bytes()[:MAX_FILE_BYTES].decode("utf-8", "replace").split("\n")
+            if str(frontmatter(head)[0].get("alwaysApply", "")).lower() == "true":
+                add(str(rule), False)
+    return list(files.values())
+
+
+def named_in(name, names):
+    return name in names or any(n.endswith(":" + name) for n in names)
+
+
+def hook_summary(mapping, events, repo):
+    """Hooks from the files the mapping declares: event, matcher, first word of the command, and how many of the
+    session's tool calls the matcher matches. Never the command itself."""
+    if not mapping.get("hook_files"):
+        return {"unknown": "hooks unknown for this host"}
+    calls = [c for ev in events for c in ev["calls"]]
+    files, hooks = 0, []
+    for path, scope in skill_dirs(mapping["hook_files"], repo):
+        if not path.is_file():
+            continue
+        files += 1
+        try:
+            groups = json.loads(path.read_text(encoding="utf-8")).get("hooks", {})
+        except (OSError, ValueError, AttributeError):
+            continue
+        for event, entries in sorted(groups.items()) if isinstance(groups, dict) else []:
+            for entry in entries if isinstance(entries, list) else []:
+                if not isinstance(entry, dict):
+                    continue
+                matcher = entry.get("matcher") if isinstance(entry.get("matcher"), str) else ""
+                for hook in entry.get("hooks", []) if isinstance(entry.get("hooks"), list) else []:
+                    if not isinstance(hook, dict):
+                        continue
+                    command = hook.get("command") if isinstance(hook.get("command"), str) else ""
+                    first = command.split()[0] if command.split() else str(hook.get("type", "hook"))
+                    item = {"event": event, "matcher": matcher, "command": Path(first).name or first, "scope": scope,
+                            "matched": None, "of_all_calls": None, "share_pct": None, "summary": None, "every_call_of": []}
+                    if event in ("PreToolUse", "PostToolUse"):
+                        def hits(name):
+                            if matcher in ("", "*"):
+                                return True
+                            try:
+                                return re.fullmatch(matcher, name) is not None
+                            except re.error:
+                                return False
+                        matched = [c for c in calls if hits(c["name"])]
+                        item.update(matched=len(matched), of_all_calls=len(calls),
+                                    share_pct=round(100 * len(matched) / len(calls)) if calls else 0)
+                        by_cat = {}
+                        for c in calls:
+                            by_cat.setdefault(call_cat(c), [0, 0])[0] += 1
+                        for c in matched:
+                            by_cat[call_cat(c)][1] += 1
+                        top = max(by_cat.items(), key=lambda kv: (kv[1][1], kv[0]), default=None)
+                        if top and top[1][1]:
+                            item["summary"] = f"matched {top[1][1]} of {top[1][0]} {top[0]} calls"
+                        names = {}
+                        for c in calls:
+                            names.setdefault(c["name"], []).append(c)
+                        item["every_call_of"] = sorted(n for n, cs in names.items()
+                                                       if hits(n) and call_cat(cs[0]) in COMMON_CATEGORIES)
+                    hooks.append(item)
+    hooks.sort(key=lambda h: (not h["every_call_of"], -(h["matched"] or 0), h["event"], h["matcher"], h["command"]))
+    return {"files": files, "total": len(hooks), "top": hooks[:TOP_OVERLAPS], "more": max(0, len(hooks) - TOP_OVERLAPS)}
+
+
+def overlaps_summary(events, mapping, repo, loaded, offered, thresholds):
+    """The skills.overlaps section. The script only measures; the agent judges."""
+    skill_threshold, directive_threshold = thresholds
+    files, unreadable = skill_files(mapping.get("skill_folders"), mapping.get("plugin_skill_folders"), repo)
+    loaded_names, offered_names = list(loaded), offered or []
+
+    def status(name):
+        return "loaded this session" if named_in(name, loaded_names) else "offered" if named_in(name, offered_names) else "installed only"
+
+    scanned_names = {f["name"] for f in files}
+    not_scanned = sum(1 for n in offered_names if n.split(":")[-1] not in scanned_names and n not in scanned_names)
+    out = {"scanned": {"skills": len(files), "unreadable": unreadable, "not_scanned": not_scanned}}
+
+    described = [f for f in files if f["description"]]
+    vectors, surface = tfidf([f["description"] for f in described])
+    pairs = [(described[i], described[j], score, shared) for i, j, score, shared in similar_pairs(vectors, vectors, skill_threshold, surface, same=True)
+             if described[i]["path"] != described[j]["path"]]
+    out["skill_pairs"] = {"threshold": skill_threshold, "total": len(pairs), "more": max(0, len(pairs) - TOP_OVERLAPS),
+                          "top": [{"a": a["name"], "b": b["name"], "score_pct": round(100 * s), "shared_terms": t,
+                                   "a_status": status(a["name"]), "b_status": status(b["name"])} for a, b, s, t in pairs[:TOP_OVERLAPS]]}
+    by_name = {}
+    for f in files:
+        by_name.setdefault(f["name"], []).append(f["display"])
+    dups = sorted((n, sorted(p)) for n, p in by_name.items() if len(p) > 1)
+    out["duplicate_names"] = {"total": len(dups), "more": max(0, len(dups) - TOP_OVERLAPS),
+                              "top": [{"name": n, "paths": p[:5]} for n, p in dups[:TOP_OVERLAPS]]}
+
+    instructions = always_on_files(events, repo)
+    skill_lines = [(f, n, t) for f in files for n, t in directive_lines(f["lines"], f["body_start"])]
+    inst_lines = [(f, n, t) for f in instructions for n, t in directive_lines(f["lines"])]
+    out["scanned"].update(instruction_files=len(instructions), directive_lines={"skills": len(skill_lines), "instructions": len(inst_lines)})
+    dvec, dsurface = tfidf([t for _, _, t in skill_lines] + [t for _, _, t in inst_lines])
+    left, right = dvec[:len(skill_lines)], dvec[len(skill_lines):]
+    matches = similar_pairs(left, right, directive_threshold, dsurface)
+    top, eligible = [], 0
+    for i, j, score, shared in matches:
+        sf, sn, _ = skill_lines[i]
+        inf, inn, _ = inst_lines[j]
+        both = status(sf["name"]) == "loaded this session" and inf["loaded"]
+        eligible += both
+        if len(top) < TOP_OVERLAPS:
+            top.append({"skill": sf["name"], "skill_line": sn, "instruction": inf["display"], "instruction_line": inn,
+                        "score_pct": round(100 * score), "shared_terms": shared, "both_loaded": bool(both),
+                        "judge": "eligible" if both else "static"})
+    out["directive_pairs"] = {"threshold": directive_threshold, "total": len(matches), "eligible": eligible,
+                              "static": len(matches) - eligible, "more": max(0, len(matches) - TOP_OVERLAPS), "top": top}
+    out["hooks"] = hook_summary(mapping, events, repo)
+    return out
+
+
 def host_instruction_files(events):
     """Always-on rule files the host says it loaded (paths masked), and the bytes it reports for them."""
     files, seen, total = [], set(), 0
@@ -1603,7 +1905,7 @@ def host_instruction_files(events):
     return {"files": files, "bytes": total} if files else None
 
 
-def skills_summary(events, host, repo, offered=None, folders=None, mapping=None):
+def skills_summary(events, host, repo, offered=None, folders=None, mapping=None, thresholds=None):
     mapping = mapping or {}
     results = {r["id"]: r for e in events for r in e["results"] if r["id"] is not None}
     loaded, reads, detections = {}, [], {}
@@ -1657,6 +1959,8 @@ def skills_summary(events, host, repo, offered=None, folders=None, mapping=None)
     summary["_inventory_names"] = None if no_folders else [i["name"] for i in inventory]     # removed before output
     summary.update(inventory=shown, inventory_total=None if no_folders else len(inventory),
                    instruction_files=instruction_files(repo))
+    if thresholds is not None:
+        summary["overlaps"] = overlaps_summary(events, {**mapping, "skill_folders": folders}, repo, loaded, offered, thresholds)
     host_rules = host_instruction_files(events)
     if host_rules:
         known = {f["path"] for f in summary["instruction_files"]}
@@ -2270,6 +2574,8 @@ def build_parser():
     p.add_argument("--drift-threshold", type=float)
     p.add_argument("--no-redact", action="store_true")
     p.add_argument("--idle-threshold", type=float)
+    p.add_argument("--overlap-threshold", type=float, default=0.5, help="skill description similarity to report (0 to 1)")
+    p.add_argument("--directive-threshold", type=float, default=0.45, help="directive line similarity to report (0 to 1)")
     p.add_argument("--report", metavar="-", help="read the agent's findings JSON from stdin and render the report")
     p.add_argument("--report-format", default="html", choices=["html", "md"])
     p.add_argument("--no-open", action="store_true", help="with --report: do not open the HTML file")
@@ -2779,7 +3085,8 @@ def main(argv=None):
             out["turns"] = cap_rows(all_turns, TOP_ROWS, "turn", "turns", "other")
             out["actors"] = cap_rows(actor_rows(window, mapping, args.verify_patterns, links, metas), TOP_ROWS,
                                      "actor", "actors", "other", keep="main")
-            out["skills"] = skills_summary(window, host, repo, offered_skills(events), raw_mapping.get("skill_folders"), mapping)
+            out["skills"] = skills_summary(window, host, repo, offered_skills(events), raw_mapping.get("skill_folders"), mapping,
+                                      (args.overlap_threshold, args.directive_threshold))
             if out["skills"].get("inventory_note"):
                 out["coverage"].setdefault("notes", []).append(out["skills"]["inventory_note"])
     code = 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
