@@ -1,0 +1,50 @@
+{
+ "version": 1,
+ "session_id": "replica_session",
+ "source": "vscode",
+ "pid": 95436,
+ "started_at": "2026-01-05T09:00:00.000Z",
+ "exit_code": null,
+ "status": "idle",
+ "interactive": true,
+ "provider": "cline",
+ "model": "cline-free/nemotron-3.5-super-vl",
+ "cwd": "~/project",
+ "workspace_root": "~/project",
+ "enable_tools": true,
+ "enable_spawn": false,
+ "enable_teams": false,
+ "prompt": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet conse",
+ "metadata": {
+  "sessionHistoryOrigin": {
+   "mode": "user",
+   "version": "4.1.26"
+  },
+  "size": 8875,
+  "title": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet conse",
+  "isFavorited": false,
+  "totalCost": 0,
+  "tokensIn": 95309,
+  "tokensOut": 3402,
+  "cacheWrites": 0,
+  "cacheReads": 134416,
+  "modelId": "cline-free/nemotron-3.5-super-vl",
+  "legacyTask": false,
+  "aggregatedAgentsCost": 0,
+  "usage": {
+   "inputTokens": 229725,
+   "outputTokens": 3402,
+   "cacheReadTokens": 134416,
+   "cacheWriteTokens": 0,
+   "totalCost": 0
+  },
+  "aggregateUsage": {
+   "inputTokens": 229725,
+   "outputTokens": 3402,
+   "cacheReadTokens": 134416,
+   "cacheWriteTokens": 0,
+   "totalCost": 0
+  }
+ },
+ "messages_path": "~/project/file1.json"
+}

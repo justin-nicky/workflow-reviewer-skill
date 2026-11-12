@@ -132,7 +132,7 @@ def test_save_adapter_writes_a_private_file_when_no_core_metric_is_broken(cli, t
     proc = save(cli, tmp_path, MAPPING)
     out = json.loads(proc.stdout)
     target = cli.home / "xdg" / "workflow-reviewer" / "hosts" / "hx.toml"
-    assert proc.returncode == 0 and out["saved"] == str(target) and out["label"] == "unproven"
+    assert proc.returncode == 0 and out["saved"] == "~" + str(target)[len(str(cli.home)):] and out["label"] == "unproven"        # printed home-relative
     assert stat.S_IMODE(target.stat().st_mode) == 0o600 and stat.S_IMODE(target.parent.stat().st_mode) == 0o700
     text = target.read_text()
     assert 'made_by = "workflow-reviewer adapter flow"' in text and 'made_from_version = "1.5.0"' in text

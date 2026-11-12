@@ -1,0 +1,141 @@
+# Cline mapping (VS Code extension and CLI data under ~/.cline/data). Made with the adapter flow from --probe output of a real session,
+# then promoted. A session is a folder of two JSON documents: <id>.json (metadata) and <id>.messages.json (the conversation).
+host = "cline"
+schema_version = 1
+tested_versions = "4.1.26"
+type_path = ["role", "type"]
+detect = { env = ["CLINE_ACTIVE"] }         # set in Cline's terminal (verified)
+# The cancelled reply is not stored: it shows as two prompts in a row with no assistant record between them.
+interrupt_on_repeated_prompt = true
+skill_tool_label = "skill tool call"
+skill_detections = "all"
+token_method = "messages[].metrics per assistant message; inputTokens includes cache reads, so fresh = inputTokens - cacheReadTokens"
+
+[[skill_folders]]
+path = ".clinerules/skills"
+scope = "project"
+
+[container]
+kind = "json_document"
+roots = ["~/.cline/data/sessions"]
+
+[container.session]
+cwd_document = "{id}.json"
+cwd_path = "cwd"
+
+[[container.documents]]
+file = "{id}.json"
+name = "session"
+as_record = true
+
+[[container.documents]]
+file = "{id}.messages.json"
+name = "messages"
+records = "messages"
+
+[container.merge]
+by = "ts"
+
+# Child sessions are rows of the sessions table that name this session as their parent.
+[container.subagents]
+db = "~/.cline/data/db/sessions.db"
+table = "sessions"
+id = "session_id"
+parent = "parent_session_id"
+flag = "is_subagent"
+
+# What a synthetic replica may keep (see --make-replica): tool and model names, wrappers the engine reads, ids to regenerate.
+[replica]
+keep_paths = ["messages[].content[].name", "messages[].content[].input.skill", "messages[].modelInfo.id", "messages[].modelInfo.provider",
+  "model", "provider", "metadata.modelId", "metadata.sessionHistoryOrigin.version", "metadata.sessionHistoryOrigin.mode", "origin.version",
+  "origin.mode", "origin.source", "source", "status", "agent"]
+id_paths = ["messages[].id", "messages[].content[].id", "messages[].content[].tool_use_id", "session_id", "sessionId", "origin.sessionId"]
+command_paths = ["messages[].content[].input.commands[]", "messages[].content[].content[].query"]
+keep_patterns = ["</?user_input[^>]*>", "(?:with|exit) code[: ]+[0-9]+"]
+
+[capabilities]
+has_tokens = true
+has_timestamps = true
+has_tool_results = true
+has_ids = true
+
+[fields]
+version = "metadata.sessionHistoryOrigin.version"
+model = "modelInfo.id"
+msg_id = "id"
+timestamp = "ts"
+
+[call_name_categories]
+read_files = "read"
+editor = "edit"
+run_commands = "shell"
+skills = "skill"
+
+# The session's own metadata document.
+[[records]]
+match = { "$doc" = "session" }
+role = "ignore"
+
+# A turn is a user message whose text block is wrapped in <user_input>. Tool results come back as user messages too.
+[[records]]
+match = { "$doc" = "messages", role = "user" }
+role = "user"
+text = ["content[type=text].text"]
+turn_regex = "^\\s*<user_input\\b"
+results = "content[type=tool_result]"
+result_id = "tool_use_id"
+result_text = ["content[].result", "content"]
+# is_error is never set: a failed command says "... with code 2" in its result text.
+result_exit_code_regex = "(?:with|exit) code[: ]+([1-9][0-9]*)"
+
+[[records]]
+match = { "$doc" = "messages", role = "assistant" }
+role = "assistant"
+text = ["content[type=text].text"]
+calls = "content[type=tool_use]"
+call_name = "name"
+call_input = "input"
+call_id = "id"
+call_split = "commands"
+usage_input = "metrics.inputTokens"
+usage_input_includes_cache = true
+usage_output = "metrics.outputTokens"
+usage_cache_read = "metrics.cacheReadTokens"
+usage_cache_write = "metrics.cacheWriteTokens"
+usage_present = "metrics"
+
+# Second counts: the same numbers from the session document and from the tool records.
+[[checks]]
+name = "tool_use ids vs tool_result ids"
+metric = "tool_calls"
+first = "calls_with_id"
+second = "results"
+slack_first = 1
+
+[[checks]]
+name = "input tokens vs metadata.usage.inputTokens"
+metric = "tokens"
+first = "tokens_input_incl_cache_main"
+second = { match = { "$doc" = "session" }, last = "metadata.usage.inputTokens", actors = "main" }
+skip_if_second_zero = true
+
+[[checks]]
+name = "output tokens vs metadata.usage.outputTokens"
+metric = "tokens"
+first = "tokens_output_main"
+second = { match = { "$doc" = "session" }, last = "metadata.usage.outputTokens", actors = "main" }
+skip_if_second_zero = true
+
+[[checks]]
+name = "cache read tokens vs metadata.usage.cacheReadTokens"
+metric = "tokens"
+first = "tokens_cache_read_main"
+second = { match = { "$doc" = "session" }, last = "metadata.usage.cacheReadTokens", actors = "main" }
+skip_if_second_zero = true
+
+[[checks]]
+name = "fresh input tokens vs metadata.tokensIn"
+metric = "tokens"
+first = "tokens_fresh_main"
+second = { match = { "$doc" = "session" }, last = "metadata.tokensIn", actors = "main" }
+skip_if_second_zero = true

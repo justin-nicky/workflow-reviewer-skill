@@ -1,0 +1,1044 @@
+{
+ "version": 1,
+ "updated_at": "2026-01-05T09:08:58.000Z",
+ "agent": "lead",
+ "sessionId": "replica_session",
+ "origin": {
+  "source": "vscode",
+  "mode": "user",
+  "sessionId": "replica_session",
+  "version": "4.1.26"
+ },
+ "messages": [
+  {
+   "id": "id0000001",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"plan\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet conse</user_input>"
+    }
+   ],
+   "ts": 1767603601376
+  },
+  {
+   "id": "id0000002",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem i"
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000003",
+     "name": "read_files",
+     "input": {
+      "files": [
+       {
+        "path": "~/project/file2.py"
+       },
+       {
+        "path": "~/project/file3.py"
+       }
+      ]
+     }
+    }
+   ],
+   "ts": 1767603603396,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 7263,
+    "outputTokens": 65,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000004",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000003",
+     "name": "read_files",
+     "content": [
+      {
+       "query": "ls",
+       "result": "lorem ipsum dolor sit amet consectetur ",
+       "success": true
+      },
+      {
+       "query": "ls",
+       "result": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet ",
+       "success": true
+      }
+     ]
+    }
+   ],
+   "ts": 1767603603413
+  },
+  {
+   "id": "id0000005",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ip"
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur "
+    }
+   ],
+   "ts": 1767603605288,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 7474,
+    "outputTokens": 49,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000006",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lore</user_input>"
+    }
+   ],
+   "ts": 1767603649035
+  },
+  {
+   "id": "id0000007",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit am"
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000008",
+     "name": "skills",
+     "input": {
+      "skill": "hello"
+     }
+    }
+   ],
+   "ts": 1767603650857,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 7728,
+    "outputTokens": 25,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000009",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000008",
+     "name": "skills",
+     "content": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetu"
+    }
+   ],
+   "ts": 1767603650864
+  },
+  {
+   "id": "id0000010",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur l"
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet "
+    }
+   ],
+   "ts": 1767603651929,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 7830,
+    "outputTokens": 8,
+    "cacheReadTokens": 4336,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000011",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem</user_input>"
+    }
+   ],
+   "ts": 1767603673860
+  },
+  {
+   "id": "id0000012",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsu"
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000013",
+     "name": "editor",
+     "input": {
+      "path": "~/project/file2.py",
+      "old_text": "lorem ipsum dolor sit amet cons",
+      "new_text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet cons"
+     }
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000014",
+     "name": "editor",
+     "input": {
+      "path": "~/project/file3.py",
+      "old_text": "lorem ipsum dolor sit amet consectetur lorem ipsum dol",
+      "new_text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum d"
+     }
+    }
+   ],
+   "ts": 1767603682446,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 7865,
+    "outputTokens": 202,
+    "cacheReadTokens": 4336,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000015",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000013",
+     "name": "editor",
+     "content": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetu"
+    }
+   ],
+   "ts": 1767603684280
+  },
+  {
+   "id": "id0000016",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000014",
+     "name": "editor",
+     "content": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor s"
+    }
+   ],
+   "ts": 1767603685865
+  },
+  {
+   "id": "id0000017",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum "
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000018",
+     "name": "run_commands",
+     "input": {
+      "commands": [
+       "python3 -m pytest -q"
+      ]
+     }
+    }
+   ],
+   "ts": 1767603687587,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 8473,
+    "outputTokens": 47,
+    "cacheReadTokens": 4336,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000019",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000018",
+     "name": "run_commands",
+     "content": [
+      {
+       "query": "python3 -m pytest -q",
+       "result": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum",
+       "success": true
+      }
+     ]
+    }
+   ],
+   "ts": 1767603692541
+  },
+  {
+   "id": "id0000020",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor "
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000021",
+     "name": "read_files",
+     "input": {
+      "files": [
+       {
+        "path": "~/project/file4.log"
+       }
+      ]
+     }
+    }
+   ],
+   "ts": 1767603695615,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 8689,
+    "outputTokens": 91,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000022",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000021",
+     "name": "read_files",
+     "content": [
+      {
+       "query": "ls",
+       "result": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor siexit code 0l",
+       "success": true
+      }
+     ]
+    }
+   ],
+   "ts": 1767603695631
+  },
+  {
+   "id": "id0000023",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit exit code 0lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit am"
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet consectetur lexit code 0lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsu"
+    }
+   ],
+   "ts": 1767603699897,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 8937,
+    "outputTokens": 176,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000024",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lo</user_input>"
+    }
+   ],
+   "ts": 1767603704440
+  },
+  {
+   "id": "id0000025",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur "
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000026",
+     "name": "run_commands",
+     "input": {
+      "commands": [
+       "ls"
+      ]
+     }
+    }
+   ],
+   "ts": 1767603707065,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 8906,
+    "outputTokens": 41,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000027",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000026",
+     "name": "run_commands",
+     "content": [
+      {
+       "query": "ls",
+       "result": "lorem ipsum dolowith code 2l",
+       "error": "lorem ipsum dolwith code 2",
+       "success": false
+      }
+     ]
+    }
+   ],
+   "ts": 1767603707149
+  },
+  {
+   "id": "id0000028",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor swith code 2lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetu"
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor swith code 2lorem ipsum dolor sit amet consec"
+    }
+   ],
+   "ts": 1767603709491,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 9040,
+    "outputTokens": 19,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000029",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit ame</user_input>"
+    }
+   ],
+   "ts": 1767603715671
+  },
+  {
+   "id": "id0000030",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsu"
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000031",
+     "name": "run_commands",
+     "input": {
+      "commands": [
+       "ls"
+      ]
+     }
+    }
+   ],
+   "ts": 1767603719482,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 9050,
+    "outputTokens": 42,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000032",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000031",
+     "name": "run_commands",
+     "content": [
+      {
+       "query": "ls",
+       "result": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lor",
+       "success": true
+      }
+     ]
+    }
+   ],
+   "ts": 1767603719546
+  },
+  {
+   "id": "id0000033",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit "
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lor"
+    }
+   ],
+   "ts": 1767603722586,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 9506,
+    "outputTokens": 95,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000034",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consec</user_input>"
+    }
+   ],
+   "ts": 1767603744181
+  },
+  {
+   "id": "id0000035",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consec</user_input>"
+    }
+   ],
+   "ts": 1767603978210
+  },
+  {
+   "id": "id0000036",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsu"
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsu"
+    }
+   ],
+   "ts": 1767603995638,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 9435,
+    "outputTokens": 1961,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000037",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consec</user_input>"
+    }
+   ],
+   "ts": 1767604005299
+  },
+  {
+   "id": "id0000038",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet c"
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000039",
+     "name": "run_commands",
+     "input": {
+      "commands": [
+       "ls"
+      ]
+     }
+    }
+   ],
+   "ts": 1767604007717,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 11441,
+    "outputTokens": 61,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000040",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000039",
+     "name": "run_commands",
+     "content": [
+      {
+       "query": "ls",
+       "result": "l",
+       "success": true
+      }
+     ]
+    }
+   ],
+   "ts": 1767604007808
+  },
+  {
+   "id": "id0000041",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit a"
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ips"
+    }
+   ],
+   "ts": 1767604009232,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 11588,
+    "outputTokens": 23,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000042",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum</user_input>"
+    }
+   ],
+   "ts": 1767604017706
+  },
+  {
+   "id": "id0000043",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem i"
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000044",
+     "name": "run_commands",
+     "input": {
+      "commands": [
+       "ls"
+      ]
+     }
+    }
+   ],
+   "ts": 1767604019971,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 11616,
+    "outputTokens": 45,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000045",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000044",
+     "name": "run_commands",
+     "content": [
+      {
+       "query": "ls",
+       "result": "l",
+       "success": true
+      }
+     ]
+    }
+   ],
+   "ts": 1767604020055
+  },
+  {
+   "id": "id0000046",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum "
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum do"
+    }
+   ],
+   "ts": 1767604022462,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 11733,
+    "outputTokens": 25,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000047",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit</user_input>"
+    }
+   ],
+   "ts": 1767604114778
+  },
+  {
+   "id": "id0000048",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet "
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000049",
+     "name": "run_commands",
+     "input": {
+      "commands": [
+       "ls"
+      ]
+     }
+    }
+   ],
+   "ts": 1767604117259,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 11771,
+    "outputTokens": 55,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000050",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000049",
+     "name": "run_commands",
+     "content": [
+      {
+       "query": "ls",
+       "result": "id0000051",
+       "success": true
+      }
+     ]
+    }
+   ],
+   "ts": 1767604117333
+  },
+  {
+   "id": "id0000052",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit a"
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit "
+    }
+   ],
+   "ts": 1767604119984,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 11916,
+    "outputTokens": 24,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000053",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur </user_input>"
+    }
+   ],
+   "ts": 1767604122048
+  },
+  {
+   "id": "id0000054",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet cons"
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000055",
+     "name": "run_commands",
+     "input": {
+      "commands": [
+       "ls"
+      ]
+     }
+    }
+   ],
+   "ts": 1767604124768,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 11984,
+    "outputTokens": 84,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000056",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000055",
+     "name": "run_commands",
+     "content": [
+      {
+       "query": "ls",
+       "result": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ip",
+       "success": true
+      }
+     ]
+    }
+   ],
+   "ts": 1767604124921
+  },
+  {
+   "id": "id0000057",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum"
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur"
+    }
+   ],
+   "ts": 1767604127241,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 12346,
+    "outputTokens": 89,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000058",
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<user_input mode=\"act\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet</user_input>"
+    }
+   ],
+   "ts": 1767604133487
+  },
+  {
+   "id": "id0000059",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem i"
+    },
+    {
+     "type": "tool_use",
+     "id": "id0000060",
+     "name": "run_commands",
+     "input": {
+      "commands": [
+       "ls"
+      ]
+     }
+    }
+   ],
+   "ts": 1767604135914,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 12449,
+    "outputTokens": 56,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  },
+  {
+   "id": "id0000061",
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "id0000060",
+     "name": "run_commands",
+     "content": [
+      {
+       "query": "ls",
+       "result": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet ",
+       "success": true
+      }
+     ]
+    }
+   ],
+   "ts": 1767604135991
+  },
+  {
+   "id": "id0000062",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ips"
+    },
+    {
+     "type": "text",
+     "text": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet"
+    }
+   ],
+   "ts": 1767604138064,
+   "modelInfo": {
+    "id": "cline-free/nemotron-3.5-super-vl",
+    "provider": "cline"
+   },
+   "metrics": {
+    "inputTokens": 12685,
+    "outputTokens": 119,
+    "cacheReadTokens": 8672,
+    "cacheWriteTokens": 0
+   }
+  }
+ ],
+ "system_prompt": "lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsu<user_input mode=\"...\">lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsum dolor sit amet consectetur lorem ipsu"
+}

@@ -31,7 +31,7 @@ from pathlib import Path
 MAPPING_DIR = Path(__file__).resolve().parent / "mappings"
 HOSTS = {"claude-code": "claude_code", "codex": "codex", "cursor": "cursor"}      # picked by auto-detection
 ACTIVE_HOSTS = {}                                  # host registry of this run (built-in and user adapters)
-SQLITE_HOSTS = {"devin": "devin"}                  # named with --host; kept out of auto-detection
+STORE_HOSTS = {"devin": "devin", "cline": "cline"}      # hosts whose sessions are a database or JSON documents: named with --host, found by data presence
 
 
 # ---- mapping engine: dotted paths, [] wildcards, [k=v] filters, no eval ----------------
@@ -378,6 +378,8 @@ def parse_lines(lines, mapping, actor="main"):
         if ev["role"] == "user":
             if rule.get("turn") is False:
                 ev["non_turn"] = rule.get("non_turn_reason", "rule")
+            elif rule.get("turn_regex") and not re.search(rule["turn_regex"], ev["text"]):
+                ev["non_turn"] = "not user input"             # the person's prompt is wrapped; anything else is injected
             else:
                 head = ev["text"].lstrip()
                 ev["non_turn"] = next((f"prefix:{p}" for p in prefixes if head.startswith(p)), None)
@@ -401,7 +403,13 @@ def parse_lines(lines, mapping, actor="main"):
                     category = (mapping.get("call_name_categories") or {}).get(name.lower())
                 cmds = commands_from_script(inp, rule["call_command_regex"]) \
                     if rule.get("call_command_regex") and isinstance(inp, str) else []
-                if cmds:                  # a script that runs shell commands: one call per command, never joined
+                split = inp.get(rule["call_split"]) if rule.get("call_split") and isinstance(inp, dict) else None
+                if isinstance(split, list) and split:       # a list of commands in one call: each is its own call
+                    for item in split:
+                        command = item.get("command") if isinstance(item, dict) else item
+                        ev["calls"].append({"name": name, "input": {"command": command}, "id": call_id,
+                                            **({"category": category} if category else {})})
+                elif cmds:                  # a script that runs shell commands: one call per command, never joined
                     ev["calls"] += [{"name": rule.get("call_command_name", name), "input": {"cmd": cmd}, "id": call_id}
                                     for cmd in cmds]
                 else:
@@ -761,6 +769,21 @@ def assign_turns(events):
         ev["turn"] = turn
 
 
+def mark_repeated_prompts(events):
+    """A host that does not store a cancelled reply shows it as two prompts in a row with no assistant record between them.
+    The interruption belongs to the first prompt; the second is a new turn."""
+    waiting = None
+    for ev in events:
+        if ev["actor"] != "main":
+            continue
+        if ev["role"] == "assistant":
+            waiting = None
+        elif is_turn_start(ev):
+            if waiting is not None:
+                waiting["interrupted"] = True
+            waiting = ev
+
+
 def reviewer_cut(events):
     """Index of the event that opens the turn holding the latest /workflow-reviewer prompt."""
     for ev in reversed(events):
@@ -802,7 +825,7 @@ def interruption_summary(events, mapping):
     or a record matched by a mapping rule with interrupt = true.
     """
     prefixes = tuple(mapping.get("interruption_prefixes", []))
-    if not prefixes and not any(r.get("interrupt") for r in mapping.get("records", [])):
+    if not prefixes and not any(r.get("interrupt") for r in mapping.get("records", [])) and not mapping.get("interrupt_on_repeated_prompt"):
         return {"not_measurable": "no interruption marker is known for this host"}
     turns = [e["turn"] for e in events if e["interrupted"]
              or (prefixes and e["role"] == "user" and e["text"].lstrip().startswith(prefixes))]
@@ -1433,11 +1456,13 @@ def health_quantities(events):
     if any(e["usage"] for e in events):
         t = token_summary(events)
         q.update(api_calls=t["api_calls"], tokens_output=t["output"], tokens_fresh=t["fresh_input"], tokens_cache_read=t["cache_read"],
+                 tokens_input_incl_cache=t["fresh_input"] + t["cache_read"],
                  tokens_cache_write=t["cache_write"], tokens_all=t["output"] + t["fresh_input"] + t["cache_read"] + t["cache_write"])
         main = [e for e in events if e["actor"] == "main"]
         if any(e["usage"] for e in main):
             m = token_summary(main)
             q.update(api_calls_main=m["api_calls"], tokens_output_main=m["output"], tokens_fresh_main=m["fresh_input"],
+                     tokens_input_incl_cache_main=m["fresh_input"] + m["cache_read"],
                      tokens_cache_read_main=m["cache_read"], tokens_cache_write_main=m["cache_write"])
         seen = {}
         for e in events:
@@ -1486,7 +1511,8 @@ def version_position(version, tested):
 
 def measurable_metrics(mapping):
     caps = mapping.get("capabilities", {})
-    prefixes = mapping.get("interruption_prefixes") or any(r.get("interrupt") for r in mapping.get("records", []))
+    prefixes = mapping.get("interruption_prefixes") or any(r.get("interrupt") for r in mapping.get("records", [])) \
+        or mapping.get("interrupt_on_repeated_prompt")
     return {"turns": True, "tool_calls": True, "tokens": bool(caps.get("has_tokens")), "errors": bool(caps.get("has_tool_results")),
             "verify": True, "interruptions": bool(prefixes), "time": bool(caps.get("has_timestamps")) or has_prompt_clock(mapping),
             "skills": True, "subagents": True}
@@ -1727,7 +1753,7 @@ def skill_dirs(folders, repo):
 
 def builtin_folders(host):
     """The skill folders of a built-in host's mapping (None for a host with no mapping of its own)."""
-    name = {**HOSTS, "kiro": "kiro", **SQLITE_HOSTS}.get("claude-code" if host == "auto" else host)
+    name = {**HOSTS, "kiro": "kiro", **STORE_HOSTS}.get("claude-code" if host == "auto" else host)
     return load_mapping(name).get("skill_folders") if name else None
 
 
@@ -2860,6 +2886,8 @@ def build_parser():
     p.add_argument("--drift-threshold", type=float)
     p.add_argument("--no-redact", action="store_true")
     p.add_argument("--idle-threshold", type=float)
+    p.add_argument("--make-replica", action="store_true", help="write a synthetic copy of this session (no content) to the temp folder")
+    p.add_argument("--pr-bundle", action="store_true", help="print the adapter and replica paths, expected numbers and the commands for a pull request (runs nothing)")
     p.add_argument("--probe", metavar="PATH", help="print the structure of a file, folder or database (no content) and exit")
     p.add_argument("--save-adapter", metavar="NAME", help="read a drafted mapping from stdin, check it against this session, save it as a user adapter")
     p.add_argument("--replace", action="store_true", help="with --save-adapter: overwrite an adapter of the same name")
@@ -3160,23 +3188,23 @@ def open_sqlite_session(args, repo, raw):
 # ---- user adapters, labels, saving ---------------------------------------------------------------------------------
 
 TOP_KEYS = frozenset("""call_categories call_name_categories capabilities checks container detect fields health_hints hook_files hooks_format
-host interruption_prefixes made_by made_from_version not_a_turn_prefixes plugin_skill_folders records requires schema_version
+host interrupt_on_repeated_prompt interruption_prefixes made_by replica made_from_version not_a_turn_prefixes plugin_skill_folders records requires schema_version
 skill_detections skill_folders skill_tool_label subagent_marker subagents tested_versions token_method token_method_fallback
 tool_time_source turnless_activity type_path variant variants versions""".split())
 RULE_KEYS = frozenset("""call_command_name call_command_regex call_id call_input call_kind call_name call_raw calls event_id
 instruction_always_on instruction_bytes instruction_items instruction_paths interrupt match model msg_id non_turn_reason offered_block
 offered_desc_from offered_desc_item offered_desc_pairs offered_each offered_from offered_item offered_section offered_skills prompt_time
-result_error result_exit_code result_exit_code_regex result_finished result_id result_started result_text results role skill_command
-spawned_agent spawned_model text timestamp turn turn_error turn_start usage_cache_read usage_cache_write usage_context usage_dedupe_key
+call_split result_error result_exit_code result_exit_code_regex result_finished result_id result_started result_text results role skill_command
+spawned_agent spawned_model text timestamp turn turn_error turn_regex turn_start usage_cache_read usage_cache_write usage_context usage_dedupe_key
 usage_fallback usage_input usage_input_includes_cache usage_output usage_present""".split())
 FIELD_KEYS = frozenset("version msg_id model timestamp event_id".split())
 CAPABILITY_KEYS = frozenset("has_tokens has_timestamps has_tool_results has_ids".split())
 CHECK_KEYS = frozenset("name metric first second relation tolerance_pct slack_first skip_if_second_zero severity".split())
 SUBAGENT_KEYS = frozenset("""agent_path brief_key call_id file_prefix forked_from history_start link_regex meta_file model ordinal
 parent_id self_id spawn_key""".split())
-REGEX_KEYS = frozenset("call_command_regex result_exit_code_regex offered_block offered_item offered_section offered_desc_item link_regex".split())
+REGEX_KEYS = frozenset("call_command_regex result_exit_code_regex turn_regex offered_block offered_item offered_section offered_desc_item link_regex".split())
 HOST_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
-BUILTIN_NAMES = {**HOSTS, **SQLITE_HOSTS, "kiro": "kiro"}
+BUILTIN_NAMES = {**HOSTS, **STORE_HOSTS, "kiro": "kiro"}
 
 
 def user_adapter_dir(env=None, platform=None, home=None):
@@ -3353,20 +3381,33 @@ def json_document_spec(raw):
     parsed = []
     for n, doc in enumerate(docs):
         file = doc.get("file") if isinstance(doc, dict) else None
-        if not isinstance(file, str) or not FILE_NAME_RE.match(file) or ".." in file:
+        plain = file.replace("{id}", "x") if isinstance(file, str) else None        # {id} stands for the session folder's name
+        if plain is None or not FILE_NAME_RE.match(plain) or ".." in plain:
             raise ContainerProblem(f"mapping container.documents[{n}].file is not a plain file name; refusing to read")
         path = doc.get("records", ".")
         if not isinstance(path, str) or not PATH_RE.match(path):
             raise ContainerProblem(f"mapping container.documents[{n}].records is not a plain path")
-        parsed.append({"file": file, "records": path, "name": file.rsplit(".", 1)[0]})
+        name = doc.get("name") or file.rsplit(".", 1)[0].replace("{id}", "session").replace(".", "_")
+        if not isinstance(name, str) or not IDENT_RE.match(name):
+            raise ContainerProblem(f"mapping container.documents[{n}].name is not a plain identifier")
+        parsed.append({"file": file, "records": path, "name": name, "as_record": bool(doc.get("as_record"))})
     merge = (cfg.get("merge") or {}).get("by", "order")
     if not isinstance(merge, str) or not PATH_RE.match(merge):
         raise ContainerProblem("mapping container.merge.by must be 'order' or a timestamp path")
     session = cfg.get("session") or {}
     for key in ("cwd_document", "cwd_path"):
-        if key in session and (not isinstance(session[key], str) or not PATH_RE.match(session[key]) or ".." in session[key]):
+        if key in session and (not isinstance(session[key], str) or not PATH_RE.match(session[key].replace("{id}", "x")) or ".." in session[key]):
             raise ContainerProblem(f"mapping container.session.{key} is not a plain name")
-    return {"roots": roots, "documents": parsed, "merge": merge, "session": session}
+    subagents = cfg.get("subagents")                     # child sessions listed in a database: parent id column, optional flag column
+    if subagents is not None:
+        if not isinstance(subagents.get("db"), str) or not subagents["db"]:
+            raise ContainerProblem("mapping container.subagents.db must be a path")
+        for key in ("table", "id", "parent"):
+            if not isinstance(subagents.get(key), str) or not IDENT_RE.match(subagents[key]):
+                raise ContainerProblem(f"mapping container.subagents.{key} is not a plain identifier; refusing to query")
+        if "flag" in subagents and (not isinstance(subagents["flag"], str) or not IDENT_RE.match(subagents["flag"])):
+            raise ContainerProblem("mapping container.subagents.flag is not a plain identifier; refusing to query")
+    return {"roots": roots, "documents": parsed, "merge": merge, "session": session, "subagents": subagents}
 
 
 def read_document(path):
@@ -3380,7 +3421,11 @@ def read_document(path):
         raise ContainerProblem(f"document {path.name} is not valid JSON")
 
 
-def document_items(doc, path, name):
+def document_items(doc, path, name, as_record=False):
+    if as_record:                                        # the whole document is one record (a session's metadata)
+        if not isinstance(doc, dict):
+            raise ContainerProblem(f"document {name} is not an object")
+        return [doc]
     if path in ("", "."):
         items = doc if isinstance(doc, list) else None
     else:
@@ -3395,16 +3440,16 @@ class JsonDocumentReader:
     """One session folder: its documents merged into one record stream."""
     kind = "json_document"
 
-    def __init__(self, folder, spec, session_id):
+    def __init__(self, folder, spec, session_id, with_children=True):
         self.folder, self.spec, self.session_id, self.notes, self.version = folder, spec, session_id, [], None
         records, loaded = [], 0
         for order, doc in enumerate(spec["documents"]):
-            file = folder / doc["file"]
+            file = folder / doc["file"].replace("{id}", session_id)
             if not file.is_file():
-                self.notes.append(f"document {doc['file']} not found")
+                self.notes.append(f"document {doc['file'].replace('{id}', '<id>')} not found")
                 continue
             loaded += 1
-            for index, item in enumerate(document_items(read_document(file), doc["records"], doc["file"])):
+            for index, item in enumerate(document_items(read_document(file), doc["records"], file.name, doc["as_record"])):
                 records.append((order, index, {**item, "$doc": doc["name"], "$index": index}))
         if not loaded:
             raise ContainerProblem("none of the declared documents exist in the session folder")
@@ -3418,15 +3463,51 @@ class JsonDocumentReader:
             records = [(o, i, r) for _, o, i, r in sorted(stamped, key=lambda t: t[:3])]
         self.records = [r for _, _, r in records]
         self.documents = loaded
+        self.children = self._children(spec) if with_children else []
+
+    def _children(self, spec):
+        """Subagent sessions the mapping's database lists under this session, read like the session itself."""
+        cfg = spec.get("subagents")
+        if not cfg:
+            return []
+        db = Path(os.path.expanduser(cfg["db"]))
+        if not db.is_file():
+            return []
+        found = []
+        try:
+            conn = open_sqlite_readonly(db)
+            try:
+                sql = f"SELECT {quote_ident(cfg['id'])} FROM {quote_ident(cfg['table'])} WHERE {quote_ident(cfg['parent'])} = ?"
+                if cfg.get("flag"):
+                    sql += f" AND {quote_ident(cfg['flag'])} = 1"
+                ids = [row[0] for row in conn.execute(sql + " ORDER BY 1", (self.session_id,))]
+            finally:
+                conn.close()
+        except (ContainerProblem, sqlite3.Error):
+            self.notes.append("subagent sessions could not be listed from the database")
+            return []
+        for child in ids:
+            if not isinstance(child, str) or not FILE_NAME_RE.match(child):
+                continue
+            for root in spec["roots"]:
+                folder = Path(os.path.expanduser(root)) / child
+                if folder.is_dir():
+                    found.append(JsonDocumentReader(folder, spec, child, with_children=False))
+                    break
+        return found
 
     def first_lines(self):
         return [json.dumps(r, ensure_ascii=False, default=str) for r in self.records]
 
     def sources(self, mapping):
         yield Source(self.first_lines(), f"json_document:{self.session_id}", True)
+        for child in self.children:
+            yield Source(child.first_lines(), f"json_document:{self.session_id}:{child.session_id}", False, child.session_id, None,
+                         "parent_session_id")
 
     def storage_info(self):
-        return {"kind": "json_document", "documents": self.documents, "records": len(self.records)}
+        return {"kind": "json_document", "documents": self.documents, "records": len(self.records),
+                **({"subagent_sessions": len(self.children)} if self.spec.get("subagents") else {})}
 
 
 def document_sessions(spec):
@@ -3435,7 +3516,7 @@ def document_sessions(spec):
     for root in spec["roots"]:
         base = Path(os.path.expanduser(root))
         for folder in sorted(base.iterdir()) if base.is_dir() else []:
-            files = [folder / d["file"] for d in spec["documents"] if (folder / d["file"]).is_file()]
+            files = [folder / d["file"].replace("{id}", folder.name) for d in spec["documents"] if (folder / d["file"].replace("{id}", folder.name)).is_file()]
             if folder.is_dir() and files:
                 found.append({"id": folder.name, "folder": folder, "last": max(f.stat().st_mtime for f in files),
                               "created": min(f.stat().st_mtime for f in files)})
@@ -3447,7 +3528,7 @@ def session_cwd(session, spec):
     if not (cfg.get("cwd_document") and cfg.get("cwd_path")):
         return None
     try:
-        doc = read_document(session["folder"] / cfg["cwd_document"])
+        doc = read_document(session["folder"] / cfg["cwd_document"].replace("{id}", session["id"]))
     except (ContainerProblem, OSError):
         return ""
     value = get_first(doc, cfg["cwd_path"])
@@ -3753,6 +3834,250 @@ def run_probe(target):
     return {"probe": result, "note": "structure only: names of fields, types, counts and short identifier values; no content"}, 0
 
 
+# ---- replica: a synthetic copy of the current session, and the pull-request bundle ------------------------------------------------
+
+REPLICA_FILL = "lorem ipsum dolor sit amet consectetur "
+REPLICA_MAX_TEXT = 400
+REPLICA_BASE_MS = int(datetime(2026, 1, 5, 9, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+PATHLIKE_RE = re.compile(r"^(?:~?/|\./|[A-Za-z]:[\\/])[^\s]*$|^[^\s/\\]+(?:/[^\s/\\]+){1,}$")
+CWD_KEYS = frozenset({"cwd", "workspace_root", "workspaceRoot", "root", "rootPath", "folder"})
+PLAIN_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+class Leak(Exception):
+    """The replica still carries something from the source."""
+
+
+def filler_text(n):
+    n = max(0, min(n, REPLICA_MAX_TEXT))
+    return (REPLICA_FILL * (n // len(REPLICA_FILL) + 1))[:n]
+
+
+class Anonymizer:
+    """Rewrite JSON structure-preservingly: types, order, nesting and counts stay; text, ids, paths and names do not.
+
+    The mapping's [replica] table declares what is safe to keep (keep_paths, keep_patterns) and which paths hold
+    ids (id_paths) or shell commands (command_paths), all as normalised paths like messages[].content[].name."""
+
+    def __init__(self, cfg, session_id):
+        self.keep_paths = set(cfg.get("keep_paths", []))
+        self.id_paths = set(cfg.get("id_paths", []))
+        self.command_paths = set(cfg.get("command_paths", []))
+        patterns = list(cfg.get("keep_patterns", []))
+        self.keep_re = re.compile("|".join(f"(?:{p})" for p in patterns)) if patterns else None
+        self.ids = {session_id: "replica_session"} if session_id else {}
+        self.keys, self.paths, self.exempt, self.shift = {}, {}, set(), 0
+
+    def learn_time(self, docs):
+        """The earliest timestamp anywhere decides one shift for all, so every interval stays the same."""
+        found = []
+
+        def walk(v, key=""):
+            if isinstance(v, dict):
+                for k, x in v.items():
+                    walk(x, str(k))
+            elif isinstance(v, list):
+                for x in v:
+                    walk(x, key)
+            elif isinstance(v, (int, float)) and not isinstance(v, bool) and TIME_KEY_RE.search(key) and (1e9 <= v < 1e14):
+                found.append(v * 1000 if v < 1e11 else v)
+            elif isinstance(v, str) and ISO_RE.match(v):
+                ts = parse_ts(v)
+                if ts is not None:
+                    found.append(ts * 1000)
+        for d in docs:
+            walk(d)
+        self.shift = int(REPLICA_BASE_MS - min(found)) if found else 0
+
+    def new_id(self, real):
+        if real not in self.ids:
+            self.ids[real] = f"id{len(self.ids):07d}"
+        return self.ids[real]
+
+    def key(self, real):
+        if real in self.keys:
+            return self.keys[real]
+        keep = PLAIN_IDENT_RE.match(real) and len(real) <= 41 and not id_like(real) and redact(real) == real
+        self.keys[real] = real if keep else f"key{len(self.keys):04d}"
+        return self.keys[real]
+
+    def text(self, s):
+        if not s:
+            return s
+        if self.keep_re is None:
+            return filler_text(len(s))
+        out, pos = [], 0
+        for m in self.keep_re.finditer(s):
+            out += [filler_text(m.start() - pos), m.group(0)]
+            pos = m.end()
+        out.append(filler_text(len(s) - pos))
+        return "".join(out)
+
+    def string(self, s, path, key):
+        if path in self.keep_paths:
+            self.exempt.add(s)
+            return s
+        if path in self.id_paths:
+            return self.new_id(s)
+        if path in self.command_paths:                      # a command becomes its class: a test run or a plain command
+            cls = "python3 -m pytest -q" if any(verify_kind(w) for w in split_commands(s)) else "ls"
+            self.exempt.add(cls)
+            return cls
+        if key in PROBE_NAME_FIELDS and safe_value(s):
+            return s
+        if ISO_RE.match(s):
+            ts = parse_ts(s)
+            if ts is not None:
+                return datetime.fromtimestamp(ts + self.shift / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        if " " not in s and "\n" not in s and len(s) <= 300 and PATHLIKE_RE.match(s):
+            if key in CWD_KEYS:
+                return "~/project"
+            if s not in self.paths:
+                self.paths[s] = f"~/project/file{len(self.paths) + 1}{os.path.splitext(s)[1][:6] if PLAIN_IDENT_RE.match(os.path.splitext(s)[1][1:] or 'x') else ''}"
+            return self.paths[s]
+        if " " not in s and id_like(s) and len(s) <= 120:
+            return self.new_id(s)
+        return self.text(s)
+
+    def walk(self, v, path="", key=""):
+        if isinstance(v, dict):
+            return {self.key(str(k)): self.walk(x, f"{path}.{k}" if path else str(k), str(k)) for k, x in v.items()}
+        if isinstance(v, list):
+            return [self.walk(x, f"{path}[]", key) for x in v]
+        if isinstance(v, str):
+            return self.string(v, path, key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and TIME_KEY_RE.search(key) and 1e9 <= v < 1e14:
+            return v + self.shift // 1000 if v < 1e11 else v + self.shift
+        return v
+
+
+def strings_in(value, acc):
+    if isinstance(value, dict):
+        for k, v in value.items():
+            acc.add(str(k))
+            strings_in(v, acc)
+    elif isinstance(value, list):
+        for v in value:
+            strings_in(v, acc)
+    elif isinstance(value, str):
+        acc.add(value)
+    return acc
+
+
+def leak_check(source_docs, replica_docs, anon):
+    """No string of 6 or more characters from the source may appear in the replica, unless it is a plain identifier
+    (a type or field name) or a value the mapping declared safe to keep. Returns how many source strings leaked."""
+    source = {s for s in strings_in(source_docs, set()) if len(s) >= 6 and not PLAIN_IDENT_RE.match(s)}
+    leaked = set()
+    for r in strings_in(replica_docs, set()):
+        if r in anon.exempt:
+            continue
+        probe = anon.keep_re.sub("", r) if anon.keep_re else r
+        for s in source:
+            if s in probe:
+                leaked.add(s)
+    return len(leaked)
+
+
+def replica_inputs(reader, mapping):
+    """[(file name inside the replica, [documents or records])] for a reader the replica can copy, else None."""
+    if reader.kind == "json_document":
+        out = []
+        for doc in reader.spec["documents"]:
+            file = reader.folder / doc["file"].replace("{id}", reader.session_id)
+            if file.is_file():
+                out.append((doc["file"], read_document(file)))
+        return out
+    if reader.kind == "jsonl":
+        files = []
+        for n, src in enumerate(reader.sources(mapping)):
+            records = [json.loads(ln) for ln in src.lines if ln.strip()]
+            files.append(("{id}.jsonl" if src.main else f"{{id}}/subagents/agent-{n:04d}.jsonl", records))
+        return files
+    return None
+
+
+def make_replica(reader, mapping, host):
+    """Write the replica; returns (path, summary) or raises Leak/ContainerProblem. Nothing is written when the check fails."""
+    items = replica_inputs(reader, mapping)
+    if items is None:
+        raise ContainerProblem("a replica cannot be made from this kind of storage yet")
+    session_id = getattr(reader, "session_id", None) or "session"
+    anon = Anonymizer(mapping.get("replica") or {}, session_id)
+    docs = [d for _, d in items]
+    anon.learn_time(docs)
+    rewritten = [(name, [anon.walk(r) for r in d] if name.endswith(".jsonl") else anon.walk(d)) for name, d in items]
+    leaked = leak_check(docs, [d for _, d in rewritten], anon)
+    if leaked:
+        raise Leak(f"{leaked} source strings would survive in the replica")
+    base = Path(tempfile.gettempdir()) / "workflow-reviewer"
+    fresh = not base.exists()
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if fresh:
+        os.chmod(base, 0o700)
+    target = base / f"replica-{host}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    n = 1
+    while target.exists():
+        n += 1
+        target = base / f"replica-{host}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{n}"
+    target.mkdir(mode=0o700)
+    os.chmod(target, 0o700)
+    folder = target / "replica_session" if reader.kind == "json_document" else target
+    if folder != target:
+        folder.mkdir(mode=0o700)
+        os.chmod(folder, 0o700)
+    for name, data in rewritten:
+        dest = folder / name.replace("{id}", "replica_session")
+        dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        text = "\n".join(json.dumps(r, ensure_ascii=False) for r in data) + "\n" if name.endswith(".jsonl") else json.dumps(data, ensure_ascii=False, indent=1)
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+    return folder, {"files": len(rewritten), "source_strings_checked": len(strings_in(docs, set())), "leaked": 0}
+
+
+def home_relative(path):
+    text = str(path)
+    home = str(Path.home())
+    return "~" + text[len(home):] if text.startswith(home) else text
+
+
+def newest_replica(host):
+    base = Path(tempfile.gettempdir()) / "workflow-reviewer"
+    found = sorted(base.glob(f"replica-{host}-*"), key=lambda p: p.stat().st_mtime) if base.is_dir() else []
+    return found[-1] if found else None
+
+
+def pr_bundle(out, host, repo_url="justin-nicky/workflow-reviewer-skill"):
+    """What the person needs to open a pull request, as text. Nothing here runs a command."""
+    adapter = user_adapter_dir() / f"{host}.toml"
+    replica = newest_replica(host)
+    t, tools, cov = out["tokens"], out["tools"], out["coverage"]
+    expected = {"turns": out["window"]["turns_total"], "interruptions": (out["interruptions"] or {}).get("count"),
+                "tool_calls": tools["total"], "tool_calls_by_category": tools["by_category"], "tool_errors": tools["errors"],
+                "verify_runs": out["verify"]["total"], "subagents": sum(a.get("actors", 1) for a in out["actors"] if a["actor"] != "main"),
+                "models": [m for a in out["actors"] for m in a["models"]][:3], "version": cov.get("transcript_version")}
+    if "not_measurable" not in t:
+        expected["tokens"] = {k: t[k] for k in ("api_calls", "fresh_input", "cache_read", "cache_write", "output")}
+    branch = f"add-{host}-adapter"
+    replica_text = home_relative(replica) if replica else "(none yet: run --make-replica first)"
+    in_shell = lambda text: "$HOME" + text[1:] if text.startswith("~") else text      # a ~ inside quotes is not expanded by the shell
+    commands = [
+        f"gh repo fork {repo_url} --clone --remote",
+        "cd workflow-reviewer-skill",
+        f"git checkout -b {branch}",
+        f"cp \"{in_shell(home_relative(adapter))}\" skills/workflow-reviewer/scripts/mappings/{host}.toml",
+        f"cp -R \"{in_shell(replica_text)}\" tests/fixtures/golden/{host}",
+        f"git add skills/workflow-reviewer/scripts/mappings/{host}.toml tests/fixtures/golden/{host}",
+        f"git commit -m \"feat: {host} adapter\"",
+        f"git push -u origin {branch}",
+        f"gh pr create --repo {repo_url} --title \"feat: {host} adapter\" --body \"Adapter made with the adapter flow (version {expected['version']}). Golden replica and expected numbers are in the PR.\"",
+    ]
+    return {"adapter_path": home_relative(adapter), "adapter_exists": adapter.is_file(), "replica_path": replica_text,
+            "expected_for_golden_test": expected, "commands": commands,
+            "note": "Nothing was run. Review the files first (the adapter is a mapping, the replica is synthetic), then run the commands yourself."}
+
+
 def store_activity(raw, repo):
     """Most recent activity of a sqlite or json_document host's session for this working directory (None when there is none)."""
     kind = container_kind(raw)
@@ -3830,6 +4155,9 @@ def main(argv=None):
         args.drift_threshold = cfg.get("drift_threshold", 90)
     redact_on = not args.no_redact
     findings = None
+    if (args.make_replica or args.pr_bundle) and (args.report or args.save_adapter or args.events or args.sample is not None or args.list_turns):
+        emit({"error": "--make-replica and --pr-bundle cannot be combined with --report, --save-adapter, --events, --sample or --list-turns"}, args.format, redact_on)
+        return 2
     if args.save_adapter and (args.mapping or args.report):
         emit({"error": "--save-adapter reads the drafted mapping from stdin: do not combine it with --mapping or --report"}, args.format, redact_on)
         return 2
@@ -4006,6 +4334,8 @@ def main(argv=None):
     for i, ev in enumerate(events):
         ev["i"] = i
     assign_turns(events)
+    if mapping.get("interrupt_on_repeated_prompt"):
+        mark_repeated_prompts(events)
     links = link_subagents(events, metas, mapping, placed, main_ids - {None})
     cut = reviewer_cut(events)
     if args.events:
@@ -4110,8 +4440,22 @@ def main(argv=None):
         if problem:
             emit({"error": problem}, args.format, redact_on)
             return 2
-        emit({"saved": str(target), "host": override.get("host"), "label": "unproven", "made_from_version": stats["version"],
+        emit({"saved": home_relative(target), "host": override.get("host"), "label": "unproven", "made_from_version": stats["version"],
               "health": out["coverage"]["health"]["summary"]}, args.format, False)             # the path is printed as it is
+        return 0
+    if (args.make_replica or args.pr_bundle) and "coverage" in out:
+        if args.pr_bundle:
+            emit(pr_bundle(out, host), args.format, False)
+            return 0
+        try:
+            folder, summary = make_replica(reader, mapping, host)
+        except Leak as exc:
+            emit({"error": f"replica not written: {exc}"}, args.format, redact_on)
+            return 2
+        except ContainerProblem as exc:
+            emit({"error": str(exc)}, args.format, redact_on)
+            return 4
+        emit({"replica": home_relative(folder), **summary, "note": "synthetic: text, ids, paths and names replaced; numbers, order and nesting kept"}, args.format, False)
         return 0
     code = 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
     inventory_names = out["skills"].pop("_inventory_names", None) if isinstance(out.get("skills"), dict) else None
