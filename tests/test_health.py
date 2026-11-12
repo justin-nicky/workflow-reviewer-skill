@@ -169,10 +169,12 @@ def noisy(n_unknown):
     return session() + [{"t": "zz"}] * n_unknown
 
 
-def test_low_coverage_with_no_second_count_for_a_core_metric_still_pauses(cli, tmp_path):
+def test_low_coverage_alone_never_breaks_even_when_nothing_vouches_for_a_core_metric(cli, tmp_path):
     code, out = run(cli, tmp_path, noisy(40), "", "--health-all")
-    assert code == 2 and rows(out)["turns"]["status"] == "broken" and not out["coverage"]["drift"]["ok"]
-    assert out["coverage"]["drift"]["warning"]
+    r = rows(out)
+    assert code == 0 and out["coverage"]["drift"]["ok"]
+    assert all(r[m]["status"] == "warn" for m in ("turns", "tool_calls", "tokens", "errors", "verify", "skills", "subagents"))
+    assert any(c["name"] == "coverage" and not c["passed"] for c in r["turns"]["checks"])
 
 
 def test_low_coverage_alone_is_only_a_warn_when_the_core_second_counts_still_pass(cli, tmp_path):
@@ -195,23 +197,27 @@ def test_a_missing_usage_field_breaks_tokens_and_a_missing_tool_name_breaks_tool
     no_usage = [user(), {"t": "a", "mid": "m", "text": "x", "calls": []}]
     code, out = run(cli, tmp_path, no_usage, "", "--health-all")
     assert code == 2 and rows(out)["tokens"]["status"] == "broken" and rows(out)["turns"]["status"] != "broken"
+    assert any(c["name"] == "no token usage found" for c in rows(out)["tokens"]["checks"])
     no_name = [user(), {"t": "a", "mid": "m", "usage": {"i": 1, "o": 1}, "calls": [{"in": {}, "id": "c1"}]}]
     code, out = run(cli, tmp_path, no_name, "", "--health-all")
     assert code == 2 and rows(out)["tool_calls"]["status"] == "broken" and rows(out)["tokens"]["status"] != "broken"
 
 
 def test_an_unseen_type_points_at_the_metric_its_record_would_feed(cli, tmp_path):
-    for kind, metric in (("tool_result_v2", "tool_calls"), ("usage_report", "tokens"), ("skill_event", "skills")):
+    # evidence touching a core metric breaks it; for any other metric it is a warn
+    for kind, metric, status, exit_code in (("tool_result_v2", "tool_calls", "broken", 2), ("usage_report", "tokens", "broken", 2),
+                                            ("skill_event", "skills", "warn", 0)):
         code, out = run(cli, tmp_path, session() + [{"t": kind}], "", "--health-all")
         r = rows(out)
-        assert r[metric]["status"] == "warn" and code == 0
-        assert [m for m, row in r.items() if row["status"] == "warn"] == [metric]
+        assert r[metric]["status"] == status and code == exit_code
+        assert [m for m, row in r.items() if row["status"] in ("warn", "broken")] == [metric]
 
 
-def test_an_unseen_type_that_matches_no_metric_is_listed_not_attributed(cli, tmp_path):
+def test_an_unseen_type_that_matches_no_metric_is_listed_as_a_warning_not_attributed(cli, tmp_path):
     code, out = run(cli, tmp_path, session() + [{"t": "zzz_novel"}], "", "--health-all")
     health = out["coverage"]["health"]
     assert code == 0 and health["unattributed_types"] == ["zzz_novel"] and not any(r["status"] in ("warn", "broken") for r in health["rows"])
+    assert any("zzz_novel" in w for w in out["coverage"]["warnings"])
 
 
 def test_a_mapping_can_override_the_hints(cli, tmp_path):
@@ -222,10 +228,10 @@ def test_a_mapping_can_override_the_hints(cli, tmp_path):
 # ---- output -------------------------------------------------------------------------------------------------------------------
 
 def test_only_rows_needing_attention_are_shown_unless_health_all(cli, tmp_path):
-    records = session() + [{"t": "tool_result_v2"}]
+    records = session() + [{"t": "skill_event"}]
     _, short = run(cli, tmp_path, records)
     health = short["coverage"]["health"]
-    assert [r["metric"] for r in health["rows"]] == ["tool_calls"] and health["summary"]["warn"] == 1 and health["summary"]["one_way"] == 6
+    assert [r["metric"] for r in health["rows"]] == ["skills"] and health["summary"]["warn"] == 1 and health["summary"]["one_way"] == 6
     assert all(not c["passed"] for r in health["rows"] for c in r["checks"])
     _, full = run(cli, tmp_path, records, "", "--health-all")
     assert len(full["coverage"]["health"]["rows"]) == 9
@@ -244,22 +250,22 @@ def test_version_position(cli, tmp_path, seen, position):
 
 
 def test_markdown_shows_the_table_compactly(cli, tmp_path):
-    path = write_jsonl(tmp_path / "s.jsonl", session() + [{"t": "tool_result_v2"}])
+    path = write_jsonl(tmp_path / "s.jsonl", session() + [{"t": "skill_event"}])
     (tmp_path / "m.toml").write_text(MAPPING)
     proc = cli.run(path, "--mapping", tmp_path / "m.toml", fmt="md")
-    assert "tool_calls" in proc.stdout and "warn" in proc.stdout and proc.returncode == 0
+    assert "skills" in proc.stdout and "warn" in proc.stdout and proc.returncode == 0
 
 
 def test_the_report_coverage_row_names_the_affected_metrics(cli, tmp_path):
     import copy
     from test_report import FINDINGS
-    path = write_jsonl(tmp_path / "s.jsonl", session() + [{"t": "tool_result_v2"}])
+    path = write_jsonl(tmp_path / "s.jsonl", session() + [{"t": "skill_event"}])
     (tmp_path / "m.toml").write_text(MAPPING)
     cli.env_extra["TMPDIR"] = str(tmp_path / "tmp")
     (tmp_path / "tmp").mkdir()
     proc = cli.run(path, "--mapping", tmp_path / "m.toml", "--report", "-", "--no-open", "--report-format", "md",
                    stdin=json.dumps(copy.deepcopy(FINDINGS)).replace("claude-code", "all hosts") if False else json.dumps(_findings()))
-    assert "Coverage: tool_calls: warn" in proc.stdout
+    assert "Coverage: skills: warn" in proc.stdout
 
 
 def _findings():
@@ -336,3 +342,55 @@ def test_several_commands_of_one_call_are_not_duplicates():
     events = [{"calls": [call("k1", "ls"), call("k1", "pwd"), call("k2", "ls")]}, {"calls": [call("k1", "ls"), call(None, "ls"), call(None, "ls")]}]
     assert tm.dedupe_calls(events) == 1                                   # only the repeat of k1/ls
     assert [len(e["calls"]) for e in events] == [3, 2]
+
+
+# ---- presence checks: the evidence that a core metric lost its records ------------------------------------------------------------
+
+def test_results_without_any_calls_break_tool_calls(cli, tmp_path):
+    records = [user(), assistant("m1", 10)] + [result(f"c{i}") for i in range(3)]
+    code, out = run(cli, tmp_path, records, "", "--health-all")
+    check = next(c for c in rows(out)["tool_calls"]["checks"] if c["name"] == "results without calls")
+    assert code == 2 and rows(out)["tool_calls"]["status"] == "broken" and (check["first"], check["second"]) == (0, 3)
+
+
+def test_many_calls_and_no_results_at_all_break_tool_calls_but_one_call_in_flight_does_not(cli, tmp_path):
+    code, out = run(cli, tmp_path, [user(), assistant("m1", 10, ["c1", "c2", "c3"])], "", "--health-all")
+    assert code == 2 and any(c["name"] == "calls without any results" for c in rows(out)["tool_calls"]["checks"])
+    code, out = run(cli, tmp_path, [user(), assistant("m1", 10, ["c1"])], "", "--health-all")
+    assert code == 0 and rows(out)["tool_calls"]["status"] == "one_way"
+
+
+def test_a_host_that_records_no_results_is_not_asked_for_them(cli, tmp_path):
+    mapping = MAPPING.replace("has_tool_results = true", "has_tool_results = false")
+    path = write_jsonl(tmp_path / "s.jsonl", [user(), assistant("m1", 10, ["c1", "c2", "c3"])])
+    (tmp_path / "m.toml").write_text(mapping)
+    proc = cli.run(path, "--mapping", tmp_path / "m.toml", "--health-all")
+    assert proc.returncode == 0
+
+
+def test_tool_results_prove_there_was_assistant_activity_even_when_assistant_records_are_unreadable(cli, tmp_path):
+    records = [user(), {"t": "zzz_novel"}] + [result(f"c{i}") for i in range(3)] + [{"t": "m"}] * 40
+    code, out = run(cli, tmp_path, records, "", "--health-all")
+    r = rows(out)
+    assert code == 2 and r["tokens"]["status"] == "broken" and r["tool_calls"]["status"] == "broken"
+    assert next(c for c in r["tokens"]["checks"] if c["name"] == "no token usage found")["layer"] == "presence"
+    assert out["coverage"]["drift"]["coverage_pct"] >= 90
+
+
+def test_a_prompt_with_no_reply_yet_is_not_a_missing_usage(cli, tmp_path):
+    code, out = run(cli, tmp_path, [user("just typed")], "", "--health-all")
+    assert code == 0 and rows(out)["tokens"]["status"] == "one_way"
+
+
+def test_a_host_that_records_no_tokens_is_never_asked_for_usage(cli, tmp_path):
+    mapping = MAPPING.replace("has_tokens = true", "has_tokens = false")
+    path = write_jsonl(tmp_path / "s.jsonl", session())
+    (tmp_path / "m.toml").write_text(mapping)
+    proc = cli.run(path, "--mapping", tmp_path / "m.toml", "--health-all")
+    out = json.loads(proc.stdout)
+    assert proc.returncode == 0 and rows(out)["tokens"]["status"] == "not_measurable"
+
+
+def test_a_second_count_that_fails_still_breaks_a_core_row_with_full_coverage(cli, tmp_path):
+    code, out = run(cli, tmp_path, session() + [marker()] * (N + 3), TURN_CHECK, "--health-all")
+    assert code == 2 and rows(out)["turns"]["status"] == "broken"

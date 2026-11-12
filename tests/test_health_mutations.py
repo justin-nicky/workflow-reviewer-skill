@@ -74,6 +74,16 @@ def twin_ordinal(r):
     r["ordinal"] = r["ordinal"] + 100000
 
 
+def padded(records, known):
+    """Add enough records of a known type that coverage stays at 90% or more, whatever was renamed."""
+    return records + [dict(known, **({"ordinal": 900000 + i} if "ordinal" in known else {})) for i in range(10 * len(records))]
+
+
+def harmless(records, known):
+    """Add unseen types no metric is hinted at, enough to bring coverage to about 80%."""
+    return records + [dict(known, ordinal=800000 + i) if "ordinal" in known else dict(known) for i in range(len(records) // 4 + 1)]
+
+
 MUTATIONS = {
     "claude-code": {
         "turn marker": lambda rs: bump(rs, claude_prompt, lambda r: rename(r["message"], "content", "body")),
@@ -81,6 +91,9 @@ MUTATIONS = {
         "usage field": lambda rs: bump(rs, lambda r: r.get("type") == "assistant", lambda r: rename(r["message"], "usage", "usage_x")),
         "unknown type": lambda rs: rs + [{"type": "tool_result_v2", "sessionId": "s"}],
         "duplicate assistant": lambda rs: duplicate(rs, claude_tool_assistant, twin_uuid),
+        "assistant renamed": lambda rs: padded(bump(rs, lambda r: r.get("type") == "assistant", lambda r: r.update(type="response")), {"type": "last-prompt", "sessionId": "s"}),
+        "usage carrier renamed": None,
+        "harmless types": lambda rs: harmless(rs, {"type": "zzz_novel"}),
     },
     "codex": {
         # the marker and the user prompts it falls back to both stop being readable
@@ -90,6 +103,11 @@ MUTATIONS = {
         "usage field": lambda rs: bump(rs, lambda r: r.get("type") == "token_usage_record", lambda r: rename(r["payload"]["usage"], "output_tokens", "output_tokens_x")),
         "unknown type": lambda rs: rs + [{"type": "tool_event", "ordinal": 99999}],
         "duplicate assistant": lambda rs: duplicate(rs, codex_type("function_call", "custom_tool_call"), twin_ordinal),
+        "assistant renamed": None,                    # Codex keeps its calls and usage in records of their own
+        "usage carrier renamed": lambda rs: padded(bump(rs, lambda r: r.get("type") in ("token_usage_record",) or r.get("payload", {}).get("type") == "token_count",
+                                                       lambda r: r.update(type="ledger_row") if r.get("type") == "token_usage_record" else r["payload"].update(type="ledger_total")),
+                                                  {"type": "world_state"}),
+        "harmless types": lambda rs: harmless(rs, {"type": "zzz_novel", "ordinal": 0}),
     },
     "cursor": {
         "turn marker": lambda rs: bump(rs, lambda r: r.get("role") == "user", lambda r: rename(r, "message", "msg")),
@@ -97,6 +115,9 @@ MUTATIONS = {
         "usage field": None,                          # Cursor records no token usage
         "unknown type": lambda rs: rs + [{"type": "tool_event"}],
         "duplicate assistant": lambda rs: duplicate(rs, cursor_assistant_with_tool, lambda r: None),
+        "assistant renamed": None,                    # Cursor records neither results nor usage to prove the replies existed
+        "usage carrier renamed": None,
+        "harmless types": lambda rs: harmless(rs, {"type": "zzz_novel"}),
     },
 }
 
@@ -202,7 +223,35 @@ def devin_duplicate_assistant(conn):
     conn.execute("UPDATE sessions SET main_chain_id = ?", (new,))
 
 
-DEVIN = {"turn marker": devin_turn_marker, "result records": devin_drop_results, "usage field": devin_usage_field,
+def devin_assistant_renamed(conn):
+    edit_messages(conn, lambda m: m.update(role="response"), lambda m: m["role"] == "assistant")
+    add_nodes(conn, {"message_id": "p", "role": "system", "content": "x", "metadata": {}}, 400)
+
+
+def devin_usage_carrier(conn):
+    def change(m):
+        if m["metadata"].get("metrics") is not None:
+            rename(m["metadata"], "metrics", "ledger")
+    edit_messages(conn, change, lambda m: m["role"] == "assistant")
+
+
+def devin_harmless(conn):
+    add_nodes(conn, {"message_id": "h", "role": "zzz_novel", "content": "", "metadata": {}}, 12)
+
+
+def add_nodes(conn, message, count):
+    head = conn.execute("SELECT main_chain_id FROM sessions").fetchone()[0]
+    nid = conn.execute("SELECT MAX(node_id) FROM message_nodes").fetchone()[0]
+    for _ in range(count):
+        nid += 1
+        conn.execute("INSERT INTO message_nodes (session_id, node_id, parent_node_id, chat_message, created_at) VALUES (?,?,?,?,?)",
+                     ("golden-devin-subagent", nid, head, json.dumps(message), 1))
+        head = nid
+    conn.execute("UPDATE sessions SET main_chain_id = ?", (head,))
+
+
+DEVIN = {"assistant renamed": devin_assistant_renamed, "usage carrier renamed": devin_usage_carrier, "harmless types": devin_harmless,
+         "turn marker": devin_turn_marker, "result records": devin_drop_results, "usage field": devin_usage_field,
          "unknown type": devin_unknown_type, "duplicate assistant": devin_duplicate_assistant}
 
 
@@ -217,21 +266,26 @@ EXPECTED = {
     ("claude-code", "turn marker"): (2, {"turns": "broken"}),
     ("claude-code", "result records"): (2, {"tool_calls": "broken"}),
     ("claude-code", "usage field"): (2, {"tokens": "broken"}),
-    ("claude-code", "unknown type"): (0, {"tool_calls": "warn"}),
+    ("claude-code", "unknown type"): (2, {"tool_calls": "broken"}),   # a type named like a tool record is evidence against tool_calls
     ("claude-code", "duplicate assistant"): (0, {"tool_calls": "warn"}),
     ("codex", "turn marker"): (2, {"turns": "broken"}),
     ("codex", "result records"): (2, {"tool_calls": "broken"}),
     ("codex", "usage field"): (2, {"tokens": "broken"}),
-    ("codex", "unknown type"): (0, {"tool_calls": "warn"}),
+    ("codex", "unknown type"): (2, {"tool_calls": "broken"}),   # a type named like a tool record is evidence against tool_calls
     ("codex", "duplicate assistant"): (0, {"tool_calls": "warn"}),   # call ids are deduplicated, so the metric stays right
     ("cursor", "turn marker"): (0, {"turns": "warn"}),
-    ("cursor", "unknown type"): (0, {"tool_calls": "warn"}),
+    ("cursor", "unknown type"): (2, {"tool_calls": "broken"}),   # a type named like a tool record is evidence against tool_calls
     ("cursor", "duplicate assistant"): (0, {}),          # Cursor records no call ids or results: a duplicated call cannot be seen
     ("devin", "turn marker"): (2, {"turns": "broken"}),
     ("devin", "result records"): (2, {"tool_calls": "broken"}),
     ("devin", "usage field"): (2, {"tokens": "broken"}),
-    ("devin", "unknown type"): (0, {"tool_calls": "warn"}),
+    ("devin", "unknown type"): (2, {"tool_calls": "broken"}),   # a type named like a tool record is evidence against tool_calls
     ("devin", "duplicate assistant"): (0, {"tool_calls": "warn"}),
+    # the pause is tied to evidence, not to coverage: padded with known records so coverage stays at 90% or more
+    ("claude-code", "assistant renamed"): (2, {"tokens": "broken", "tool_calls": "broken"}),
+    ("devin", "assistant renamed"): (2, {"tokens": "broken", "tool_calls": "broken"}),
+    ("codex", "usage carrier renamed"): (2, {"tokens": "broken"}),
+    ("devin", "usage carrier renamed"): (2, {"tokens": "broken"}),
 }
 HOSTS = {"claude-code": "claude-code", "codex": "codex-desktop", "cursor": "cursor-chat1", "devin": "devin-subagent"}
 
@@ -251,6 +305,36 @@ def test_a_mutation_flips_the_right_row_and_leaves_unrelated_core_rows_ok(cli, t
     assert all(rows[m] in ("ok", "one_way", "not_measurable") for m in CORE if m not in flipped)
 
 
+@pytest.mark.parametrize("host, mutation", [("claude-code", "assistant renamed"), ("devin", "assistant renamed"),
+                                             ("codex", "usage carrier renamed"), ("devin", "usage carrier renamed")])
+def test_the_evidence_rows_break_with_coverage_at_90_percent_or_more(cli, tmp_path, host, mutation):
+    code, rows, out = run_cell(cli, tmp_path, host, mutation)
+    assert out["coverage"]["drift"]["coverage_pct"] >= 90 and code == 2 and not out["coverage"]["drift"]["ok"]
+    names = {c["name"] for r in out["coverage"]["health"]["rows"] for c in r["checks"] if not c["passed"]}
+    assert "no token usage found" in names
+    if mutation == "assistant renamed":
+        assert "results without calls" in names
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_harmless_unknown_types_at_80_percent_coverage_only_warn(cli, tmp_path, host):
+    code, rows, out = run_cell(cli, tmp_path, host, "harmless types")
+    assert code == 0 and out["coverage"]["drift"]["ok"]
+    assert 70 <= out["coverage"]["drift"]["coverage_pct"] < 90
+    assert "broken" not in rows.values()
+    assert all(s == "warn" for m, s in rows.items() if s != "not_measurable")           # every measurable row warns on coverage
+    assert any("zzz_novel" in w for w in out["coverage"]["warnings"])
+
+
+def test_a_session_with_only_ai_title_records_added_is_still_all_ok(cli, tmp_path):
+    to_mutate, args = files_of("claude-code", tmp_path)
+    for f in to_mutate[:1]:
+        write(f, read(f) + [{"type": "ai-title", "aiTitle": "t", "sessionId": "s"} for _ in range(9)])
+    code, out = cli.json(*args, "--host", "claude-code", "--health-all")
+    assert code == 0 and out["coverage"]["drift"]["coverage_pct"] == 100.0
+    assert {r["status"] for r in out["coverage"]["health"]["rows"]} <= {"ok", "one_way", "not_measurable"}
+
+
 def test_the_cells_a_host_cannot_show_are_marked_not_applicable():
     assert MUTATIONS["cursor"]["result records"] is None and MUTATIONS["cursor"]["usage field"] is None
 
@@ -258,3 +342,4 @@ def test_the_cells_a_host_cannot_show_are_marked_not_applicable():
 def test_every_expected_cell_exists():
     for (host, mutation) in EXPECTED:
         assert host == "devin" or MUTATIONS[host][mutation] is not None
+        assert host != "devin" or mutation in DEVIN

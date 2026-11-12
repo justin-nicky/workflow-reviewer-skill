@@ -1405,7 +1405,7 @@ HEALTH_METRICS = ("turns", "tool_calls", "tokens", "errors", "verify", "interrup
 CORE_METRICS = ("turns", "tool_calls", "tokens")
 SEVERITY = {"warn": 1, "broken": 2}
 # Words that tie an unseen record type to the metric its record would feed (a mapping may override them with [health_hints]).
-UNSEEN_HINTS = {"tokens": ("usage", "token"), "tool_calls": ("tool", "call", "function", "exec", "command"),
+UNSEEN_HINTS = {"tokens": ("usage", "token", "assistant"), "tool_calls": ("tool", "call", "function", "exec", "command", "assistant"),
                 "errors": ("error", "exit", "fail"), "turns": ("user", "prompt", "turn", "message"),
                 "interruptions": ("interrupt", "abort", "cancel"), "skills": ("skill",), "subagents": ("agent", "spawn", "thread")}
 
@@ -1514,23 +1514,35 @@ def health_report(mapping, stats, events, records, drift, threshold):
         elif any(e["role"] == "assistant" for e in events):                            # only a subagent's records: legitimate
             add("turns", "subagent activity without a main turn", "structure", 0, 1, "at_least", False, "warn")
     pct = drift["coverage_pct"]                                              # layer 1: structure
-    for m in HEALTH_METRICS:
+    for m in HEALTH_METRICS:                                                 # coverage alone never breaks anything
         if measurable[m]:
-            escalate = m in CORE_METRICS and not second_passed[m]            # nothing else vouches for a core metric
-            add(m, "coverage", "structure", pct, threshold, "at_least", pct >= threshold, "broken" if escalate else "warn")
-    for field, affected in (("usage", ("tokens",)), ("tool_name", ("tool_calls", "verify", "errors"))):
-        if field in drift["missing_fields"]:
-            for m in affected:
-                if measurable[m]:
-                    add(m, f"required field {field}", "structure", "missing", "present", "equal", False,
-                        "broken" if m in CORE_METRICS else "warn")
+            add(m, "coverage", "structure", pct, threshold, "at_least", pct >= threshold, "warn")
+    if "tool_name" in drift["missing_fields"]:
+        for m in ("tool_calls", "verify", "errors"):
+            if measurable[m]:
+                add(m, "required field tool_name", "structure", "missing", "present", "equal", False,
+                    "broken" if m in CORE_METRICS else "warn")
+    # presence: evidence that a core metric lost its records
+    if stats["lines"] and not stats["classified"]:                           # nothing at all was recognised
+        for m in CORE_METRICS:
+            if measurable[m]:
+                add(m, "no records recognised", "presence", 0, stats["lines"], "at_least", False, "broken")
+    caps = mapping.get("capabilities", {})
+    results, calls = quantities["results"], quantities["tool_calls"]
+    active = any(e["role"] == "assistant" for e in events) or results > 0 or calls > 0     # results prove the agent replied
+    if measurable["tokens"] and active and not any(e["usage"] for e in events):
+        add("tokens", "no token usage found", "presence", 0, 1, "at_least", False, "broken")
+    if results > 0 and calls == 0:
+        add("tool_calls", "results without calls", "presence", calls, results, "at_least", False, "broken")
+    if caps.get("has_tool_results") and calls > 1 and results == 0:         # one call may still be running
+        add("tool_calls", "calls without any results", "presence", results, calls, "at_least", False, "broken")
     hints = {**UNSEEN_HINTS, **mapping.get("health_hints", {})}
     unattributed = []
     for kind, n in stats["unseen_types"].items():
         hit = [m for m, words in hints.items() if m in checks and measurable.get(m) and any(w in kind.lower() for w in words)]
         unattributed += [] if hit else [kind]
-        for m in hit:
-            add(m, "unseen record type", "structure", n, 0, "equal", False, "warn", type=kind)
+        for m in hit:                                                        # evidence touching the metric: a core row breaks
+            add(m, "unseen record type", "structure", n, 0, "equal", False, "broken" if m in CORE_METRICS else "warn", type=kind)
 
     rows = []
     for m in HEALTH_METRICS:
@@ -3334,7 +3346,10 @@ def main(argv=None):
                     f"token cross-check: {checked['mismatches']} of {checked['calls']} calls where input + cache_read "
                     "differs from context_input_tokens")
             if stats["skill_list_unparsed"]:
-                out["coverage"]["warnings"] = ["skill list found but not parsed; offered list may be incomplete"]
+                out["coverage"].setdefault("warnings", []).append("skill list found but not parsed; offered list may be incomplete")
+            if health["unattributed_types"]:                    # unseen record types no metric was hinted at: listed, as a warning
+                out["coverage"].setdefault("warnings", []).append(
+                    "unseen record types not tied to any metric: " + ", ".join(health["unattributed_types"]))
             if variant_info["scores"]:
                 out["coverage"]["variant_choice"] = {"scores": variant_info["scores"],
                                                      "reason": variant_info["reason"]}

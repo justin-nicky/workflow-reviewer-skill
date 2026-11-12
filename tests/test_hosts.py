@@ -106,9 +106,15 @@ def test_missing_usage_is_a_required_field_failure(cli, tmp_path):
     assert "usage" in out["coverage"]["drift"]["missing_fields"]
 
 
-def test_drift_threshold_is_configurable(cli, tmp_path):
-    code, _ = cli.json(drifted(tmp_path), "--host", "claude-code", "--drift-threshold", "5")
-    assert code == 0
+def test_drift_threshold_sets_where_the_coverage_warning_starts(cli, tmp_path):
+    records = [cc_user("go", 0), cc_assistant("m", 1, usage=usage(1, 10))] + [{"type": "zzz_novel", "n": i} for i in range(4)]
+    path = write_jsonl(tmp_path / "noisy.jsonl", records)
+    states = {}
+    for threshold in ("90", "5"):
+        code, out = cli.json(path, "--host", "claude-code", "--drift-threshold", threshold, "--health-all")
+        coverage = next(c for r in out["coverage"]["health"]["rows"] if r["metric"] == "turns" for c in r["checks"] if c["name"] == "coverage")
+        states[threshold] = (code, coverage["passed"])
+    assert states == {"90": (0, False), "5": (0, True)}          # coverage alone never pauses
 
 
 CUSTOM_MAPPING = """
