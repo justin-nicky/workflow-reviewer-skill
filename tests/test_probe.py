@@ -212,3 +212,101 @@ def test_a_file_over_the_size_cap_is_exit_4(cli, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(tm, "JSON_DOC_CAP", 100)
     out, code = tm.run_probe(str(path))
     assert code == 4 and "limit" in out["error"]
+
+
+# ---- data used as keys ---------------------------------------------------------------------------------------------------------
+
+FILE_KEYS = ("calc.py", "src/billing/stripe_keys.py", "clients/acme/contract.md", "C:\\Users\\alex\\notes.txt", "my file.txt", "name:with:colons")
+
+
+def keyed_records(n=10):
+    """Records that use data as dict keys: file names, a home path, an email, a secret, and a key that is new in every record."""
+    out = []
+    for i in range(n):
+        files = {name: {"version": i, "backupTime": "2026-11-01T10:00:00Z"} for name in FILE_KEYS[: 1 + i % len(FILE_KEYS)]}
+        out.append({
+            "type": "snapshot",
+            "snapshot": {"trackedFileBackups": files, "messageId": "m"},
+            "by_home": {HOME: 1}, "by_email": {EMAIL: 1}, "by_secret": {SECRET: 1},
+            f"varies_{'abcdefghij'[i]}x": i,                             # a different key in every record
+            "labels": {f"label_{'klmnopqrst'[i]}y": 1},                  # a nested object whose keys differ per record
+            "map_of_names": {name: 1 for name in ("Makefile", "README", "LICENSE", "Dockerfile")[: 1 + i % 4]},
+        })
+    return out
+
+
+def planted_keys():
+    return FILE_KEYS + (HOME, EMAIL, SECRET, "Makefile", "README", "LICENSE", "Dockerfile", "stripe_keys", "acme", "contract",
+                        "calc", "billing", "notes.txt", "label_k", "label_l", "varies_ax", "varies_bx", "varies_jx")
+
+
+@pytest.mark.parametrize("flags", [[], ["--no-redact"], ["--format", "md"]])
+def test_data_used_as_dict_keys_never_appears(cli, tmp_path, flags):
+    path = write_jsonl(tmp_path / "k.jsonl", keyed_records())
+    proc = cli.run("--probe", path, *flags)
+    assert proc.returncode == 0
+    for planted in planted_keys():
+        assert planted not in proc.stdout, planted
+    for fragment in ("alex", "/Users/", "stripe", "acme", "contract", "calc"):
+        assert fragment not in proc.stdout, fragment
+
+
+def test_a_map_like_object_shows_its_children_as_placeholders_but_keeps_the_structure_around_it(cli, tmp_path):
+    path = write_jsonl(tmp_path / "k.jsonl", keyed_records())
+    _, out = probe(cli, path)
+    names = {x["path"] for x in out["probe"]["paths"]}
+    assert "snapshot.trackedFileBackups.<key>.version" in names and "snapshot.trackedFileBackups.<key>.backupTime" in names
+    assert {"snapshot.messageId", "type", "by_home.<key>", "map_of_names.<key>"} <= names
+
+
+def test_keys_that_are_not_plain_identifiers_are_never_shown_even_when_they_repeat(cli, tmp_path):
+    records = [{"files": {"a.py": 1, "src/x.txt": 2, "my file": 3, "who@example.com": 4, "c:d": 5, "back\\slash": 6}}] * 12
+    proc, out = probe(cli, write_jsonl(tmp_path / "s.jsonl", records), "--no-redact")
+    assert {x["path"] for x in out["probe"]["paths"]} == {"files", "files.<key>"}
+    for k in ("a.py", "src/x.txt", "my file", "who@example.com", "c:d", "back"):
+        assert k not in proc.stdout
+
+
+def test_a_key_seen_in_a_single_record_is_a_placeholder(cli, tmp_path):
+    records = [{"kind": "x", f"extra_{c}": 1} for c in "abcdefgh"]
+    proc, out = probe(cli, write_jsonl(tmp_path / "s.jsonl", records))
+    assert "extra_a" not in proc.stdout and {"kind", "<key>"} <= {x["path"] for x in out["probe"]["paths"]}
+
+
+def test_namespaced_extension_keys_are_kept_when_they_repeat_under_one_parent(cli, tmp_path):
+    records = [{"metadata": {"extensions": {"chisel/tool_call_content": {"x": 1}, "agent-ext/skills-loaded": {"y": 1}}}} for _ in range(5)]
+    _, out = probe(cli, write_jsonl(tmp_path / "s.jsonl", records))
+    names = {x["path"] for x in out["probe"]["paths"]}
+    assert "metadata.extensions.chisel/tool_call_content.x" in names and "metadata.extensions.agent-ext/skills-loaded.y" in names
+    rare = [{"ext": {"vendor/rare_one": 1}}, {"ext": {}}, {"ext": {}}] * 4
+    _, out = probe(cli, write_jsonl(tmp_path / "r.jsonl", [dict(r) for r in rare[:2]] + [{"ext": {}}] * 10))
+    assert "vendor/rare_one" not in json.dumps(out)
+
+
+def test_a_namespaced_key_with_a_dot_is_not_an_extension_key(cli, tmp_path):
+    records = [{"ext": {"vendor/file.py": 1, "vendor/ok_key": 1}}] * 6
+    proc, out = probe(cli, write_jsonl(tmp_path / "s.jsonl", records))
+    assert "file.py" not in proc.stdout and "vendor/ok_key" in proc.stdout
+
+
+def test_the_devin_namespaced_extension_keys_still_show(cli, tmp_path):
+    from test_devin import normal
+    db = dv.DevinDb(tmp_path / "sessions.db")
+    chain = db.session("s1", "/x")
+    normal(chain)
+    chain.add(dv.skills_loaded(["a"]), dv.skills_loaded(["a"]))                 # the listing repeats, as it does in real sessions
+    chain.done()
+    proc, out = probe(cli, tmp_path / "sessions.db", "--no-redact")
+    nodes = next(t for t in out["probe"]["tables"] if t["name"] == "message_nodes")["json_columns"]["chat_message"]
+    names = {x["path"] for x in nodes["paths"]}
+    assert any("chisel/tool_call_content" in n for n in names) and any("agent-ext/skills-loaded" in n for n in names)
+    assert not any(k in proc.stdout for k in ("c1", "c2", "c3"))             # the call ids inside stay placeholders
+
+
+def test_the_claude_golden_shows_structure_without_file_names(cli):
+    golden = next(iter(sorted((ROOT / "tests/fixtures/golden/claude-code").glob("*.jsonl"))))
+    proc = cli.run("--probe", golden, "--no-redact")
+    names = {x["path"] for x in json.loads(proc.stdout)["probe"]["paths"]}
+    assert "calc.py" not in proc.stdout and "test_calc" not in proc.stdout
+    assert any(n.startswith("snapshot.trackedFileBackups.<key>") for n in names) or not any("trackedFileBackups" in n for n in names)
+    assert {"type", "uuid"} & names

@@ -3500,7 +3500,7 @@ PROBE_MAX_RECORDS = 5000
 PROBE_MAX_ELEMENTS = 200
 PROBE_MAX_KEYS = 30            # a dict with more distinct keys than this holds data (ids), not structure
 KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,40}$")
-NAMESPACED_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,30}([/.][A-Za-z_][A-Za-z0-9_-]{0,30}){1,2}$")
+NAMESPACED_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,30}(/[A-Za-z_][A-Za-z0-9_-]{0,30}){1,2}$")      # no dots: a file name is not an extension key
 TYPE_VALUE_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 TIME_KEY_RE = re.compile(r"(^|_|-)(ts|time|timestamp|date|at|created|updated|started|finished|completed|expires)($|_|-)|(time|stamp|date)$", re.I)
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
@@ -3534,6 +3534,7 @@ class Structure:
         self.values = {}         # (raw path tuple of the field, ) -> {value: n}
         self.times = {}          # raw path tuple -> {shape: n}
         self.lengths = {}        # raw path tuple -> [lengths]
+        self.keysets = {}        # raw path tuple of a dict -> {frozenset of its keys: how often}
         self.records = 0
 
     def add(self, record):
@@ -3550,6 +3551,9 @@ class Structure:
             entry[1][kind] = entry[1].get(kind, 0) + 1
             seen.add(path)
         if isinstance(value, dict):
+            shapes = self.keysets.setdefault(path, {})
+            shape = frozenset(str(k) for k in value)
+            shapes[shape] = shapes.get(shape, 0) + 1
             for key, child in value.items():
                 self._walk(child, path + (str(key),), seen)
                 self._field(str(key), child, path + (str(key),))
@@ -3572,25 +3576,34 @@ class Structure:
             slot[shape] = slot.get(shape, 0) + 1
 
     # -- naming: only structural keys are ever printed -----------------------------------------------------------------------
+    def map_like(self, path):
+        """Is this object a map from data (file names, ids) to values? Its key set then differs from record to record:
+        many distinct key sets, relative to how often the object occurs. The records themselves (the root) are exempt."""
+        shapes = self.keysets.get(path)
+        if not path or not shapes:
+            return False
+        distinct, occurrences = len(shapes), sum(shapes.values())
+        return distinct >= 3 and distinct > 0.25 * occurrences
+
     def namer(self):
-        children = {}
-        for path in self.paths:
-            children.setdefault(path[:-1], set()).add(path[-1])
+        """Names for printing. A key is shown only when it is plain structure: a plain identifier (or a namespaced extension key
+        of plain identifiers joined by /, seen in at least 3 records) that is not an id, not inside a map-like object, and, once
+        there are enough records to tell, seen in at least 3 of them. Everything else prints as <key>."""
+        def key_name(path, i):
+            key, parent = path[i], path[:i]
+            count = self.paths[path[:i + 1]][0]
+            if key == "[]":
+                return "[]"
+            if id_like(key) or redact(key) != key:
+                return "<key>"
+            if NAMESPACED_KEY_RE.match(key) and count >= 3:        # an extension key (chisel/tool_call_content) stays even in a varying object
+                return key
+            if self.map_like(parent) or (self.records >= 6 and count < 3):
+                return "<key>"
+            return key if KEY_RE.match(key) else "<key>"
 
         def name_of(path):
-            parts = []
-            for i, key in enumerate(path):
-                siblings = children.get(path[:i], ())
-                count = self.paths[path[:i + 1]][0]
-                if key == "[]":
-                    parts.append("[]")
-                elif id_like(key) or (len(siblings) > PROBE_MAX_KEYS and count < 3):      # many keys, each seen once or twice: ids, not structure
-                    parts.append("<key>")
-                elif KEY_RE.match(key) or (NAMESPACED_KEY_RE.match(key) and count >= 3):
-                    parts.append(key)
-                else:
-                    parts.append("<key>")
-            return ".".join(parts).replace(".[]", "[]")
+            return ".".join(key_name(path, i) for i in range(len(path))).replace(".[]", "[]")
         return name_of
 
     def report(self):
