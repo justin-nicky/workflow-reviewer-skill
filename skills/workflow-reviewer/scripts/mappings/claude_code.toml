@@ -4,6 +4,8 @@ schema_version = 1
 variant = "default"
 tested_versions = "2.1.295 to 2.1.309, 2.1.321"
 type_path = "type"
+# Claude Code sets CLAUDECODE in the environment of everything it runs (name only; verified in a live session).
+detect = { env = ["CLAUDECODE"] }
 turnless_activity = "broken"       # assistant records in the main session but no turn: the turn marker is gone
 hooks_format = "claude-settings"      # the shape of the files listed under hook_files
 

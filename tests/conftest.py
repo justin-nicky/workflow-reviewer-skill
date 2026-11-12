@@ -23,7 +23,7 @@ class Cli:
 
     def env(self):
         env = {k: v for k, v in os.environ.items()
-               if k not in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "CODEX_THREAD_ID")}
+               if k not in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "CODEX_THREAD_ID", "CLAUDECODE", "XDG_CONFIG_HOME", "APPDATA")}
         env.update(HOME=str(self.home), USERPROFILE=str(self.home),
                    PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8")
         env.update(self.env_extra)

@@ -26,9 +26,9 @@ def test_an_explicit_jsonl_container_behaves_the_same(cli, tmp_path):
 def test_an_unknown_container_kind_is_refused_with_exit_2(cli, tmp_path):
     proc = run(cli, tmp_path, '[container]\nkind = "carrier-pigeon"\n\n')
     assert proc.returncode == 2
-    assert json.loads(proc.stdout)["error"] == "mapping container kind 'carrier-pigeon' is not supported (jsonl, sqlite)"
+    assert json.loads(proc.stdout)["error"] == "mapping container kind 'carrier-pigeon' is not supported (jsonl, sqlite, json_document)"
 
 
-def test_json_document_is_reserved_but_not_built_yet(cli, tmp_path):
+def test_json_document_needs_its_roots_and_documents(cli, tmp_path):
     proc = run(cli, tmp_path, '[container]\nkind = "json_document"\n\n')
-    assert proc.returncode == 2 and "json_document" in json.loads(proc.stdout)["error"]
+    assert proc.returncode == 2 and "roots" in json.loads(proc.stdout)["error"]

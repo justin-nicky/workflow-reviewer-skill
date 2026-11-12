@@ -14,6 +14,7 @@ if sys.version_info < (3, 11):
     sys.exit(EXIT_PYTHON_VERSION)
 
 import argparse
+import glob
 import hashlib
 import json
 import math
@@ -29,6 +30,7 @@ from pathlib import Path
 
 MAPPING_DIR = Path(__file__).resolve().parent / "mappings"
 HOSTS = {"claude-code": "claude_code", "codex": "codex", "cursor": "cursor"}      # picked by auto-detection
+ACTIVE_HOSTS = {}                                  # host registry of this run (built-in and user adapters)
 SQLITE_HOSTS = {"devin": "devin"}                  # named with --host; kept out of auto-detection
 
 
@@ -1030,9 +1032,14 @@ def host_candidates(host, repo):
         found = list((claude_root() / slug(repo)).glob("*.jsonl"))
     elif host == "codex":
         found = [p for p in codex_root().glob("**/rollout-*.jsonl") if codex_cwd(p) == str(repo.resolve())]
-    else:
+    elif host == "cursor":
         base = Path.home() / ".cursor" / "projects" / slug(str(repo).lstrip("/\\"))
         found = list(base.glob("agent-transcripts/*/*.jsonl"))
+    else:                                              # a user adapter's jsonl host: the files its container.globs name
+        found = []
+        for pattern in ((ACTIVE_HOSTS.get(host, {}).get("raw", {}).get("container") or {}).get("globs") or []):
+            expanded = os.path.expanduser(pattern)
+            found += [Path(m) for m in glob.glob(expanded, recursive=True) if Path(m).is_file()]
     return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
@@ -1049,24 +1056,25 @@ def first_prompt(path, mapping):
     return next((preview(e["text"]) for e in events if e["role"] == "user" and e["text"].strip()), "")
 
 
-def discover(args, repo):
-    """Return (paths, error_output). error_output is set when the choice is ambiguous."""
-    hosts = list(HOSTS) if args.host == "auto" else [args.host]
+def discover(args, repo, host_list=None, with_host=False):
+    """Return (paths, error_output); with_host: (host, paths, error_output). error_output is set when the choice is ambiguous."""
+    hosts = host_list if host_list is not None else (list(HOSTS) if args.host == "auto" else [args.host])
+    wrap = (lambda h, paths, err: (h, paths, err)) if with_host else (lambda h, paths, err: (paths, err))
     ids = [(h, args.session_id) for h in hosts] if args.session_id else []
     if not ids and "codex" in hosts and os.environ.get("CODEX_THREAD_ID"):
         ids = [("codex", os.environ["CODEX_THREAD_ID"])]   # undocumented, may change
     for h, sid in ids:
         hit = find_by_id(h, sid)
         if hit:
-            return [hit], None
+            return wrap(h, [hit], None)
     cands = [(h, p) for h in hosts for p in host_candidates(h, repo)]
     cands.sort(key=lambda hp: hp[1].stat().st_mtime, reverse=True)
     recent = [c for c in cands if time.time() - c[1].stat().st_mtime < RECENT_SECONDS]
     if len(recent) >= 2:
-        return [], {"ambiguous": [{"host": h, "path": str(p), "modified": iso(p.stat().st_mtime),
-                                   "preview": first_prompt(p, load_mapping(HOSTS[h]))} for h, p in recent],
-                    "note": "Several recent transcripts; ask the user which one, then pass its path."}
-    return ([cands[0][1]] if cands else []), None
+        return wrap(None, [], {"ambiguous": [{"host": h, "path": str(p), "modified": iso(p.stat().st_mtime),
+                                              "preview": first_prompt(p, load_mapping(HOSTS[h]))} for h, p in recent],
+                               "note": "Several recent transcripts; ask the user which one, then pass its path."})
+    return wrap(cands[0][0] if cands else None, [cands[0][1]] if cands else [], None)
 
 
 def expand_subagents(path):
@@ -2836,7 +2844,7 @@ def report_main(out, findings, args, redact_on, inventory_names=None):
 def build_parser():
     p = argparse.ArgumentParser(prog="transcript_metrics.py")
     p.add_argument("paths", nargs="*")
-    p.add_argument("--host", default="auto", choices=["auto", *HOSTS, *SQLITE_HOSTS, "kiro"])
+    p.add_argument("--host", default="auto", help="auto, a built-in host or a user adapter's host")
     p.add_argument("--format", default="md", choices=["md", "json"])
     p.add_argument("--verify-pattern", action="append", default=[], dest="verify_patterns")
     p.add_argument("--list-turns", action="store_true")
@@ -2850,6 +2858,9 @@ def build_parser():
     p.add_argument("--drift-threshold", type=float)
     p.add_argument("--no-redact", action="store_true")
     p.add_argument("--idle-threshold", type=float)
+    p.add_argument("--probe", metavar="PATH", help="print the structure of a file, folder or database (no content) and exit")
+    p.add_argument("--save-adapter", metavar="NAME", help="read a drafted mapping from stdin, check it against this session, save it as a user adapter")
+    p.add_argument("--replace", action="store_true", help="with --save-adapter: overwrite an adapter of the same name")
     p.add_argument("--health-all", action="store_true", help="show every row of coverage.health, not only those needing attention")
     p.add_argument("--overlap-threshold", type=float, default=0.15, help="skill description similarity to report (0 to 1)")
     p.add_argument("--directive-threshold", type=float, default=0.45, help="directive line similarity to report (0 to 1)")
@@ -2865,8 +2876,8 @@ def read_lines(path):
 
 # ---- storage readers: how a host keeps its records, apart from how the mapping reads them -----------------
 
-CONTAINER_KINDS = ("jsonl", "sqlite")
-RESERVED_KINDS = ("json_document",)              # planned for hosts that keep JSON documents
+CONTAINER_KINDS = ("jsonl", "sqlite", "json_document")
+RESERVED_KINDS = ()
 
 
 def container_kind(raw):
@@ -3144,6 +3155,647 @@ def open_sqlite_session(args, repo, raw):
             conn.close()
 
 
+# ---- user adapters, labels, saving ---------------------------------------------------------------------------------
+
+TOP_KEYS = frozenset("""call_categories call_name_categories capabilities checks container detect fields health_hints hook_files hooks_format
+host interruption_prefixes made_by made_from_version not_a_turn_prefixes plugin_skill_folders records requires schema_version
+skill_detections skill_folders skill_tool_label subagent_marker subagents tested_versions token_method token_method_fallback
+tool_time_source turnless_activity type_path variant variants versions""".split())
+RULE_KEYS = frozenset("""call_command_name call_command_regex call_id call_input call_kind call_name call_raw calls event_id
+instruction_always_on instruction_bytes instruction_items instruction_paths interrupt match model msg_id non_turn_reason offered_block
+offered_desc_from offered_desc_item offered_desc_pairs offered_each offered_from offered_item offered_section offered_skills prompt_time
+result_error result_exit_code result_exit_code_regex result_finished result_id result_started result_text results role skill_command
+spawned_agent spawned_model text timestamp turn turn_error turn_start usage_cache_read usage_cache_write usage_context usage_dedupe_key
+usage_fallback usage_input usage_input_includes_cache usage_output usage_present""".split())
+FIELD_KEYS = frozenset("version msg_id model timestamp event_id".split())
+CAPABILITY_KEYS = frozenset("has_tokens has_timestamps has_tool_results has_ids".split())
+CHECK_KEYS = frozenset("name metric first second relation tolerance_pct slack_first skip_if_second_zero severity".split())
+SUBAGENT_KEYS = frozenset("""agent_path brief_key call_id file_prefix forked_from history_start link_regex meta_file model ordinal
+parent_id self_id spawn_key""".split())
+REGEX_KEYS = frozenset("call_command_regex result_exit_code_regex offered_block offered_item offered_section offered_desc_item link_regex".split())
+HOST_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
+BUILTIN_NAMES = {**HOSTS, **SQLITE_HOSTS, "kiro": "kiro"}
+
+
+def user_adapter_dir(env=None, platform=None, home=None):
+    """$XDG_CONFIG_HOME/workflow-reviewer/hosts (default ~/.config/...); %APPDATA%\\workflow-reviewer\\hosts on Windows."""
+    env = os.environ if env is None else env
+    platform = sys.platform if platform is None else platform
+    home = Path(home) if home is not None else Path.home()
+    if platform == "win32":
+        return Path(env.get("APPDATA") or home / "AppData" / "Roaming") / "workflow-reviewer" / "hosts"
+    return Path(env.get("XDG_CONFIG_HOME") or home / ".config") / "workflow-reviewer" / "hosts"
+
+
+def mapping_problems(raw):
+    """Why a drafted or saved mapping cannot be used: unknown keys (declarative keys only), bad schema, container, regexes."""
+    errors = []
+    error, _ = schema_check(raw)
+    if error:
+        errors.append(error)
+    host = raw.get("host")
+    if not isinstance(host, str) or not HOST_NAME_RE.match(host):
+        errors.append("host name must be lowercase letters, digits, - or _ (up to 41 characters)")
+    errors += [f"unknown key '{k}' (declarative keys only)" for k in raw if k not in TOP_KEYS]
+
+    def keys(where, table, allowed):
+        if isinstance(table, dict):
+            errors.extend(f"unknown key '{k}' in {where} (declarative keys only)" for k in table if k not in allowed)
+
+    def rules(records, where):
+        for n, rule in enumerate(records or []):
+            keys(f"{where}records[{n}]", rule, RULE_KEYS)
+            for k, v in (rule.items() if isinstance(rule, dict) else []):
+                if k in REGEX_KEYS and isinstance(v, (str, list)):
+                    for pattern in ([v] if isinstance(v, str) else v):
+                        try:
+                            re.compile(pattern)
+                        except (re.error, TypeError):
+                            errors.append(f"{where}records[{n}].{k} is not a valid regular expression")
+
+    detect = raw.get("detect")
+    if detect is not None:
+        keys("detect", detect, {"env"})
+        names = detect.get("env") if isinstance(detect, dict) else None
+        if not isinstance(names, list) or not all(isinstance(n, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,60}", n) for n in names):
+            errors.append("detect.env must be a list of environment variable names (names only, never values)")
+    keys("fields", raw.get("fields"), FIELD_KEYS)
+    keys("capabilities", raw.get("capabilities"), CAPABILITY_KEYS)
+    keys("subagents", raw.get("subagents"), SUBAGENT_KEYS)
+    for n, check in enumerate(raw.get("checks", [])):
+        keys(f"checks[{n}]", check, CHECK_KEYS)
+    rules(raw.get("records"), "")
+    for n, variant in enumerate(raw.get("variants", [])):
+        keys(f"variants[{n}]", variant, TOP_KEYS | {"name"})
+        rules(variant.get("records"), f"variants[{n}].")
+    if "subagents" in raw and isinstance(raw["subagents"].get("link_regex"), str):
+        try:
+            re.compile(raw["subagents"]["link_regex"])
+        except re.error:
+            errors.append("subagents.link_regex is not a valid regular expression")
+    kind = container_kind(raw)
+    errors += [e for e in [container_error(kind)] if e]
+    if kind == "sqlite":
+        try:
+            sqlite_spec(raw)
+        except ContainerProblem as exc:
+            errors.append(str(exc))
+    if kind == "json_document":
+        try:
+            json_document_spec(raw)
+        except ContainerProblem as exc:
+            errors.append(str(exc))
+    return errors
+
+
+def load_user_adapters(env=None):
+    """([(file name, raw mapping)], [notes]). A file that cannot be used is skipped with a note, never fatal."""
+    folder = user_adapter_dir(env)
+    found, notes = [], []
+    for path in sorted(folder.glob("*.toml")) if folder.is_dir() else []:
+        try:
+            raw = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            notes.append(f"user adapter {path.name} ignored: {str(exc).splitlines()[0][:80]}")
+            continue
+        error, _ = schema_check(raw)
+        if error or not isinstance(raw.get("host"), str):
+            notes.append(f"user adapter {path.name} ignored: {error or 'no host name'}")
+            continue
+        found.append((path.name, raw))
+    return found, notes
+
+
+def registry():
+    """host name -> {"raw": the mapping (built-in variants plus user variants, or the user's own), "builtin": bool}, plus notes."""
+    adapters, notes = load_user_adapters()
+    hosts = {}
+    for name, key in BUILTIN_NAMES.items():
+        raw = load_mapping(key)
+        raw.setdefault("capabilities", {})
+        for variant in (raw.get("variants") or []):
+            variant.setdefault("label", "verified")
+        hosts[name] = {"raw": raw, "builtin": True}
+    for file, raw in adapters:
+        host = raw["host"]
+        problems = mapping_problems(raw)
+        if problems:
+            notes.append(f"user adapter {file} ignored: {problems[0]}")
+            continue
+        raw = {**raw, "capabilities": raw.get("capabilities", {})}
+        if host in hosts and hosts[host]["builtin"]:                       # extra variants for a built-in host; never a replacement
+            base = hosts[host]["raw"]
+            variants = list(base.get("variants") or [{"name": base.get("variant") or "default", "label": "verified"}])
+            for v in (raw.get("variants") or [raw]):
+                variants.append({**{k: x for k, x in v.items() if k not in ("host", "schema_version", "made_by", "made_from_version")},
+                                 "name": v.get("name") or v.get("variant") or Path(file).stem, "label": "unproven",
+                                 "checks": v.get("checks", [])})
+            base["variants"] = variants
+        elif host not in hosts:
+            hosts[host] = {"raw": raw, "builtin": False}
+    return hosts, notes
+
+
+def mapping_label(mapping, source):
+    """verified: a built-in mapping with tested versions. unproven: anything a user made."""
+    if source == "builtin" and mapping.get("label", "verified") == "verified" and mapping.get("tested_versions"):
+        return "verified"
+    return "unproven"
+
+
+def adapter_text(text, host_version):
+    """The drafted mapping with the provenance keys placed among its top-level keys."""
+    lines = text.split("\n")
+    at = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("[")), len(lines))
+    extra = ['made_by = "workflow-reviewer adapter flow"', f"made_from_version = {json.dumps(str(host_version or 'unknown'))}"]
+    return "\n".join(lines[:at] + extra + lines[at:]).rstrip("\n") + "\n"
+
+
+def save_adapter(name, text, host_version, replace):
+    """Write <adapter folder>/<name>.toml (file 0600, folder 0700). Returns (path, None) or (None, error)."""
+    folder = user_adapter_dir()
+    target = folder / f"{name}.toml"
+    if target.exists() and not replace:
+        return None, f"adapter {name} exists; pass --replace to overwrite it"
+    fresh = not folder.exists()
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if fresh:
+        os.chmod(folder, 0o700)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(adapter_text(text, host_version))
+    os.chmod(target, 0o600)
+    return target, None
+
+
+# ---- json_document storage: a session is a folder of JSON documents ----------------------------------------------------------
+
+JSON_DOC_CAP = 200 * 1024 * 1024
+FILE_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,100}$")
+PATH_RE = re.compile(r"^[A-Za-z0-9_.\[\]=\-/$]*$")
+
+
+class DocumentTooLarge(ContainerProblem):
+    """A document over the size cap: exit 4."""
+
+
+def json_document_spec(raw):
+    """The mapping's roots, documents and merge rule, checked before any file is touched."""
+    cfg = raw.get("container") or {}
+    roots = cfg.get("roots")
+    if not isinstance(roots, list) or not roots or not all(isinstance(r, str) and r for r in roots):
+        raise ContainerProblem("mapping [container] roots must be a list of folders")
+    docs = cfg.get("documents")
+    if not isinstance(docs, list) or not docs:
+        raise ContainerProblem("mapping [[container.documents]] is missing")
+    parsed = []
+    for n, doc in enumerate(docs):
+        file = doc.get("file") if isinstance(doc, dict) else None
+        if not isinstance(file, str) or not FILE_NAME_RE.match(file) or ".." in file:
+            raise ContainerProblem(f"mapping container.documents[{n}].file is not a plain file name; refusing to read")
+        path = doc.get("records", ".")
+        if not isinstance(path, str) or not PATH_RE.match(path):
+            raise ContainerProblem(f"mapping container.documents[{n}].records is not a plain path")
+        parsed.append({"file": file, "records": path, "name": file.rsplit(".", 1)[0]})
+    merge = (cfg.get("merge") or {}).get("by", "order")
+    if not isinstance(merge, str) or not PATH_RE.match(merge):
+        raise ContainerProblem("mapping container.merge.by must be 'order' or a timestamp path")
+    session = cfg.get("session") or {}
+    for key in ("cwd_document", "cwd_path"):
+        if key in session and (not isinstance(session[key], str) or not PATH_RE.match(session[key]) or ".." in session[key]):
+            raise ContainerProblem(f"mapping container.session.{key} is not a plain name")
+    return {"roots": roots, "documents": parsed, "merge": merge, "session": session}
+
+
+def read_document(path):
+    """One JSON document, read whole (checked against the size cap first). Replaceable in tests."""
+    size = path.stat().st_size
+    if size > JSON_DOC_CAP:
+        raise DocumentTooLarge(f"document {path.name} is {size // (1024 * 1024)} MB, over the {JSON_DOC_CAP // (1024 * 1024)} MB limit; not read")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise ContainerProblem(f"document {path.name} is not valid JSON")
+
+
+def document_items(doc, path, name):
+    if path in ("", "."):
+        items = doc if isinstance(doc, list) else None
+    else:
+        found = get_all(doc, path)
+        items = found[0] if len(found) == 1 and isinstance(found[0], list) else (found or None)
+    if items is None:
+        raise ContainerProblem(f"document {name} has no record list at '{path}'")
+    return [i if isinstance(i, dict) else {"value": i} for i in items]
+
+
+class JsonDocumentReader:
+    """One session folder: its documents merged into one record stream."""
+    kind = "json_document"
+
+    def __init__(self, folder, spec, session_id):
+        self.folder, self.spec, self.session_id, self.notes, self.version = folder, spec, session_id, [], None
+        records, loaded = [], 0
+        for order, doc in enumerate(spec["documents"]):
+            file = folder / doc["file"]
+            if not file.is_file():
+                self.notes.append(f"document {doc['file']} not found")
+                continue
+            loaded += 1
+            for index, item in enumerate(document_items(read_document(file), doc["records"], doc["file"])):
+                records.append((order, index, {**item, "$doc": doc["name"], "$index": index}))
+        if not loaded:
+            raise ContainerProblem("none of the declared documents exist in the session folder")
+        by = spec["merge"]
+        if by != "order":
+            last, stamped = 0.0, []
+            for order, index, rec in records:
+                ts = parse_ts(get_first(rec, by))
+                last = ts if ts is not None else last          # a record with no time stays beside its neighbour
+                stamped.append((last, order, index, rec))
+            records = [(o, i, r) for _, o, i, r in sorted(stamped, key=lambda t: t[:3])]
+        self.records = [r for _, _, r in records]
+        self.documents = loaded
+
+    def first_lines(self):
+        return [json.dumps(r, ensure_ascii=False, default=str) for r in self.records]
+
+    def sources(self, mapping):
+        yield Source(self.first_lines(), f"json_document:{self.session_id}", True)
+
+    def storage_info(self):
+        return {"kind": "json_document", "documents": self.documents, "records": len(self.records)}
+
+
+def document_sessions(spec):
+    """[{id, folder, last}]: every folder under the roots that holds at least one declared document."""
+    found = []
+    for root in spec["roots"]:
+        base = Path(os.path.expanduser(root))
+        for folder in sorted(base.iterdir()) if base.is_dir() else []:
+            files = [folder / d["file"] for d in spec["documents"] if (folder / d["file"]).is_file()]
+            if folder.is_dir() and files:
+                found.append({"id": folder.name, "folder": folder, "last": max(f.stat().st_mtime for f in files),
+                              "created": min(f.stat().st_mtime for f in files)})
+    return found
+
+
+def session_cwd(session, spec):
+    cfg = spec["session"]
+    if not (cfg.get("cwd_document") and cfg.get("cwd_path")):
+        return None
+    try:
+        doc = read_document(session["folder"] / cfg["cwd_document"])
+    except (ContainerProblem, OSError):
+        return ""
+    value = get_first(doc, cfg["cwd_path"])
+    return value if isinstance(value, str) else ""
+
+
+def open_json_session(args, repo, raw):
+    """(reader, None), or (None, (output, exit code))."""
+    host = raw.get("host", "unknown")
+    try:
+        spec = json_document_spec(raw)
+        if args.paths:                                        # a session folder, or a document inside one
+            target = Path(args.paths[0])
+            folder = target.parent if target.is_file() else target
+            if not folder.is_dir():
+                return None, (degraded_report(host, repo, [mask_home(str(folder))], raw.get("skill_folders")), EXIT_NO_TRANSCRIPT)
+            return JsonDocumentReader(folder, spec, folder.name), None
+        sessions = document_sessions(spec)
+        if args.session_id:
+            chosen = next((s for s in sessions if s["id"] == args.session_id), None)
+        else:
+            here = {str(repo.resolve()), str(repo)}
+            mine = []
+            for s in sessions:
+                cwd = session_cwd(s, spec)
+                if cwd is None or cwd in here or (cwd and str(Path(cwd).resolve()) in here):
+                    s["cwd"] = cwd or ""
+                    mine.append(s)
+            mine.sort(key=lambda s: s["last"], reverse=True)
+            recent = [s for s in mine if time.time() - s["last"] < RECENT_SECONDS]
+            if len(recent) >= 2:
+                return None, ({"ambiguous": [{"session": s["id"], "working_directory": mask_home(s["cwd"]), "created": iso(s["created"]),
+                                              "last_activity": iso(s["last"])} for s in recent],
+                               "note": "Several recent sessions; ask the user which one, then pass --session-id."}, 3)
+            chosen = mine[0] if mine else None
+        if chosen is None:
+            return None, (degraded_report(host, repo, [mask_home(r) for r in spec["roots"]], raw.get("skill_folders")), EXIT_NO_TRANSCRIPT)
+        return JsonDocumentReader(chosen["folder"], spec, chosen["id"]), None
+    except DocumentTooLarge as exc:
+        return None, ({"error": str(exc)}, 4)
+    except ContainerProblem as exc:
+        return None, ({"error": str(exc)}, 2)
+
+
+# ---- probe: the structure of a file, folder or database, and nothing else ----------------------------------------------------
+
+PROBE_NAME_FIELDS = ("type", "role", "kind", "status", "say", "ask", "event", "subtype")
+PROBE_MAX_PATHS = 200
+PROBE_MAX_VALUES = 50
+PROBE_MAX_RECORDS = 5000
+PROBE_MAX_ELEMENTS = 200
+PROBE_MAX_KEYS = 30            # a dict with more distinct keys than this holds data (ids), not structure
+KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,40}$")
+NAMESPACED_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,30}([/.][A-Za-z_][A-Za-z0-9_-]{0,30}){1,2}$")
+TYPE_VALUE_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+TIME_KEY_RE = re.compile(r"(^|_|-)(ts|time|timestamp|date|at|created|updated|started|finished|completed|expires)($|_|-)|(time|stamp|date)$", re.I)
+ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
+
+
+def id_like(text):
+    """Does this look like an id, token or number rather than a name? Such strings are never printed."""
+    return bool(re.search(r"[0-9a-fA-F]{8,}", text) or re.search(r"\d{5,}", text) or re.search(r"\d.*\d.*\d.*\d", text)
+                or "@" in text or re.search(r"[0-9a-f]{8}-[0-9a-f]{4}", text, re.I))
+
+
+def safe_value(text):
+    return bool(TYPE_VALUE_RE.match(text)) and not id_like(text) and redact(text) == text
+
+
+def scalar_type(v):
+    return "null" if v is None else "bool" if isinstance(v, bool) else "int" if isinstance(v, int) else "float" if isinstance(v, float) \
+        else "str" if isinstance(v, str) else "list" if isinstance(v, list) else "dict"
+
+
+class Structure:
+    """Counts of JSON paths, types, type-field values, timestamp shapes and array lengths over many records."""
+
+    def __init__(self):
+        self.paths = {}          # raw path tuple -> [records containing it, {type: n}]
+        self.values = {}         # (raw path tuple of the field, ) -> {value: n}
+        self.times = {}          # raw path tuple -> {shape: n}
+        self.lengths = {}        # raw path tuple -> [lengths]
+        self.records = 0
+
+    def add(self, record):
+        self.records += 1
+        seen = set()
+        self._walk(record, (), seen)
+        for path in seen:
+            self.paths[path][0] += 1
+
+    def _walk(self, value, path, seen):
+        kind = scalar_type(value)
+        if path:
+            entry = self.paths.setdefault(path, [0, {}])
+            entry[1][kind] = entry[1].get(kind, 0) + 1
+            seen.add(path)
+        if isinstance(value, dict):
+            for key, child in value.items():
+                self._walk(child, path + (str(key),), seen)
+                self._field(str(key), child, path + (str(key),))
+        elif isinstance(value, list):
+            self.lengths.setdefault(path, []).append(len(value))
+            for child in value[:PROBE_MAX_ELEMENTS]:
+                self._walk(child, path + ("[]",), seen)
+
+    def _field(self, key, child, path):
+        if key in PROBE_NAME_FIELDS and isinstance(child, str):
+            group = self.values.setdefault(path, {})
+            group[child] = group.get(child, 0) + 1
+        shape = None
+        if isinstance(child, str) and ISO_RE.match(child):
+            shape = "iso8601"
+        elif isinstance(child, (int, float)) and not isinstance(child, bool) and TIME_KEY_RE.search(key):
+            shape = "epoch_ms" if 1e12 <= child < 1e14 else "epoch_s" if 1e9 <= child < 1e11 else None
+        if shape:
+            slot = self.times.setdefault(path, {})
+            slot[shape] = slot.get(shape, 0) + 1
+
+    # -- naming: only structural keys are ever printed -----------------------------------------------------------------------
+    def namer(self):
+        children = {}
+        for path in self.paths:
+            children.setdefault(path[:-1], set()).add(path[-1])
+
+        def name_of(path):
+            parts = []
+            for i, key in enumerate(path):
+                siblings = children.get(path[:i], ())
+                count = self.paths[path[:i + 1]][0]
+                if key == "[]":
+                    parts.append("[]")
+                elif len(siblings) > PROBE_MAX_KEYS or id_like(key):
+                    parts.append("<key>")
+                elif KEY_RE.match(key) or (NAMESPACED_KEY_RE.match(key) and count >= 3):
+                    parts.append(key)
+                else:
+                    parts.append("<key>")
+            return ".".join(parts).replace(".[]", "[]")
+        return name_of
+
+    def report(self):
+        name_of = self.namer()
+        merged = {}
+        for path, (count, types) in self.paths.items():
+            slot = merged.setdefault(name_of(path), [0, {}])
+            slot[0] += count
+            for t, n in types.items():
+                slot[1][t] = slot[1].get(t, 0) + n
+        ranked = sorted(merged.items(), key=lambda kv: (-kv[1][0], kv[0]))
+        paths = [{"path": p, "count": c, "types": dict(sorted(t.items()))} for p, (c, t) in ranked[:PROBE_MAX_PATHS]]
+        groups = {}
+        for path, counts in self.values.items():
+            slot = groups.setdefault(name_of(path), {})
+            for v, n in counts.items():
+                slot[v] = slot.get(v, 0) + n
+        type_groups = {}
+        for field, counts in sorted(groups.items()):
+            kept = sorted(((v, n) for v, n in counts.items() if n >= 2 and safe_value(v)), key=lambda vn: (-vn[1], vn[0]))
+            type_groups[field] = {"values": dict(kept[:PROBE_MAX_VALUES]), "more": len(counts) - min(len(kept), PROBE_MAX_VALUES)}
+        times = {}
+        for path, shapes in self.times.items():
+            slot = times.setdefault(name_of(path), {})
+            for s, n in shapes.items():
+                slot[s] = slot.get(s, 0) + n
+        arrays = {}
+        for path, lens in self.lengths.items():
+            lens = sorted(lens)
+            arrays[name_of(path)] = {"count": len(lens), "min": lens[0], "median": lens[len(lens) // 2], "max": lens[-1]}
+        return {"records": self.records, "paths": paths, "paths_more": max(0, len(ranked) - PROBE_MAX_PATHS),
+                "type_groups": type_groups, "timestamps": dict(sorted(times.items())),
+                "array_lengths": dict(sorted(arrays.items())[:PROBE_MAX_PATHS])}
+
+
+def probe_records(records):
+    s = Structure()
+    for r in records[:PROBE_MAX_RECORDS]:
+        s.add(r)
+    return s.report()
+
+
+def check_size(path):
+    if path.stat().st_size > JSON_DOC_CAP:
+        raise DocumentTooLarge(f"{path.suffix or 'file'} file is over the {JSON_DOC_CAP // (1024 * 1024)} MB limit; not read")
+
+
+def probe_file(path):
+    check_size(path)
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if path.suffix == ".jsonl" or (not path.suffix and "\n{" in text[:2000]):
+        records, bad = [], 0
+        for line in text.split("\n"):
+            if line.strip():
+                try:
+                    records.append(json.loads(line))
+                except ValueError:
+                    bad += 1
+        return {"kind": "jsonl", "unparsable_lines": bad, **probe_records([r for r in records if isinstance(r, (dict, list))] or [])}
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        raise ContainerProblem("the file is neither JSON nor JSON lines")
+    return {"kind": "json", **probe_records(doc if isinstance(doc, list) and all(isinstance(d, dict) for d in doc) else [doc])}
+
+
+def probe_folder(path, depth=3):
+    kinds, dirs = {}, 0
+
+    def walk(folder, level):
+        nonlocal dirs
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            return
+        for e in entries:
+            try:
+                if e.is_symlink():
+                    continue
+                if e.is_dir():
+                    dirs += 1
+                    if level < depth:
+                        walk(e, level + 1)
+                elif e.is_file():
+                    ext = e.suffix.lower() if re.fullmatch(r"\.[a-z0-9]{1,8}", e.suffix.lower()) else "(other)"
+                    slot = kinds.setdefault(ext or "(none)", {"count": 0, "bytes": 0})
+                    slot["count"] += 1
+                    slot["bytes"] += e.stat().st_size
+            except OSError:
+                continue
+    walk(path, 1)
+    return {"kind": "folder", "levels_scanned": depth, "folders": dirs, "file_kinds": dict(sorted(kinds.items()))}
+
+
+def probe_sqlite(path):
+    check_size(path)
+    conn = open_sqlite_readonly(path)
+    try:
+        master = conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'").fetchall()
+        virtual = [n for n, sql in master if (sql or "").lstrip().upper().startswith("CREATE VIRTUAL")]
+        tables, other = [], 0
+        for name, sql in sorted(master):
+            shadow = any(name.startswith(v + "_") for v in virtual)
+            if name in virtual or shadow or name.startswith("sqlite_") or not IDENT_RE.match(name) or len(name) > 64:
+                other += 1
+                continue
+            cols = [(c[1], c[2]) for c in conn.execute(f"PRAGMA table_info({quote_ident(name)})")]
+            entry = {"name": name, "columns": [{"name": c if IDENT_RE.match(c) and len(c) <= 64 else "<col>",
+                                                "type": re.sub(r"[^A-Za-z]", "", t or "")[:12].upper()} for c, t in cols],
+                     "rows": conn.execute(f"SELECT COUNT(*) FROM {quote_ident(name)}").fetchone()[0], "json_columns": {}}
+            for c, t in cols:
+                if not IDENT_RE.match(c):
+                    continue
+                samples = []
+                for (v,) in conn.execute(f"SELECT {quote_ident(c)} FROM {quote_ident(name)} WHERE {quote_ident(c)} IS NOT NULL LIMIT {PROBE_MAX_ELEMENTS}"):
+                    if isinstance(v, str) and v[:1] in "{[":
+                        try:
+                            samples.append(json.loads(v))
+                        except ValueError:
+                            pass
+                if samples:
+                    entry["json_columns"][c] = probe_records([s for s in samples if isinstance(s, (dict, list))])
+            tables.append(entry)
+        return {"kind": "sqlite", "tables": tables, "other_tables": other}
+    finally:
+        conn.close()
+
+
+def run_probe(target):
+    """(output, exit code) for --probe. Reads only; prints structure only."""
+    path = Path(os.path.expanduser(target))
+    try:
+        if path.is_dir():
+            result = probe_folder(path)
+        elif not path.is_file():
+            return {"error": "nothing to probe at that path"}, EXIT_NO_TRANSCRIPT
+        else:
+            with open(path, "rb") as f:
+                magic = f.read(16)
+            result = probe_sqlite(path) if magic.startswith(b"SQLite format 3") else probe_file(path)
+    except DocumentTooLarge as exc:
+        return {"error": str(exc)}, 4
+    except (ContainerProblem, sqlite3.Error, OSError) as exc:
+        return {"error": f"cannot probe: {type(exc).__name__}"}, 2
+    return {"probe": result, "note": "structure only: names of fields, types, counts and short identifier values; no content"}, 0
+
+
+def store_activity(raw, repo):
+    """Most recent activity of a sqlite or json_document host's session for this working directory (None when there is none)."""
+    kind = container_kind(raw)
+    try:
+        if kind == "json_document":
+            spec = json_document_spec(raw)
+            here = {str(repo.resolve()), str(repo)}
+            times = [s["last"] for s in document_sessions(spec) if (lambda c: c is None or c in here or (c and str(Path(c).resolve()) in here))(session_cwd(s, spec))]
+            return max(times, default=None)
+        if kind == "sqlite":
+            spec = sqlite_spec(raw)
+            default = (raw.get("container") or {}).get("default_path")
+            db = Path(os.path.expanduser(default)) if default else None
+            if db is None or not db.is_file():
+                return None
+            conn = open_sqlite_readonly(db)
+            try:
+                check_schema_in_db(conn, spec)
+                here = {str(repo.resolve()), str(repo)}
+                times = [s["last"] for s in list_sqlite_sessions(conn, spec)
+                         if s["last"] is not None and (s["cwd"] in here or str(Path(s["cwd"]).resolve()) in here)]
+                return max(times, default=None)
+            finally:
+                conn.close()
+        newest = [p.stat().st_mtime for p in host_candidates_for(raw)]
+        return max(newest, default=None)
+    except (ContainerProblem, sqlite3.Error, OSError):
+        return None
+
+
+def host_candidates_for(raw):
+    out = []
+    for pattern in ((raw.get("container") or {}).get("globs") or []):
+        out += [Path(m) for m in glob.glob(os.path.expanduser(pattern), recursive=True) if Path(m).is_file()]
+    return out
+
+
+def choose_host(args, repo, hosts):
+    """Which host's session to review: environment marker, else the host with the most recent session here, else exit 6.
+
+    Returns {"host", "how", "paths"?} or {"exit", "output"}."""
+    candidates = [h for h in hosts if h != "kiro"]
+    marked = [h for h in candidates if any(os.environ.get(v) for v in ((hosts[h]["raw"].get("detect") or {}).get("env") or []))]
+    scope, how = (marked, "env marker") if marked else (candidates, "data presence")
+    jsonl_hosts = [h for h in scope if h in HOSTS]
+    host, paths, ambiguous = discover(args, repo, jsonl_hosts, with_host=True) if jsonl_hosts else (None, [], None)
+    if ambiguous:
+        return {"exit": 3, "output": ambiguous}
+    found = [(paths[0].stat().st_mtime, host, paths)] if paths else []
+    for h in scope:
+        if h not in HOSTS:
+            last = store_activity(hosts[h]["raw"], repo)
+            if last is not None:
+                found.append((last, h, []))
+    if found:
+        _, best, best_paths = max(found, key=lambda f: f[0])
+        return {"host": best, "how": how, "paths": best_paths}
+    if marked:                                        # the marker names the host; it has no session here, so the run reports that
+        return {"host": marked[0], "how": "env marker", "paths": []}
+    output = degraded_report("auto", repo, searched_locations("auto", repo))
+    output["hosts_checked"] = sorted(scope)
+    return {"exit": EXIT_NO_TRANSCRIPT, "output": output}
+
+
 def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -3157,6 +3809,9 @@ def main(argv=None):
         args.drift_threshold = cfg.get("drift_threshold", 90)
     redact_on = not args.no_redact
     findings = None
+    if args.save_adapter and (args.mapping or args.report):
+        emit({"error": "--save-adapter reads the drafted mapping from stdin: do not combine it with --mapping or --report"}, args.format, redact_on)
+        return 2
     if args.report:
         problem = None
         if args.report != "-":
@@ -3172,28 +3827,67 @@ def main(argv=None):
         if errors:
             emit({"error": "findings are not valid; fix these and send them again", "errors": errors}, args.format, redact_on)
             return EXIT_FINDINGS
+    if args.probe:                                    # structure only; reads, never writes
+        out, code = run_probe(args.probe)
+        emit(out, args.format, redact_on)
+        return code
+    hosts, adapter_notes = registry()
+    ACTIVE_HOSTS.clear()
+    ACTIVE_HOSTS.update(hosts)
+    if args.host != "auto" and args.host not in hosts:
+        emit({"error": f"unknown host '{args.host}'", "hosts": sorted(hosts)}, args.format, redact_on)
+        return 2
+    save_text = None
+    if args.save_adapter:
+        problem = None
+        if not HOST_NAME_RE.match(args.save_adapter):
+            problem = "adapter name must be lowercase letters, digits, - or _"
+        elif args.mapping or args.report:
+            problem = "--save-adapter reads the drafted mapping from stdin: do not combine it with --mapping or --report"
+        elif args.events or args.sample is not None or args.list_turns:
+            problem = "--save-adapter cannot be combined with --events, --sample or --list-turns"
+        if problem:
+            emit({"error": problem}, args.format, redact_on)
+            return 2
+        save_text = sys.stdin.read()
     if args.host == "kiro":
         emit(degraded_report("kiro", repo), args.format, redact_on)
         return 0
     override = None
-    if args.mapping:                                  # an override decides how records are stored, so read it first
-        text = sys.stdin.read() if args.mapping == "-" else Path(args.mapping).read_text(encoding="utf-8")
-        override = load_mapping(text=text)
-        override.setdefault("capabilities", {})
-        error = schema_check(override)[0] or container_error(container_kind(override))
-        if error:
-            emit({"error": error}, args.format, redact_on)
+    if args.mapping or save_text is not None:         # an override decides how records are stored, so read it first
+        text = save_text if save_text is not None else (sys.stdin.read() if args.mapping == "-" else Path(args.mapping).read_text(encoding="utf-8"))
+        try:
+            override = load_mapping(text=text)
+        except ValueError as exc:
+            emit({"error": f"the mapping is not valid TOML: {str(exc).splitlines()[0][:100]}"}, args.format, redact_on)
             return 2
-    sqlite_raw = override if override is not None and container_kind(override) == "sqlite" else None
-    if sqlite_raw is None and override is None and args.host in SQLITE_HOSTS:
-        sqlite_raw = load_mapping(SQLITE_HOSTS[args.host])
-        sqlite_raw.setdefault("capabilities", {})
-    if sqlite_raw is not None:
-        reader, early = open_sqlite_session(args, repo, sqlite_raw)
+        override.setdefault("capabilities", {})
+        problems = mapping_problems(override) if save_text is not None else \
+            [e for e in [schema_check(override)[0] or container_error(container_kind(override))] if e]
+        if problems:
+            emit({"error": ("the mapping cannot be used: " + problems[0]) if save_text is not None else problems[0], "errors": problems}
+                 if save_text is not None else {"error": problems[0]}, args.format, redact_on)
+            return 2
+    chosen_by = "--mapping" if override is not None else "--host" if args.host != "auto" else None
+    if override is None and args.host == "auto" and not args.paths:
+        decision = choose_host(args, repo, hosts)
+        if decision.get("exit"):
+            emit(decision["output"], args.format, redact_on)
+            return decision["exit"]
+        args.host, chosen_by = decision["host"], decision["how"]
+        if decision.get("paths"):
+            args.paths = [str(p) for p in decision["paths"]]
+    store_raw = override if override is not None and container_kind(override) in ("sqlite", "json_document") else None
+    if store_raw is None and override is None and args.host in hosts and container_kind(hosts[args.host]["raw"]) in ("sqlite", "json_document"):
+        store_raw = hosts[args.host]["raw"]
+        store_raw.setdefault("capabilities", {})
+    if store_raw is not None:
+        opener = open_json_session if container_kind(store_raw) == "json_document" else open_sqlite_session
+        reader, early = opener(args, repo, store_raw)
         if early:
             emit(early[0], args.format, redact_on)
             return early[1]
-        host = sqlite_raw.get("host", "unknown")
+        host = store_raw.get("host", "unknown")
         first_lines = reader.first_lines()
     else:
         paths = [Path(p) for p in args.paths]
@@ -3225,15 +3919,20 @@ def main(argv=None):
             return EXIT_NO_TRANSCRIPT
         reader = JsonlReader(paths)
         first_lines = reader.first_lines()
-        host = detect_host(first_lines, args.host)
+        host = override.get("host", args.host) if override is not None and args.host == "auto" else args.host
+        if override is None and args.host == "auto":
+            host = detect_host(first_lines, args.host)
+            chosen_by = "transcript shape"
+        elif override is not None:
+            host = override.get("host", "unknown")
     if override is not None:
         raw_mapping, source = override, "override"
-    elif sqlite_raw is not None:
-        raw_mapping, source = sqlite_raw, "builtin"
+    elif host in hosts:
+        raw_mapping, source = hosts[host]["raw"], "builtin" if hosts[host]["builtin"] else "user"
     else:
         raw_mapping, source = load_mapping(HOSTS[host]), "builtin"
     schema_note = schema_check(raw_mapping)[1]
-    notes = ([schema_note] if schema_note else []) + list(getattr(reader, "notes", []))
+    notes = ([schema_note] if schema_note else []) + list(getattr(reader, "notes", [])) + adapter_notes
     mapping, variant_info = choose_variant(raw_mapping, first_lines, version=getattr(reader, "version", None))
     events, raw = [], []
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
@@ -3328,6 +4027,7 @@ def main(argv=None):
             drift = settle_drift(drift, health)
             out["coverage"] = {"host": host, "tested_versions": mapping.get("tested_versions"),
                                "mapping_source": source, "variant": variant_info["variant"], "drift": drift,
+                               "label": mapping_label(mapping, source), "host_chosen_by": chosen_by or "--host",
                                "health": health_view(health, mapping, stats["version"], args.health_all),
                                "ignored_types": with_other(stats["ignored_types"], TOP_TYPES), "transcript_version": stats["version"],
                                "version_note": version_note(stats["version"], mapping.get("tested_versions"), drift),
@@ -3379,6 +4079,19 @@ def main(argv=None):
                                       (args.overlap_threshold, args.directive_threshold))
             if out["skills"].get("inventory_note"):
                 out["coverage"].setdefault("notes", []).append(out["skills"]["inventory_note"])
+    if save_text is not None and "coverage" in out:
+        broken = out["coverage"]["health"]["rows"] and [r["metric"] for r in out["coverage"]["health"]["rows"] if r["core"] and r["status"] == "broken"]
+        if broken or not out["coverage"]["drift"]["ok"]:
+            emit({"error": "a core metric is broken with this mapping; the adapter was not saved", "broken": broken or [],
+                  "drift": out["coverage"]["drift"].get("warning")}, args.format, redact_on)
+            return 2
+        target, problem = save_adapter(args.save_adapter, save_text, stats["version"], args.replace)
+        if problem:
+            emit({"error": problem}, args.format, redact_on)
+            return 2
+        emit({"saved": str(target), "host": override.get("host"), "label": "unproven", "made_from_version": stats["version"],
+              "health": out["coverage"]["health"]["summary"]}, args.format, False)             # the path is printed as it is
+        return 0
     code = 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
     inventory_names = out["skills"].pop("_inventory_names", None) if isinstance(out.get("skills"), dict) else None
     if findings is not None and "coverage" in out:
