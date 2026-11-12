@@ -65,3 +65,46 @@ def test_cursor_second_chat_uses_a_skill_automatically(cli):
     md = cli.run(one("cursor-chat2/*/"), "--host", "cursor", fmt="md").stdout
     assert "under 1 min" in md
     assert [(s["name"], s["detected_by"]) for s in out["skills"]["loaded"]] == [("mango-greeting", "read SKILL.md")]
+
+
+# ---- Devin: SQLite databases, one session each -------------------------------------------------------------------
+
+def devin(cli, name):
+    return cli.json(GOLDEN / f"devin-{name}" / "sessions.db", "--host", "devin", "--session-id", f"golden-devin-{name}")
+
+
+def test_devin_session_with_a_subagent(cli):
+    code, out = devin(cli, "subagent")
+    cov = out["coverage"]
+    assert code == 0 and cov["drift"]["ok"] and cov["drift"]["coverage_pct"] == 100.0 and "warnings" not in cov
+    assert cov["storage"] == {"kind": "sqlite", "off_chain_nodes": 36, "subagent_chains": 1, "nodes_shared_with_main": 0,
+                              "schema_version": 20, "schema_version_source": "refinery_schema_history"}
+    assert (out["window"]["turns_total"], out["verify"]["total"], out["tools"]["errors"], out["interruptions"]["count"]) == (4, 1, 0, 0)
+    main, sub = out["actors"]
+    assert main["tool_calls"] == 8 and out["tools"]["by_category"]["search"] == 4
+    assert {k: main["tokens"][k] for k in ("fresh_input", "cache_read", "output", "api_calls")} == \
+        {"fresh_input": 16015, "cache_read": 121600, "output": 1294, "api_calls": 10}
+    assert main["tokens"]["context_check"] == {"calls": 10, "context_input_total": 137615, "mismatches": 0}
+    assert sub["link"] == "subagent_heads" and sub["tool_calls"] == 4 and sub["models"] == ["SWE-2 Flash Medium"]
+    assert sub["tokens"]["api_calls"] == 2 and sub["tokens"]["output"] == 296
+    skills = out["skills"]
+    assert skills["offered"]["total"] == 5 and "hello" in skills["offered"]["names"] and skills["used"] == ["hello"]
+    assert skills["loaded"][0]["detections"] == [{"by": "slash command", "turn": 2}, {"by": "skill tool call", "turn": 2}]
+
+
+def test_devin_failed_command_and_interruption(cli):
+    code, out = devin(cli, "error-interrupted")
+    assert code == 0 and out["window"]["turns_total"] == 2 and out["tools"]["by_category"] == {"shell": 2, "read": 1}
+    assert out["tools"]["errors"] == 1 and out["interruptions"] == {"count": 1, "turns": [2]}
+    tokens = out["actors"][0]["tokens"]
+    assert (tokens["fresh_input"], tokens["cache_read"], tokens["output"], tokens["api_calls"]) == (4735, 47872, 168, 5)
+    assert out["coverage"]["storage"]["off_chain_nodes"] == 21
+
+
+def test_devin_explicit_only_skill(cli):
+    code, out = devin(cli, "explicit-only")
+    assert code == 0 and out["window"]["turns_total"] == 1
+    assert out["skills"]["used"] == ["explicit-only", "hello"] and out["skills"]["used_not_offered"] == ["explicit-only"]
+    tokens = out["actors"][0]["tokens"]
+    assert (tokens["fresh_input"], tokens["cache_read"], tokens["output"], tokens["api_calls"]) == (1134, 25088, 316, 2)
+    assert out["coverage"]["storage"]["off_chain_nodes"] == 18
