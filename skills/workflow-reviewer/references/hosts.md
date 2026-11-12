@@ -80,11 +80,11 @@ A mapping says how its host *stores* records (`[container] kind`) apart from how
 
 Every mapping declares a top-level `schema_version = 1`. A mapping without one is treated as 1 and adds a `coverage.notes` entry. A version newer than the script supports exits 2 with "mapping schema N is newer than this script supports (max M)". This also applies to agent-drafted overrides passed with `--mapping`.
 
-**Adding a host:** copy the nearest mapping, keep `schema_version = 1`, choose the `[container]` kind, and bump `schema_version` only when the mapping format itself changes in a way old scripts cannot read.
+**Adding a host:** see [adding-a-host.md](adding-a-host.md).
 
 ## Drift procedure
 
-Transcript formats are internal and change between releases. A mapping fits only if coverage is at least 90% of lines, required fields are present (usage when `has_tokens`, tool names), and unseen record types are listed.
+Transcript formats are internal and change between releases. A mapping fits only if the health table has no broken core metric (see below). Coverage under 90% of lines is a warn when a core metric's second count still agrees, and a pause when nothing else vouches for it; missing required fields (usage when `has_tokens`, tool names) break the metric they feed; unseen record types are listed and tied to the metric they would feed.
 
 Outside the tested range the script adds `coverage.version_note`: `newer than tested; checks passed` (or `older than ...`) when the checks pass, or the drift warning when they fail.
 
@@ -131,3 +131,18 @@ Plugin skills do not live under `~/.claude` (its `plugins/store` held none on th
 Skill descriptions without a file: Claude Code's `skill_listing` attachment (`content`, one `- name: description` line per skill), Codex's developer-message skill list (the `(file: …)` suffix is removed) and Devin's `skills-loaded` entries. Instruction files with content: Claude Code's `instructions` attachment (`files[]`: path, type, content). Mapping keys: `offered_desc_from`/`offered_desc_item` (regex with name and description groups), `offered_desc_pairs`, `instruction_items`.
 
 Mapping keys: `[[plugin_skill_folders]]` and `[[hook_files]]` take the same fields as `[[skill_folders]]` (`path`, `scope`, `walk`, `base`, `base_env`), plus `glob = true` for a pattern under the base. `hooks_format` names the file shape. Always-on instructions are what the host reported loading this session (for example Devin's `rules-loaded`), plus the repo's `CLAUDE.md`, `AGENTS.md`, `~/.claude/CLAUDE.md` and Cursor rules with `alwaysApply: true`.
+
+## Health table and second counts
+
+`coverage.health` has one row per metric (turns, tool_calls, tokens, errors, verify, interruptions, time, skills, subagents) with a status and the checks that ran, each with its two values. Statuses: `ok` (a second count agrees), `one_way` (only one way to count it: normal, not a failure), `warn`, `broken`, `not_measurable`. Core metrics are turns, tool_calls and tokens (where the host records them). Only a broken core metric pauses (exit 2, the drift path); other warn or broken rows continue with exit 0 and appear in the report's Coverage row. The table shows the rows that need attention (warn, broken) plus a summary of all statuses and the version context (transcript version, tested range, `within`/`newer`/`older`/`unknown`); `--health-all` shows every row.
+
+Layer 1 (structure): coverage under the threshold (a warn for every measurable metric, a break for a core metric nothing else vouches for), a missing required field (usage breaks tokens, tool name breaks tool_calls), and unseen record types tied by name to the metric they would feed (`[health_hints]` in a mapping overrides the default words). Layer 2 (second counts): a mapping's `[[checks]]`, each with `metric`, `first` and `second` sides, and a `relation` (`equal` default, `at_most`, `at_least`), `tolerance_pct` (2 for tokens), `slack_first` (how far the first side may exceed the second while a turn or call is still in flight), `skip_if_second_zero` (the host does not write that record at all) and `severity = "warn"` (a check that may only warn). A side is an engine quantity by name (`turns`, `tool_calls`, `calls_with_id`, `calls_with_result_pct`, `api_calls`, `tokens_output_main`, `context_counted`, `context_reported`, and others) or a count taken from the raw records: `{ match = {...}, count = true | distinct = "path" | sum = "path" | last = "path", actors = "main" }`, or `{ const = N }`.
+
+| Host | Second counts kept | Checked on |
+|---|---|---|
+| Claude Code | tool calls: at least 95% of `tool_use` ids have a `tool_result` (one call may still be in flight); no `tool_use` id counted twice (warn only) | the conformance session, its golden, and 11 other local sessions |
+| Codex | turns vs `turn_context` records; calls vs distinct output call ids; summed per-response output tokens vs the final `token_count` total (2%); no call id counted twice (warn only) | the conformance rollouts, the golden, and 3 other local rollouts |
+| Cursor | none | 2 conformance chats, 2 goldens, 23 local chats |
+| Devin | turns (`is_user_input`) vs user messages with a `chisel/client-message-id`; `tool_call_content` ids vs tool results; input + cache_read vs `context_input_tokens`; no call id counted twice (warn only) | the 3 real sessions and their goldens |
+
+Dropped because they did not hold on real data: Claude Code API calls vs `api-request` records (equal in the conformance session, but 2,737 vs 740 and 950 vs 753 in others: the records are not written for every call); Claude Code turns vs `turnOrigin: human` records (human-origin records include `!` shell inputs, empty prompts and reminders that the mapping deliberately does not count as turns: 557 vs 461 in one session); Claude Code "every `tool_use` has a `tool_result`" as an exact rule (sessions that ended with calls pending have 3 without a result: replaced by the 95% rule); Cursor turns vs `turn_ended` rows (3 vs 1, 55 vs 3, 11 vs 12 in real chats: not one per prompt). A metric with no second count is `one_way`. Mutation fixtures (`tests/test_health_mutations.py`) check that each host's golden flips the right row when a field is renamed, a record type dropped or added, or a record duplicated.

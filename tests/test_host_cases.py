@@ -56,7 +56,7 @@ def _codex_classic(case, cli, tmp_path):
     head = [cx_meta("i", cli.repo)]
     if case == "normal":
         return [write_jsonl(p, head + [cx_user("one", 1), cx_call("python3 -m pytest -q", "k1", 2), cx_output("k1", "ok", 0, 3),
-                                       cx_tokens(10, 4, 2, 4), cx_user("two", 5), cx_tokens(12, 4, 2, 6, total={"input_tokens": 99})])]
+                                       cx_tokens(10, 4, 2, 4), cx_user("two", 5), cx_tokens(12, 4, 2, 6, total={"input_tokens": 99, "output_tokens": 4})])]
     if case == "empty":
         return [write_jsonl(p, head)]
     if case == "error":

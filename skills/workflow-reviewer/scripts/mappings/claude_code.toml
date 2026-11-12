@@ -15,6 +15,21 @@ not_a_turn_prefixes = [
   "<task-notification>", "<system-reminder>", "[Request interrupted by user",
 ]
 
+# Second counts: each metric counted again from different records. All must agree on every session.
+[[checks]]
+name = "tool calls: at least 95% of tool_use ids have a tool_result"
+metric = "tool_calls"
+first = "calls_with_result_pct"
+second = { const = 95 }
+relation = "at_least"
+
+[[checks]]
+name = "tool calls: no tool_use id counted twice"
+metric = "tool_calls"
+first = "tool_calls"
+second = "calls_with_id"
+severity = "warn"                   # a resumed session repeats earlier ids; worth a note, never a pause
+
 [[skill_folders]]
 path = ".claude/skills"
 scope = "project"

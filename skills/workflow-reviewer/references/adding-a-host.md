@@ -1,0 +1,7 @@
+# Adding a host
+
+1. Copy the nearest mapping from `scripts/mappings/`, keep `schema_version = 1`, and choose the `[container]` kind (`jsonl` or `sqlite`; see hosts.md). Bump `schema_version` only when the mapping format itself changes in a way old scripts cannot read.
+2. Declare `[[skill_folders]]` (and `[[plugin_skill_folders]]`, `[[hook_files]]` where the host has them). A host without them gets "skill folders unknown for this host" and no inventory.
+3. **Declare second counts for the core metrics (turns, tool_calls, tokens) wherever the host makes it possible.** A second count is a different record type or field that should give the same number: `[[checks]]` in the mapping (see "Health table and second counts" in hosts.md). Verify every check on real sessions and on a golden replica, and keep only those that hold on all of them; a count that disagrees on real data is a false alarm waiting to happen. A metric that cannot be counted a second way stays `one_way`, which is normal.
+4. Add a golden replica and a mutation test row for the host (`tests/test_health_mutations.py`): renaming the turn marker, dropping the result record type, renaming a usage field, adding an unknown record type and duplicating an assistant record should each turn the right row to warn or broken and leave unrelated core rows ok. Say which cells the host cannot show.
+5. Fill `tested_versions` from the versions you actually saw. The health table reports where a transcript's version sits relative to that range (`within`, `newer`, `older`, `unknown`).

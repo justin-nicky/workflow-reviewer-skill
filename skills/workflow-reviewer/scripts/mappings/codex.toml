@@ -44,6 +44,37 @@ timestamp = "timestamp"
 version = "payload.cli_version"
 
 # Variant "classic": rollouts of the Codex CLI up to 0.142.x. A user turn is an event_msg user_message.
+# Second counts: each metric counted again from different records.
+[[checks]]
+name = "turns: prompts vs turn_context records"
+metric = "turns"
+first = "turns"
+second = { match = { type = "turn_context" }, count = true, actors = "main" }
+skip_if_second_zero = true
+
+[[checks]]
+name = "tool calls: calls vs distinct call ids of their outputs"
+metric = "tool_calls"
+first = "tool_calls"
+second = { match = { type = "response_item", "payload.type" = ["function_call_output", "custom_tool_call_output"] }, distinct = "payload.call_id" }
+slack_first = 1                     # the call running this script has no output yet
+
+[[checks]]
+name = "tool calls: no call id counted twice"
+metric = "tool_calls"
+first = "tool_calls"
+second = "calls_with_id"
+severity = "warn"
+
+[[checks]]
+name = "tokens: summed per-response usage vs the final token_count total (output)"
+metric = "tokens"
+first = "tokens_output_main"
+second = { match = { type = "event_msg", "payload.type" = "token_count" }, last = "payload.info.total_token_usage.output_tokens", actors = "main" }
+tolerance_pct = 2
+skip_if_second_zero = true
+
+
 [[variants]]
 name = "classic"
 token_method = "token_count totals, a repeated total counted once"

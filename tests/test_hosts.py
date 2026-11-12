@@ -20,7 +20,7 @@ CODEX_TASK = [
     cx_tokens(1000, 800, 50, 10),
     cx_call("pytest -q", "k2", 20),
     cx_output("k2", "ok", 0, 25),
-    cx_tokens(1500, 1000, 70, 26),
+    cx_tokens(1500, 1000, 70, 26, total={"input_tokens": 2500, "cached_input_tokens": 1800, "output_tokens": 120}),   # cumulative, as Codex writes it
 ]
 
 

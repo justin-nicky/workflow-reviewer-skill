@@ -53,6 +53,34 @@ head = "chain_node_id"
 table = "refinery_schema_history"
 column = "version"
 
+# Second counts: each metric counted again from different fields.
+[[checks]]
+name = "turns: is_user_input vs user messages with a client message id"
+metric = "turns"
+first = "turns"
+second = { match = { role = "user", "metadata.extensions.chisel/client-message-id" = "$present" }, count = true, actors = "main" }
+
+[[checks]]
+name = "tool calls: tool_call_content ids vs tool results"
+metric = "tool_calls"
+first = "calls_with_id"
+second = { match = { role = "tool" }, distinct = "tool_call_id" }
+slack_first = 1                     # the call running this script has no result yet
+
+[[checks]]
+name = "tool calls: no call id counted twice"
+metric = "tool_calls"
+first = "tool_calls"
+second = "calls_with_id"
+severity = "warn"
+
+[[checks]]
+name = "tokens: input + cache_read vs context_input_tokens"
+metric = "tokens"
+first = "context_counted"
+second = "context_reported"
+
+
 [capabilities]
 has_tokens = true
 has_timestamps = true

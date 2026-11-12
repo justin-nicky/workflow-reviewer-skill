@@ -1333,7 +1333,7 @@ def drift_report(mapping, stats, events, threshold):
     if any(not c["name"] for e in events for c in e["calls"]):
         missing.append("tool_name")
     unseen = stats["unseen_types"]
-    ok = pct >= threshold and not missing
+    ok = pct >= threshold and not missing                  # the structure verdict; health_report makes the final call
     parts = [f"{pct:.0f}% coverage"]
     if missing:
         parts.append("missing: " + ", ".join(missing))
@@ -1341,10 +1341,18 @@ def drift_report(mapping, stats, events, threshold):
         parts.append("new types: " + ", ".join(unseen))
     if stats.get("version"):
         parts.append(f"transcript version {stats['version']}")
-    warning = None if ok else (f"\u26a0 {mapping.get('host')} mapping (tested on "
-                               f"{mapping.get('tested_versions')}): " + "; ".join(parts))
+    text = (f"\u26a0 {mapping.get('host')} mapping (tested on {mapping.get('tested_versions')}): " + "; ".join(parts))
     return {"ok": ok, "coverage_pct": round(pct, 1), "missing_fields": missing,
-            "unseen_types": with_other(unseen, TOP_TYPES), "warning": warning}
+            "unseen_types": with_other(unseen, TOP_TYPES), "warning": None if ok else text, "_text": text}
+
+
+def settle_drift(drift, health):
+    """The decision: pause (drift not ok, exit 2) only when a core metric is broken."""
+    broken = health["core_broken"]
+    drift["ok"] = not broken
+    text = drift.pop("_text")
+    drift["warning"] = None if drift["ok"] else text + "; broken: " + ", ".join(broken)
+    return drift
 
 
 VERSION_RE = re.compile(r"\d+(?:\.\d+)+(?:-[A-Za-z]+(?:\.\d+)*)?")   # 0.162.0-alpha.17.2 is one version
@@ -1369,6 +1377,164 @@ def version_note(version, tested, drift):
     if side is None:
         return None
     return f"{side} than tested; checks passed" if drift["ok"] else drift["warning"]
+
+
+# ---- health: can the numbers still be trusted? structure checks, then every metric counted a second way ---------
+
+HEALTH_METRICS = ("turns", "tool_calls", "tokens", "errors", "verify", "interruptions", "time", "skills", "subagents")
+CORE_METRICS = ("turns", "tool_calls", "tokens")
+SEVERITY = {"warn": 1, "broken": 2}
+# Words that tie an unseen record type to the metric its record would feed (a mapping may override them with [health_hints]).
+UNSEEN_HINTS = {"tokens": ("usage", "token"), "tool_calls": ("tool", "call", "function", "exec", "command"),
+                "errors": ("error", "exit", "fail"), "turns": ("user", "prompt", "turn", "message"),
+                "interruptions": ("interrupt", "abort", "cancel"), "skills": ("skill",), "subagents": ("agent", "spawn", "thread")}
+
+
+def health_quantities(events):
+    """Numbers the engine counted itself, which a mapping's checks can name on either side."""
+    calls = [c for e in events for c in e["calls"]]
+    call_ids = {c["id"] for c in calls if c["id"] is not None}
+    result_ids = {r["id"] for e in events for r in e["results"] if r["id"] is not None}
+    q = {"turns": sum(1 for e in events if e.get("turn_open")), "tool_calls": len(calls), "calls_with_id": len(call_ids),
+         "results": len(result_ids), "calls_without_result": len(call_ids - result_ids),
+         "results_without_call": len(result_ids - call_ids),
+         # share of calls that got a result; one call may still be in flight when the run is live
+         "calls_with_result_pct": (100.0 * (1 - max(0, len(call_ids - result_ids) - 1) / len(call_ids))) if call_ids else None, "subagents": len({e["actor"] for e in events if e["actor"] != "main"}),
+         "interruptions": sum(1 for e in events if e["interrupted"])}
+    if any(e["usage"] for e in events):
+        t = token_summary(events)
+        q.update(api_calls=t["api_calls"], tokens_output=t["output"], tokens_fresh=t["fresh_input"], tokens_cache_read=t["cache_read"],
+                 tokens_cache_write=t["cache_write"], tokens_all=t["output"] + t["fresh_input"] + t["cache_read"] + t["cache_write"])
+        main = [e for e in events if e["actor"] == "main"]
+        if any(e["usage"] for e in main):
+            m = token_summary(main)
+            q.update(api_calls_main=m["api_calls"], tokens_output_main=m["output"], tokens_fresh_main=m["fresh_input"],
+                     tokens_cache_read_main=m["cache_read"], tokens_cache_write_main=m["cache_write"])
+        seen = {}
+        for e in events:
+            if e["usage"] and e.get("usage_context") is not None and e["msg_id"] is not None:
+                seen[e["msg_id"]] = (e["usage"]["input"] + e["usage"]["cache_read"], _int(e["usage_context"]))
+        if seen:
+            q.update(context_counted=sum(a for a, _ in seen.values()), context_reported=sum(c for _, c in seen.values()))
+    return q
+
+
+def side_value(spec, quantities, records):
+    """One side of a check: an engine quantity by name, or a count/distinct/sum/last taken straight from the raw records."""
+    if isinstance(spec, str):
+        return quantities.get(spec)
+    if "const" in spec:
+        return spec["const"]
+    chosen = [o for actor, o in records if (spec.get("actors", "all") == "all" or actor == "main") and _matches(o, spec.get("match", {}))]
+    if "distinct" in spec:
+        return len({json.dumps(v, sort_keys=True) for v in (get_first(o, spec["distinct"]) for o in chosen) if v is not None})
+    if "sum" in spec or "last" in spec:
+        values = [v for v in (get_first(o, spec.get("sum") or spec["last"]) for o in chosen)
+                  if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        return (sum(values) if "sum" in spec else values[-1] if values else None) if values or "sum" in spec else None
+    return len(chosen)
+
+
+def check_passes(first, second, relation, tolerance_pct=0.0, slack_first=0):
+    tol = tolerance_pct / 100.0
+    if relation == "at_most":
+        return first <= second * (1 + tol) + 1e-9
+    if relation == "at_least":
+        return first >= second * (1 - tol) - 1e-9
+    if abs(first - second) <= tol * max(abs(first), abs(second)) + 1e-9:
+        return True
+    return 0 < first - second <= slack_first                    # the one thing still in flight when the run is live
+
+
+def version_position(version, tested):
+    seen = _version_tuple(version) if version else None
+    bounds = VERSION_RE.findall(str(tested or ""))
+    if seen is None or not bounds:
+        return "unknown"
+    lo, hi = _version_tuple(bounds[0]), _version_tuple(bounds[-1])
+    return "newer" if seen > hi else "older" if seen < lo else "within"
+
+
+def measurable_metrics(mapping):
+    caps = mapping.get("capabilities", {})
+    prefixes = mapping.get("interruption_prefixes") or any(r.get("interrupt") for r in mapping.get("records", []))
+    return {"turns": True, "tool_calls": True, "tokens": bool(caps.get("has_tokens")), "errors": bool(caps.get("has_tool_results")),
+            "verify": True, "interruptions": bool(prefixes), "time": bool(caps.get("has_timestamps")) or has_prompt_clock(mapping),
+            "skills": True, "subagents": True}
+
+
+def health_report(mapping, stats, events, records, drift, threshold):
+    """One row per metric: its status and the checks that ran, each with its two values."""
+    measurable = measurable_metrics(mapping)
+    quantities = health_quantities(events)
+    checks = {m: [] for m in HEALTH_METRICS}
+
+    def add(metric, name, layer, first, second, relation, passed, severity, **extra):
+        checks[metric].append({"name": name, "layer": layer, "first": first, "second": second, "relation": relation,
+                               "passed": passed, "severity": severity, **extra})
+
+    for spec in mapping.get("checks", []):                                  # layer 2: the same metric counted a second way
+        metric = spec["metric"]
+        first, second = side_value(spec["first"], quantities, records), side_value(spec["second"], quantities, records)
+        if metric not in checks or not measurable[metric] or first is None or second is None:
+            continue
+        if spec.get("skip_if_second_zero") and not second:      # the host does not write this second record at all
+            continue
+        tol, slack = float(spec.get("tolerance_pct", 0)), int(spec.get("slack_first", 0))
+        passed = check_passes(first, second, spec.get("relation", "equal"), tol, slack)
+        add(metric, spec["name"], "second count", first, second, spec.get("relation", "equal"), passed,
+            spec.get("severity") or ("broken" if metric in CORE_METRICS else "warn"), **({"tolerance_pct": tol} if tol else {}))
+    second_passed = {m: any(c["layer"] == "second count" and c["passed"] for c in checks[m]) for m in HEALTH_METRICS}
+
+    if measurable["turns"] and quantities["turns"] == 0 and any(e["role"] == "assistant" for e in events):
+        add("turns", "assistant activity without any turn", "structure", quantities["turns"], 1, "at_least", False, "warn")
+    pct = drift["coverage_pct"]                                              # layer 1: structure
+    for m in HEALTH_METRICS:
+        if measurable[m]:
+            escalate = m in CORE_METRICS and not second_passed[m]            # nothing else vouches for a core metric
+            add(m, "coverage", "structure", pct, threshold, "at_least", pct >= threshold, "broken" if escalate else "warn")
+    for field, affected in (("usage", ("tokens",)), ("tool_name", ("tool_calls", "verify", "errors"))):
+        if field in drift["missing_fields"]:
+            for m in affected:
+                if measurable[m]:
+                    add(m, f"required field {field}", "structure", "missing", "present", "equal", False,
+                        "broken" if m in CORE_METRICS else "warn")
+    hints = {**UNSEEN_HINTS, **mapping.get("health_hints", {})}
+    unattributed = []
+    for kind, n in stats["unseen_types"].items():
+        hit = [m for m, words in hints.items() if m in checks and measurable.get(m) and any(w in kind.lower() for w in words)]
+        unattributed += [] if hit else [kind]
+        for m in hit:
+            add(m, "unseen record type", "structure", n, 0, "equal", False, "warn", type=kind)
+
+    rows = []
+    for m in HEALTH_METRICS:
+        failed = [c for c in checks[m] if not c["passed"]]
+        if failed:
+            status = max((c["severity"] for c in failed), key=SEVERITY.get)
+        elif not measurable[m]:
+            status = "not_measurable"
+        else:
+            status = "ok" if second_passed[m] else "one_way"
+        rows.append({"metric": m, "status": status, "core": m in CORE_METRICS and measurable[m],
+                     "checks": [{k: v for k, v in c.items() if k != "severity"} for c in checks[m]] if measurable[m] else []})
+    return {"rows": rows, "unattributed_types": unattributed[:TOP_TYPES],
+            "core_broken": [r["metric"] for r in rows if r["core"] and r["status"] == "broken"]}
+
+
+def health_view(health, mapping, version, show_all=False):
+    """The table as printed: only rows that need attention, unless all are asked for; always with the version context."""
+    rows = health["rows"]
+    counts = {}
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    shown = rows if show_all else [r for r in rows if r["status"] in SEVERITY]
+    tested = mapping.get("tested_versions")
+    view = {"summary": counts, "version": {"transcript": version, "tested": tested, "position": version_position(version, tested)},
+            "rows": [{**r, "checks": r["checks"] if show_all else [c for c in r["checks"] if not c["passed"]]} for r in shown]}
+    if health["unattributed_types"]:
+        view["unattributed_types"] = health["unattributed_types"]
+    return view
 
 
 def has_prompt_clock(mapping):
@@ -2311,6 +2477,7 @@ def coverage_items(out):
     cov, items = out["coverage"], []
     if not cov["drift"]["ok"] and cov["drift"].get("warning"):
         items.append(cov["drift"]["warning"])
+    items += [f"{r['metric']}: {r['status']}" for r in cov.get("health", {}).get("rows", []) if r["status"] in SEVERITY]
     items += cov.get("warnings", [])
     if cov.get("version_note"):
         items.append(cov["version_note"])
@@ -2646,6 +2813,7 @@ def build_parser():
     p.add_argument("--drift-threshold", type=float)
     p.add_argument("--no-redact", action="store_true")
     p.add_argument("--idle-threshold", type=float)
+    p.add_argument("--health-all", action="store_true", help="show every row of coverage.health, not only those needing attention")
     p.add_argument("--overlap-threshold", type=float, default=0.15, help="skill description similarity to report (0 to 1)")
     p.add_argument("--directive-threshold", type=float, default=0.45, help="directive line similarity to report (0 to 1)")
     p.add_argument("--report", metavar="-", help="read the agent's findings JSON from stdin and render the report")
@@ -3035,7 +3203,7 @@ def main(argv=None):
              "truncated_last_line": False, "version": None, "skill_list_unparsed": 0}
     if getattr(reader, "version", None) is not None:
         stats["version"] = str(reader.version)
-    metas, main_ids = {}, set()
+    metas, main_ids, records = {}, set(), []
     sub_cfg = mapping.get("subagents") or {}
     for src in reader.sources(mapping):
         actor = "main" if src.main else f"subagent:{src.stem}"
@@ -3051,6 +3219,12 @@ def main(argv=None):
             raw += lines
             if sub_cfg.get("self_id"):
                 main_ids.add(get_first(first_record(lines) or {}, sub_cfg["self_id"]))
+        for ln in lines:                                  # the raw records, for the second counts
+            if ln.strip():
+                try:
+                    records.append((actor, json.loads(ln)))
+                except ValueError:
+                    pass
         ev, st = parse_lines(lines, mapping, actor)
         if not src.main and metas[actor].get("history") and st["version"] is None:
             st["version"] = metas[actor]["history"]["version"]
@@ -3112,8 +3286,11 @@ def main(argv=None):
             if last_ts is not None and datetime.now(timezone.utc).timestamp() - last_ts < LAG_SECONDS:
                 lag = "latest turn may be incomplete: last record is under %ds old" % LAG_SECONDS
             drift = drift_report(mapping, stats, window, args.drift_threshold)
+            health = health_report(mapping, stats, events, records, drift, args.drift_threshold)
+            drift = settle_drift(drift, health)
             out["coverage"] = {"host": host, "tested_versions": mapping.get("tested_versions"),
                                "mapping_source": source, "variant": variant_info["variant"], "drift": drift,
+                               "health": health_view(health, mapping, stats["version"], args.health_all),
                                "ignored_types": with_other(stats["ignored_types"], TOP_TYPES), "transcript_version": stats["version"],
                                "version_note": version_note(stats["version"], mapping.get("tested_versions"), drift),
                                "not_measurable": not_measurable(mapping),
