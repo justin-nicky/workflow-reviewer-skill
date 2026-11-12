@@ -219,11 +219,6 @@ def test_a_mapping_can_override_the_hints(cli, tmp_path):
     assert rows(out)["subagents"]["status"] == "warn"
 
 
-def test_assistant_activity_with_no_turn_warns_on_turns(cli, tmp_path):
-    code, out = run(cli, tmp_path, [assistant("m1", 3, ["c1"]), result("c1")], "", "--health-all")
-    assert code == 0 and rows(out)["turns"]["status"] == "warn"
-
-
 # ---- output -------------------------------------------------------------------------------------------------------------------
 
 def test_only_rows_needing_attention_are_shown_unless_health_all(cli, tmp_path):
@@ -273,3 +268,71 @@ def _findings():
     for a in data["actions"]:
         a.pop("applies_to", None)
     return data
+
+
+# ---- assistant activity with no turn: the mapping decides how serious it is ---------------------------------------------------
+
+def test_assistant_activity_with_no_turn_warns_unless_the_mapping_says_it_is_broken(cli, tmp_path):
+    records = [assistant("m1", 3, ["c1"]), result("c1")]
+    code, out = run(cli, tmp_path, records, "", "--health-all")
+    assert code == 0 and rows(out)["turns"]["status"] == "warn"
+    path = write_jsonl(tmp_path / "s2.jsonl", records)
+    (tmp_path / "m2.toml").write_text(MAPPING.replace('type_path = "t"', 'type_path = "t"\nturnless_activity = "broken"'))
+    proc = cli.run(path, "--mapping", tmp_path / "m2.toml", "--health-all")
+    out = json.loads(proc.stdout)
+    assert proc.returncode == 2 and rows(out)["turns"]["status"] == "broken" and not out["coverage"]["drift"]["ok"]
+
+
+def test_a_subagent_rollout_passed_alone_only_warns_even_where_the_mapping_breaks_on_it(cli):
+    from pathlib import Path
+    golden = Path(__file__).resolve().parent / "fixtures" / "golden" / "codex-desktop"
+    sub = next(f for f in sorted(golden.glob("rollout-*.jsonl")) if '"subagent"' in f.read_text(encoding="utf-8").split("\n")[0])
+    code, out = cli.json(sub, "--host", "codex", "--health-all")
+    turns = rows(out)["turns"]
+    assert code == 0 and out["coverage"]["drift"]["ok"]
+    assert turns["status"] == "warn" and "subagent" in turns["checks"][0]["name"]
+
+
+def test_claude_code_and_codex_break_on_turnless_main_activity():
+    import tomllib
+    from conftest import ROOT
+    for name in ("claude_code", "codex"):
+        raw = tomllib.loads((ROOT / "skills/workflow-reviewer/scripts/mappings" / f"{name}.toml").read_text())
+        assert raw["turnless_activity"] == "broken", name
+
+
+# ---- a duplicated call is counted once ------------------------------------------------------------------------------------------
+
+DUP_CHECK = """
+[[checks]]
+name = "no call id counted twice"
+metric = "tool_calls"
+first = "duplicate_calls"
+second = { const = 0 }
+severity = "warn"
+"""
+
+
+def test_a_call_id_repeated_in_another_record_is_counted_once_and_warned_about(cli, tmp_path):
+    records = session() + [assistant("dup", 10, ["c0"])]                        # c0 is already used by the first assistant record
+    code, out = run(cli, tmp_path, records, DUP_CHECK, "--health-all")
+    assert code == 0 and out["tools"]["total"] == N
+    check = next(c for c in rows(out)["tool_calls"]["checks"] if c["name"] == "no call id counted twice")
+    assert rows(out)["tool_calls"]["status"] == "warn" and (check["first"], check["second"]) == (1, 0)
+
+
+def test_no_duplicate_means_no_warning(cli, tmp_path):
+    code, out = run(cli, tmp_path, session(), DUP_CHECK, "--health-all")
+    assert code == 0 and rows(out)["tool_calls"]["status"] == "ok"
+
+
+def test_several_commands_of_one_call_are_not_duplicates():
+    import importlib.util
+    from conftest import SCRIPT
+    spec = importlib.util.spec_from_file_location("tm_dedupe", SCRIPT)
+    tm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tm)
+    call = lambda cid, cmd: {"id": cid, "name": "exec", "input": {"cmd": cmd}}
+    events = [{"calls": [call("k1", "ls"), call("k1", "pwd"), call("k2", "ls")]}, {"calls": [call("k1", "ls"), call(None, "ls"), call(None, "ls")]}]
+    assert tm.dedupe_calls(events) == 1                                   # only the repeat of k1/ls
+    assert [len(e["calls"]) for e in events] == [3, 2]

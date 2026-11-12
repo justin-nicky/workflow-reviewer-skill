@@ -1291,6 +1291,26 @@ def _event_keys(events):
     return keys
 
 
+def dedupe_calls(events):
+    """Count each call once: a call id repeated with the same name and input (a duplicated record, copied history) is dropped.
+
+    Several commands that share one call id (a script run as separate commands) differ in input and stay.
+    Returns how many repeats were dropped."""
+    seen, dropped = set(), 0
+    for ev in events:
+        kept = []
+        for c in ev["calls"]:
+            key = (c["id"], c["name"], json.dumps(c["input"], sort_keys=True, default=str)) if c["id"] is not None else None
+            if key is not None and key in seen:
+                dropped += 1
+                continue
+            if key is not None:
+                seen.add(key)
+            kept.append(c)
+        ev["calls"] = kept
+    return dropped
+
+
 def dedupe(events):
     """Drop events already seen in another file (forked sessions, duplicated subagents).
 
@@ -1467,6 +1487,7 @@ def health_report(mapping, stats, events, records, drift, threshold):
     """One row per metric: its status and the checks that ran, each with its two values."""
     measurable = measurable_metrics(mapping)
     quantities = health_quantities(events)
+    quantities["duplicate_calls"] = stats.get("duplicate_calls", 0)
     checks = {m: [] for m in HEALTH_METRICS}
 
     def add(metric, name, layer, first, second, relation, passed, severity, **extra):
@@ -1486,8 +1507,12 @@ def health_report(mapping, stats, events, records, drift, threshold):
             spec.get("severity") or ("broken" if metric in CORE_METRICS else "warn"), **({"tolerance_pct": tol} if tol else {}))
     second_passed = {m: any(c["layer"] == "second count" and c["passed"] for c in checks[m]) for m in HEALTH_METRICS}
 
-    if measurable["turns"] and quantities["turns"] == 0 and any(e["role"] == "assistant" for e in events):
-        add("turns", "assistant activity without any turn", "structure", quantities["turns"], 1, "at_least", False, "warn")
+    if measurable["turns"] and quantities["turns"] == 0:
+        if any(e["role"] == "assistant" and e["actor"] == "main" for e in events):      # the mapping says how serious this is
+            add("turns", "assistant activity without any turn", "structure", 0, 1, "at_least", False,
+                mapping.get("turnless_activity", "warn"))
+        elif any(e["role"] == "assistant" for e in events):                            # only a subagent's records: legitimate
+            add("turns", "subagent activity without a main turn", "structure", 0, 1, "at_least", False, "warn")
     pct = drift["coverage_pct"]                                              # layer 1: structure
     for m in HEALTH_METRICS:
         if measurable[m]:
@@ -3240,6 +3265,7 @@ def main(argv=None):
             for k, v in st[bucket].items():
                 stats[bucket][k] = stats[bucket].get(k, 0) + v
     events = dedupe(events)
+    stats["duplicate_calls"] = dedupe_calls(events)
     placed = set()
     if events and all(e["ts"] is not None for e in events):
         events.sort(key=lambda e: e["ts"])

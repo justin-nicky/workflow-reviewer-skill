@@ -70,8 +70,8 @@ slack_first = 1                     # the call running this script has no result
 [[checks]]
 name = "tool calls: no call id counted twice"
 metric = "tool_calls"
-first = "tool_calls"
-second = "calls_with_id"
+first = "duplicate_calls"
+second = { const = 0 }
 severity = "warn"
 
 [[checks]]

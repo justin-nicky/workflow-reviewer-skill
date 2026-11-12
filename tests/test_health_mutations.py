@@ -214,7 +214,7 @@ def run_cell(cli, tmp_path, host, mutation):
 
 # host, mutation -> (exit code, rows that flip). Everything else must be ok or one_way.
 EXPECTED = {
-    ("claude-code", "turn marker"): (0, {"turns": "warn"}),
+    ("claude-code", "turn marker"): (2, {"turns": "broken"}),
     ("claude-code", "result records"): (2, {"tool_calls": "broken"}),
     ("claude-code", "usage field"): (2, {"tokens": "broken"}),
     ("claude-code", "unknown type"): (0, {"tool_calls": "warn"}),
@@ -223,7 +223,7 @@ EXPECTED = {
     ("codex", "result records"): (2, {"tool_calls": "broken"}),
     ("codex", "usage field"): (2, {"tokens": "broken"}),
     ("codex", "unknown type"): (0, {"tool_calls": "warn"}),
-    ("codex", "duplicate assistant"): (2, {"tool_calls": "broken"}),
+    ("codex", "duplicate assistant"): (0, {"tool_calls": "warn"}),   # call ids are deduplicated, so the metric stays right
     ("cursor", "turn marker"): (0, {"turns": "warn"}),
     ("cursor", "unknown type"): (0, {"tool_calls": "warn"}),
     ("cursor", "duplicate assistant"): (0, {}),          # Cursor records no call ids or results: a duplicated call cannot be seen

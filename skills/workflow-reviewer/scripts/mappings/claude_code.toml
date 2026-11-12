@@ -4,6 +4,7 @@ schema_version = 1
 variant = "default"
 tested_versions = "2.1.295 to 2.1.309, 2.1.321"
 type_path = "type"
+turnless_activity = "broken"       # assistant records in the main session but no turn: the turn marker is gone
 hooks_format = "claude-settings"      # the shape of the files listed under hook_files
 
 interruption_prefixes = ["[Request interrupted by user"]
@@ -26,9 +27,9 @@ relation = "at_least"
 [[checks]]
 name = "tool calls: no tool_use id counted twice"
 metric = "tool_calls"
-first = "tool_calls"
-second = "calls_with_id"
-severity = "warn"                   # a resumed session repeats earlier ids; worth a note, never a pause
+first = "duplicate_calls"
+second = { const = 0 }
+severity = "warn"                   # a resumed session repeats earlier ids; each call is counted once, and this notes it
 
 [[skill_folders]]
 path = ".claude/skills"
