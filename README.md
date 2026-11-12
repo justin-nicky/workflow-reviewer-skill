@@ -1,85 +1,61 @@
 # workflow-reviewer
 
-An agent skill that audits **the coding-agent task you just finished**. It finds where tokens and time went without improving quality, and which process slips happened, then returns a report in chat with findings and proposals.
+An agent skill that reviews **the coding-agent task you just finished**, in the same session. It finds where tokens and time went without improving quality, which process slips happened, and which skills overlap or are missing.
 
-- **Report only.** It never edits code, skills or config, and never writes a report to disk.
-- **Quality first.** A saving that weakens an independent review, final verification, a fail-closed rule or a human approval gate is not proposed.
-- **Code counts, the model judges.** All numbers come from a deterministic, read-only, standard-library Python script (3.11+). The model reads only its summary and small redacted event windows.
-- **Explicit only.** Run it yourself, in the same session, right after the task.
+You get a short HTML report. The agent's reply in chat is the bottom line, the top action and the report's file path. A deterministic script counts everything; the agent only judges.
 
-## Quick start (60 seconds)
-
-**Requires Python 3.11+** (the macOS system `python3` is 3.9; install a newer one, for example from python.org or Homebrew). The script exits with code 5 and a clear message on older versions.
-
-1. Install the skill (below).
-2. Finish a task in your agent.
-3. In the same session, run `/workflow-reviewer`.
-
-Read the report. Ask for any finding or proposal ID in full. Applying a proposal is a separate request; do it in its own commit or branch.
+See a rendered report: [examples/sample-report.html](examples/sample-report.html) (synthetic data).
 
 ## Install
 
-Copy or symlink `skills/workflow-reviewer/` into your host's skill folder, or use `npx skills add justin-nicky/workflow-reviewer-skill`.
+Requires **Python 3.11 or newer** (the macOS system `python3` is 3.9). The script exits with code 5 and says so on an older version. Copy or symlink `skills/workflow-reviewer/` into your host's skill folder, or run `npx skills add justin-nicky/workflow-reviewer-skill`.
 
-| Host | Folder | Notes |
+| Host | Skill folder | How to invoke it |
 |---|---|---|
-| Claude Code | `~/.claude/skills/` or `.claude/skills/` | `disable-model-invocation: true` keeps it explicit-only |
-| Codex | `.agents/skills/` or `~/.agents/skills/` | `agents/openai.yaml` sets `allow_implicit_invocation: false` |
-| Cursor | `.cursor/skills/` or `.agents/skills/` | `disable-model-invocation: true` (checked in both folders). Reduced capabilities: no tokens, tool results or ids; interruptions, turn errors and a coarse wall time are reported |
-| Devin (desktop app and CLI) | `.cognition/skills/` or `~/.claude/skills/` | Supported through `--host devin`: sessions are read from Devin's local SQLite database (read-only, WAL included). `disable-model-invocation: true` hides a skill from the model, so it can be typed by hand but is never offered. Cloud Devin keeps no local database and runs in degraded mode |
-| Kiro | `.kiro/skills/` | Degraded mode (working tree and repo records only). Explicit-only is not documented for Kiro, so it may occasionally trigger on its own |
+| Claude Code | `~/.claude/skills/` or `.claude/skills/` | `/workflow-reviewer` |
+| Codex | `~/.agents/skills/` or `.agents/skills/` | `$workflow-reviewer` |
+| Cursor | `.cursor/skills/` or `.agents/skills/` | `/workflow-reviewer` |
+| Devin (desktop app and CLI) | `.cognition/skills/` or `~/.claude/skills/` | `/workflow-reviewer` |
+| Cline | `.clinerules/skills/` | ask Cline to use the `workflow-reviewer` skill |
+| Kiro | `.kiro/skills/` | ask for it by name; degraded mode (see below) |
 
-## Example
+It is **explicit-only**: Claude Code and Cursor read `disable-model-invocation: true` from `SKILL.md`, Codex reads `agents/openai.yaml` (`allow_implicit_invocation: false`). Kiro does not document an explicit-only setting, so it may occasionally trigger on its own. In Devin, `disable-model-invocation: true` hides the skill from the model, so you can type it but the model is never offered it.
 
-See [examples/sample-report.md](examples/sample-report.md) (synthetic data).
+Run it right after the task, in the same session.
 
-## How the report is made
+## What you get
 
-The agent sends only judgments (ranked actions, skill verdicts, a bottom line) as one JSON object on stdin. The script runs the metrics again for the same selection, computes every number itself, and renders the report: an HTML page by default, markdown with `--report-format md`.
-
-```bash
-python3 scripts/transcript_metrics.py <same selection args> --report - < findings.json
-```
-
-- The findings are checked strictly (schema_version 1: unknown keys, bad values and exceeded limits give exit 7 with a list of errors). The agent cannot supply numbers.
-- The HTML file is self-contained (inline CSS, no JavaScript, no external URL, a restrictive CSP) and every string is escaped and redacted like the metrics. It is written to `<tempdir>/workflow-reviewer/review-<UTC>.html` (mode 0600 in a 0700 folder) and opened with the platform opener, except with `--no-open`, over SSH, in CI, or on Linux without a display.
-- Stdout carries what the chat reply needs: the bottom line, the top action and the file path (`--format json` for JSON). `--report-format md` prints the report as markdown (80 lines at most), writes no file, and suits hosts with no browser, such as cloud Devin.
+- A report file `<tempdir>/workflow-reviewer/review-<time>.html` (mode 0600), opened in your browser where there is a display. It is self-contained: inline CSS, no JavaScript, no network.
+- On a host with no browser (cloud Devin, SSH, CI) the agent pastes the same report as markdown (80 lines at most).
+- Contents: the bottom line, a metrics table with the token breakdown, up to five ranked actions (cause, cost, evidence; the change, why it is safe, what to watch), a skills audit (keep, improve, merge, overlap, gap) and, only when a gap was found, an offer to look for skills that cover it.
 
 ## Privacy
 
-- The script reads the local transcript and prints to stdout only. It writes nothing and imports no network module.
-- Output is redacted by default: API keys and tokens, high-entropy strings, emails, and home paths (shown as `~/…`).
-- Previews are truncated. Transcript content is quoted in the report only in short redacted excerpts, and the report is shown in chat, never saved.
-- Issue templates ask for mappings and record type names, never transcript content.
+- Offline and read-only. The script reads local transcripts and writes only the report (and, on your explicit command, a user adapter or a synthetic replica). It imports no network module.
+- Redaction is on by default: keys, tokens, emails and home paths are masked in everything printed, including the report. `--no-redact` turns it off for your own debugging.
+- The agent never reads a raw transcript wholesale; it sees a summary and small, redacted event windows.
+- `--probe` prints the structure of a file, folder or database (field names, types, counts, short type names) and never a value.
 
-## Format drift
+## Supported hosts and labels
 
-Hosts change their internal transcript formats. Each mapping in `skills/workflow-reviewer/scripts/mappings/` records `tested_versions`. If the script reports drift, the agent drafts an override mapping from a redacted sample and re-runs it through stdin. Please share working mappings with the format-drift issue template.
+| Host | Verified against | Notes |
+|---|---|---|
+| Claude Code | 2.1.295 to 2.1.309, 2.1.321 | full |
+| Codex | 0.137.0-alpha.4 to 0.142.2; 0.162.0-alpha.17.2 (Codex Desktop) | full |
+| Devin (desktop 3000.12.43, CLI) | database schema 20 | full; read from Devin's local SQLite database (read-only). Cloud Devin has no local database: degraded mode |
+| Cline 4.1.26 | VS Code extension and CLI data under `~/.cline/data` | full for turns, tools, tokens, time and subagents; skills offered and instruction files are not recorded |
+| Cursor | transcripts carry no version | no tokens, tool results or ids; interruptions, turn errors and a coarse wall time |
+| Kiro | none | degraded mode: the working tree and repo records only |
 
-## Output
+Every report says whether the adapter behind it is **verified** (built in, with tested versions) or **unproven** (made by a user or in the session). A `coverage.health` table says whether each number can be trusted: `ok` (a second independent count agrees), `one_way` (only one way to count it), `warn`, `broken` or `not_measurable`. Only a broken core metric stops the review (exit 2).
 
-The audit runs inside the session it audits, so the script keeps its output small. Per-turn and per-actor rows show the top 5 (by tokens, or by tool calls on hosts without tokens) plus an "other" row. `--list-turns` shows the last 30 turns with a header, and `--all` lists every turn. File, failure, skill and record-type lists are truncated with a remainder count. On a real 361-turn session the Markdown summary is about 7k characters. How turns, windows, time and context are computed is in [hosts.md](skills/workflow-reviewer/references/hosts.md).
+## A host that is not supported, or a format that changed
 
-## Status and verification
+The agent offers degraded mode, or builds an adapter in about five minutes: probe the data, draft a mapping, save it as a user adapter, check the health table, and produce the report. If the host's version is newer than the tested one, it can also give you the exact commands to propose the adapter upstream; it never runs them. The procedure is in [adapter-flow.md](skills/workflow-reviewer/references/adapter-flow.md). To add a host as a built-in, follow [adding-a-host.md](skills/workflow-reviewer/references/adding-a-host.md).
 
-Each mapping was checked against one real transcript in phase 0 (nothing from those transcripts is in the repo; tests use synthetic fixtures that reproduce their structure):
+## Reference
 
-| Host | `tested_versions` |
-|---|---|
-| Claude Code | 2.1.295 to 2.1.309, 2.1.321 |
-| Codex | 0.137.0-alpha.4 to 0.142.2, 0.162.0-alpha.17.2 (Codex Desktop, `desktop` variant) (`cli_version`) |
-| Cursor | version not recorded (transcripts carry no version) |
-
-Wider version coverage comes from drift reports: when a host changes its format, the script warns and the agent drafts an override mapping (see Format drift). CI runs pytest on macOS, Linux and Windows with Python 3.11 and 3.12.
-
-## Known gaps (v1)
-
-- Claude Code subagents are attached to turns by timestamp, not linked by the spawning call.
-- Codex subagent linking by parent id is not implemented (no subagent rollouts were seen in phase 0).
-- `.zst` rollouts are only reported when passed explicitly; transcript discovery does not look for them.
-- Windows transcript paths are unverified for all hosts.
-- Cursor transcripts carry no version marker, so its `tested_versions` is "unknown" and drift warnings cannot quote a transcript version.
-- Claude Code `cost-state` records carry cumulative per-model token totals (including thinking tokens). They are not used as a cross-check on the per-message usage the script reads.
+How turns, windows, time and context are computed, the exit codes and the mapping keys: [hosts.md](skills/workflow-reviewer/references/hosts.md). The checklist, the skills audit and the findings format are in the same folder.
 
 ## Development
 
@@ -88,7 +64,7 @@ python -m pip install pytest
 python -m pytest -q
 ```
 
-Tests run the CLI black-box on synthetic fixtures only. Real transcripts are never committed. Design notes: `docs/`.
+Tests run the script black-box on synthetic fixtures only. Real transcripts are never committed. CI runs pytest on macOS, Linux and Windows with Python 3.11 to 3.13. Design notes: `docs/`.
 
 ## License
 

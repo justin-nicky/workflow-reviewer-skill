@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflow review: Spec 042 close-out checks</title>
+<style>
+:root{color-scheme:light;--page:#eef1f2;--sheet:#fcfcfb;--ink:#1d2733;--ink-2:#4a5562;--ink-3:#6b7580;--rule:#d9dee2;--code-bg:#f1f3f4;
+--impact-high:#d03b3b;--impact-medium:#ec835a;--impact-low:#8a949e;--warn:#fab219;--warn-edge:#c98500;
+--v-keep:#0ca30c;--v-improve:#fab219;--v-merge:#6250d6;--v-gap:#e87ba4;--v-overlap:#2a78d6;
+--s-read:#2a78d6;--s-write:#eb6834;--s-output:#1baf7a;--s-fresh:#eda100;
+--serif:Charter,"Bitstream Charter","Sitka Text",Cambria,Georgia,serif;
+--sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+--mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+@media (prefers-color-scheme: dark){:root{color-scheme:dark;--page:#121416;--sheet:#1a1a19;--ink:#eceae6;--ink-2:#c3c2b7;--ink-3:#9a9a92;
+--rule:#34363a;--code-bg:#232427;--impact-low:#7d858c;--warn-edge:#fab219;--s-read:#3987e5;--s-write:#d95926;--s-output:#199e70;
+--s-fresh:#c98500;--v-merge:#9085e9;--v-gap:#d55181;--v-overlap:#3987e5}}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page);color:var(--ink);font:16px/1.55 var(--sans);font-variant-numeric:tabular-nums}
+.sheet{max-width:52rem;margin:2.5rem auto;padding:2.5rem 3rem 3rem;background:var(--sheet);border-radius:6px;box-shadow:0 1px 0 var(--rule),0 0 0 1px var(--rule)}
+@media (max-width:640px){.sheet{margin:0;padding:1.5rem 1.25rem 2rem;border-radius:0;box-shadow:none}}
+code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);padding:.08em .35em;border-radius:3px}
+:focus-visible{outline:2px solid var(--s-read);outline-offset:2px;border-radius:3px}
+header h1{font:600 1.5rem/1.25 var(--serif);margin:0 0 .35rem;letter-spacing:-.005em}
+.scope{margin:0;color:var(--ink-2);font-size:.95rem}
+.bottom-line{margin:2rem 0 1.25rem;font:400 1.42rem/1.42 var(--serif);max-width:38em}
+figure.anatomy{margin:0 0 2.25rem}
+.bar{display:flex;gap:2px;height:22px;width:100%}.bar span{display:block;height:100%;min-width:0}
+.bar span:first-child{border-radius:4px 0 0 4px}.bar span:last-child{border-radius:0 4px 4px 0}
+.seg-read{background:var(--s-read)}.seg-write{background:var(--s-write)}.seg-output{background:var(--s-output)}.seg-fresh{background:var(--s-fresh)}
+.legend{display:flex;flex-wrap:wrap;gap:.4rem 1.4rem;margin:.7rem 0 0;padding:0;list-style:none;font-size:.88rem;color:var(--ink-2)}
+.legend li{display:flex;align-items:baseline;gap:.45rem}.legend i{width:10px;height:10px;border-radius:2px;display:inline-block;transform:translateY(1px)}
+.legend b{color:var(--ink);font-weight:600}
+figcaption{margin-top:.4rem;font-size:.85rem;color:var(--ink-3)}
+h2{font:600 1.12rem/1.3 var(--serif);margin:2.5rem 0 .9rem;padding-top:1.1rem;border-top:1px solid var(--rule)}
+table.metrics{border-collapse:collapse;width:100%;font-size:.93rem}
+table.metrics th,table.metrics td{text-align:left;padding:.42rem 0;border-bottom:1px solid var(--rule);vertical-align:top}
+table.metrics th{font-weight:500;color:var(--ink-2);width:42%;padding-right:1rem}
+table.metrics tr:last-child th,table.metrics tr:last-child td{border-bottom:0}
+.muted{color:var(--ink-3)}
+ol.actions{list-style:none;margin:0;padding:0;counter-reset:rank}
+ol.actions>li{counter-increment:rank;position:relative;margin:0 0 1.25rem;padding:1.1rem 1.25rem .6rem 1.35rem;border:1px solid var(--rule);border-left:5px solid var(--impact,var(--impact-low));border-radius:5px}
+ol.actions>li.impact-high{--impact:var(--impact-high)}ol.actions>li.impact-medium{--impact:var(--impact-medium)}ol.actions>li.impact-low{--impact:var(--impact-low)}
+.action-head{display:flex;gap:.75rem;align-items:baseline}
+.rank{font:600 1.05rem/1 var(--serif);color:var(--ink-3);min-width:1.1rem}.rank::before{content:counter(rank)}
+.action-head h3{margin:0;font:600 1.08rem/1.35 var(--sans)}
+.tags{display:flex;flex-wrap:wrap;gap:.35rem;margin:.6rem 0 .4rem 1.85rem;padding:0;list-style:none}
+.tag{display:inline-flex;align-items:center;min-height:1.6rem;font-size:.78rem;line-height:1;padding:0 .55rem;border:1px solid var(--rule);border-radius:999px;color:var(--ink-2)}
+.tag.impact{border-color:var(--impact);color:var(--ink);font-weight:600}
+.tag.impact::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--impact);margin-right:.4rem}
+.tag.warn{border:1.5px solid var(--warn-edge);color:var(--ink);font-weight:600}
+.tag.warn::before{content:"!";display:inline-grid;place-items:center;width:.95rem;height:.95rem;margin-right:.35rem;border-radius:50%;background:var(--warn);color:#1d2733;font-size:.68rem;font-weight:700}
+details{margin:.35rem 0 0 1.85rem;border-top:1px solid var(--rule)}details:first-of-type{border-top:0}
+summary{cursor:pointer;list-style:none;padding:.55rem 0;font-weight:600;font-size:.95rem}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"\25B8";display:inline-block;width:1rem;color:var(--ink-3)}
+details[open]>summary::before{content:"\25BE"}
+details ul{margin:0 0 .75rem;padding-left:1.1rem}details li{margin:.3rem 0;max-width:40em}
+.label{font-weight:600}
+ul.skills{list-style:none;margin:0;padding:0}
+ul.skills li{display:grid;grid-template-columns:minmax(9rem,13rem) 8.5rem 1fr;gap:.25rem 1rem;padding:.55rem 0;border-bottom:1px solid var(--rule);font-size:.93rem}
+ul.skills li:last-child{border-bottom:0}
+.skill-name{font-family:var(--mono);font-size:.86rem;overflow-wrap:anywhere}
+.verdict{display:flex;align-items:baseline;gap:.45rem;font-weight:600}
+.verdict::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--v);transform:translateY(1px);flex:none}
+.v-keep{--v:var(--v-keep)}.v-improve{--v:var(--v-improve)}.v-merge{--v:var(--v-merge)}.v-gap{--v:var(--v-gap)}.v-overlap{--v:var(--v-overlap)}
+.v-none{--v:transparent;font-weight:500;color:var(--ink-3)}.v-none::before{border:1px solid var(--ink-3)}
+.skill-evidence{color:var(--ink-2)}
+@media (max-width:640px){ul.skills li{grid-template-columns:1fr auto}.skill-evidence{grid-column:1/-1}}
+.closing{margin:2rem 0 0;padding:1rem 1.2rem;border-radius:5px;background:var(--code-bg);font-size:.98rem}.closing p{margin:0}
+@media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none;padding:0}
+details>summary::before{content:"";width:0}details:not([open])>*:not(summary){display:block}ol.actions>li{break-inside:avoid}}
+</style>
+</head>
+<body>
+<main class="sheet">
+<header>
+<h1>Workflow review: Spec 042 close-out checks</h1>
+<p class="scope">Turns 1–7 of one Claude Code session (verified adapter), reviewed on 5 Jan 2026</p>
+</header>
+<p class="bottom-line">Most of this session&#x27;s cost is re-reading a <strong>large context</strong>: <code>CURRENT_STATE.md</code> is loaded on every call and has grown to mostly history.</p>
+<figure class="anatomy" aria-labelledby="anatomy-cap">
+<div class="bar" role="img" aria-label="Token composition: cache read 91.7%, cache write 8.1%, output 0.2%, fresh input under 0.1%">
+<span class="seg-read" style="flex: 91.7479" title="Cache read: 951K tokens (91.7%)"></span>
+<span class="seg-write" style="flex: 8.0590" title="Cache write: 83.5K tokens (8.1%)"></span>
+<span class="seg-output" style="flex: 0.1888" title="Output: 2.0K tokens (0.2%)"></span>
+<span class="seg-fresh" style="flex: 0.0042" title="Fresh input: 44 tokens (under 0.1%)"></span>
+</div>
+<ul class="legend"><li><i style="background: var(--s-read)"></i>Cache read <b>951K</b> (91.7%)</li><li><i style="background: var(--s-write)"></i>Cache write <b>83.5K</b> (8.1%)</li><li><i style="background: var(--s-output)"></i>Output <b>2.0K</b> (0.2%)</li><li><i style="background: var(--s-fresh)"></i>Fresh input <b>44</b> (under 0.1%)</li></ul>
+<figcaption id="anatomy-cap">Where this window’s 1.04M tokens went. Output is too small to see on the bar.</figcaption>
+</figure>
+<section aria-labelledby="h-metrics">
+<h2 id="h-metrics">Metrics</h2>
+<table class="metrics">
+<tbody>
+<tr><th scope="row">API calls</th><td>15</td></tr>
+<tr><th scope="row">Output tokens</th><td>2.0K</td></tr>
+<tr><th scope="row">Cache read / write</th><td>951K / 83.5K</td></tr>
+<tr><th scope="row">Fresh input</th><td>44</td></tr>
+<tr><th scope="row">Context at invocation</th><td>73.3K</td></tr>
+<tr><th scope="row">Tool calls</th><td>11 (4 shell), 1 error</td></tr>
+<tr><th scope="row">Time</th><td>166 s active, 12 s in tools, 0 s waiting on you</td></tr>
+<tr><th scope="row">Verify runs</th><td>1 <span class="muted">(expected: this session only reads)</span></td></tr>
+<tr><th scope="row">Subagents</th><td>1</td></tr>
+<tr><th scope="row">Interruptions</th><td>1</td></tr>
+</tbody>
+</table>
+</section>
+<section aria-labelledby="h-actions">
+<h2 id="h-actions">Do these, ranked by impact</h2>
+<ol class="actions">
+<li class="impact-high">
+<div class="action-head"><span class="rank" aria-hidden="true"></span><h3>Trim <code>CURRENT_STATE.md</code></h3></div>
+<ul class="tags" aria-label="Ratings">
+<li class="tag impact">High impact</li>
+<li class="tag">Low effort</li>
+<li class="tag">Low risk</li>
+<li class="tag">Medium confidence</li>
+<li class="tag">All hosts</li>
+</ul>
+<details>
+<summary>Why</summary>
+<ul>
+<li><code>CLAUDE.md</code> loads it and nothing says to prune it, so it keeps growing.</li>
+<li><span class="label">Cost:</span> About 12% of the context, re-read on every call.</li>
+<li><span class="label">Evidence:</span> 68,252 bytes (about 17K tokens); re-cached after each long gap</li>
+</ul>
+</details>
+<details>
+<summary>What to do</summary>
+<ul>
+<li>Move closed entries into <code>docs/HISTORY.md</code>, read on demand.</li>
+<li><span class="label">Safe because:</span> No gate, role or approval changes.</li>
+<li><span class="label">Watch for:</span> An open carry-over moved by mistake.</li>
+</ul>
+</details>
+</li>
+<li class="impact-medium">
+<div class="action-head"><span class="rank" aria-hidden="true"></span><h3>Keep one review skill</h3></div>
+<ul class="tags" aria-label="Ratings">
+<li class="tag impact">Medium impact</li>
+<li class="tag">Medium effort</li>
+<li class="tag warn">High risk</li>
+<li class="tag warn">Low confidence</li>
+<li class="tag">Claude Code</li>
+</ul>
+<details>
+<summary>Why</summary>
+<ul>
+<li>Both descriptions match the same request, so both load.</li>
+<li><span class="label">Cost:</span> About 9K extra tokens in context.</li>
+<li><span class="label">Evidence:</span> 71% description overlap</li>
+</ul>
+</details>
+<details>
+<summary>What to do</summary>
+<ul>
+<li>Keep <code>code-review</code>; narrow the other description.</li>
+<li><span class="label">Safe because:</span> The blocking rule stays.</li>
+<li><span class="label">Watch for:</span> A summary you relied on disappearing.</li>
+</ul>
+</details>
+</li>
+<li class="impact-low">
+<div class="action-head"><span class="rank" aria-hidden="true"></span><h3>Resolve the duplicate <code>workflow-reviewer</code></h3></div>
+<ul class="tags" aria-label="Ratings">
+<li class="tag impact">Low impact</li>
+<li class="tag warn">High effort</li>
+<li class="tag">Low risk</li>
+<li class="tag">High confidence</li>
+</ul>
+<details>
+<summary>Why</summary>
+<ul>
+<li>Two copies under one name.</li>
+<li><span class="label">Cost:</span> Not measurable here.</li>
+<li><span class="label">Evidence:</span> two skills with one name</li>
+</ul>
+</details>
+<details>
+<summary>What to do</summary>
+<ul>
+<li>Rename one copy.</li>
+<li><span class="label">Safe because:</span> No role depends on the name.</li>
+<li><span class="label">Watch for:</span> The wrong copy loading.</li>
+</ul>
+</details>
+</li>
+</ol>
+</section>
+<section aria-labelledby="h-skills">
+<h2 id="h-skills">Skills audit</h2>
+<ul class="skills">
+<li>
+<span class="skill-name">hello</span>
+<span class="verdict v-keep">Keep</span>
+<span class="skill-evidence">Used once, small.</span>
+</li>
+<li>
+<span class="skill-name">code-review</span>
+<span class="verdict v-overlap">Overlaps</span>
+<span class="skill-evidence">Loaded together with its twin. Overlaps with <code>pr-review</code>.</span>
+</li>
+<li>
+<span class="skill-name">pr-review</span>
+<span class="verdict v-merge">Merge or cut</span>
+<span class="skill-evidence">See action 2.</span>
+</li>
+<li>
+<span class="skill-name">tdd</span>
+<span class="verdict v-improve">Improve</span>
+<span class="skill-evidence">Conflicts with <code>AGENTS.md</code>.</span>
+</li>
+<li>
+<span class="skill-name">G1: state-doc pruning</span>
+<span class="verdict v-gap">Gap</span>
+<span class="skill-evidence">Nothing prunes <code>CURRENT_STATE.md</code> at close-out.</span>
+</li>
+<li>
+<span class="skill-name">commit-helper</span>
+<span class="verdict v-none">No verdict</span>
+<span class="skill-evidence">Not loaded.</span>
+</li>
+</ul>
+</section>
+<aside class="closing" aria-label="Next step"><p>Search for skills or host features that cover G1? Reply yes in the chat and the review will check official sources only.</p></aside>
+</main>
+</body>
+</html>
