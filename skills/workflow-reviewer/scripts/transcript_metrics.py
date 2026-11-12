@@ -1679,6 +1679,11 @@ def sqlite_spec(raw):
     return spec
 
 
+def mask_node_id(node_id):
+    """A short stable stand-in for a node id, so a note can be told apart without showing the id."""
+    return hashlib.sha256(str(node_id).encode()).hexdigest()[:6]
+
+
 def quote_ident(name):
     return '"' + name.replace('"', '""') + '"'
 
@@ -1733,27 +1738,33 @@ class SqliteReader:
         for sess, nid, parent, created, payload in select_rows(conn, nodes["table"], cols, nodes["session"], (self.session["raw_id"],)):
             rows[nid] = {"parent": parent, "payload": payload,
                          "row": {nodes["session"]: sess, nodes["id"]: nid, nodes["parent"]: parent, nodes["created"]: created}}
-        self.main_lines, seen = self._chain(rows, self.session["head"])
-        self.sub_chains = []
+        self.main_lines, seen = self._chain(rows, self.session["head"], "")
+        main_ids = set(seen)
+        self.sub_chains, self.shared_with_main = [], 0
         heads = self.spec.get("subagent_heads")
         if heads:
             for _, agent, head in select_rows(conn, heads["table"], [heads["session"], heads["agent"], heads["head"]],
                                               heads["session"], (self.session["raw_id"],)):
-                lines, ids = self._chain(rows, head)
+                lines, ids = self._chain(rows, head, " (subagent)")
                 self.sub_chains.append((str(agent), lines))
+                self.shared_with_main += len(ids & main_ids)
                 seen |= ids
         self.off_chain = len(set(rows) - seen)
         if self.off_chain:
             self.notes.append(f"off-chain nodes: {self.off_chain}")
 
-    @staticmethod
-    def _chain(rows, head):
-        """Records from the root to `head` (a missing or looping parent ends the chain), and the node ids on it."""
+    def _chain(self, rows, head, tag):
+        """Records from the root to `head`, and the node ids on it. A parent that is missing, or a loop,
+        ends the chain and is reported in the notes (ids masked)."""
         chain, ids, nid = [], set(), head
         while nid in rows and nid not in ids:
             ids.add(nid)
             chain.append(rows[nid])
             nid = rows[nid]["parent"]
+        if nid is not None and nid in ids:
+            self.notes.append(f"chain loop at node {mask_node_id(nid)}{tag}")
+        elif nid is not None:
+            self.notes.append(f"chain broken: 1 earlier nodes unreachable{tag}")
         lines = []
         for node in reversed(chain):
             payload = node["payload"]
