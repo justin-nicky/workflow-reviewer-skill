@@ -919,15 +919,27 @@ def turn_rows(events, mapping, custom):
     return rows
 
 
+def model_forms(names):
+    """Names that match once case, spaces, hyphens and underscores are ignored are one model: report its id form
+    (lowercase, no spaces), else the first name seen."""
+    groups = {}
+    for name in names:
+        groups.setdefault(re.sub(r"[\s_\-]+", "", name.lower()), []).append(name)
+    return {name: next((n for n in group if n == n.lower() and " " not in n), group[0])
+            for group in groups.values() for name in group}
+
+
 def actor_rows(events, mapping, custom, links=None, metas=None):
     rows = []
     links, metas = links or {}, metas or {}
+    forms = model_forms([m for a in metas.values() for m in [a.get("model")] if m] + [e["model"] for e in events if e["model"]])
     for actor in dict.fromkeys(e["actor"] for e in events):
         evs = [e for e in events if e["actor"] == actor]
         tools, verify = tool_summary(evs, custom, mapping["capabilities"].get("has_tool_results", False))
         first = next((e for e in evs if e["role"] == "user" and e["text"].strip()), None)
         models = [metas[actor]["model"]] if metas.get(actor, {}).get("model") \
             else sorted({e["model"] for e in evs if e["model"]})
+        models = list(dict.fromkeys(forms.get(m, m) for m in models))
         rows.append({"actor": actor, "models": models,
                      "brief_bytes": links.get(actor, {}).get("brief_bytes",
                                                              len(first["text"].encode()) if first else 0),

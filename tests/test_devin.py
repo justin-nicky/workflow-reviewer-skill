@@ -240,3 +240,24 @@ def test_the_database_schema_number_breaks_a_variant_tie(cli, tmp_path, schema, 
     code, out = cli.json(db.path, "--mapping", "-", stdin=text)
     assert code == 0 and out["coverage"]["variant"] == want
     assert out["coverage"]["variant_choice"]["reason"] == "version range tiebreak"
+
+
+def test_model_names_that_match_after_normalising_are_reported_in_the_id_form(cli, tmp_path):
+    def fill(c):
+        subagent(c)
+    path = build(cli, tmp_path, fill, model="swe-test-medium")
+    import sqlite3
+    conn = sqlite3.connect(path)
+    rows = conn.execute("select node_id, chat_message from message_nodes").fetchall()
+    for nid, cm in rows:
+        if "Sub Model" in cm:
+            conn.execute("update message_nodes set chat_message=? where node_id=? and session_id='sess-one'", (cm.replace("Sub Model", "SWE Test_Medium"), nid))
+    conn.commit()
+    conn.close()
+    _, out = run(cli, path)
+    assert [a["models"] for a in out["actors"]] == [["swe-test-medium"], ["swe-test-medium"]]
+
+
+def test_different_model_names_stay_different(cli, tmp_path):
+    _, out = run(cli, build(cli, tmp_path, subagent))
+    assert [a["models"] for a in out["actors"]] == [["swe-test"], ["Sub Model"]]

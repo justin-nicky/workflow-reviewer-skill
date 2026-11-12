@@ -85,7 +85,7 @@ def test_devin_session_with_a_subagent(cli):
     assert {k: main["tokens"][k] for k in ("fresh_input", "cache_read", "output", "api_calls")} == \
         {"fresh_input": 16015, "cache_read": 121600, "output": 1294, "api_calls": 10}
     assert main["tokens"]["context_check"] == {"calls": 10, "context_input_total": 137615, "mismatches": 0}
-    assert sub["link"] == "subagent_heads" and sub["tool_calls"] == 4 and sub["models"] == ["SWE-2 Flash Medium"]
+    assert sub["link"] == "subagent_heads" and sub["tool_calls"] == 4 and sub["models"] == ["swe-2-flash-medium"]
     assert sub["tokens"]["api_calls"] == 2 and sub["tokens"]["output"] == 296
     skills = out["skills"]
     assert skills["offered"]["total"] == 5 and "hello" in skills["offered"]["names"] and skills["used"] == ["hello"]
