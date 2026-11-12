@@ -2471,7 +2471,8 @@ def scope_line(out, now):
     host = HOST_NAMES.get(cov["host"], str(cov["host"]).title())
     lo, total = win["from_turn"], win["turns_total"]
     span = "No turns" if not total else f"Turn {lo}" if total == 1 else f"Turns {lo}–{lo + total - 1}"
-    return f"{span} of one {host} session, reviewed on {now.day} {now:%b %Y}"
+    label = f" ({cov['label']} adapter)" if cov.get("label") else ""
+    return f"{span} of one {host} session{label}, reviewed on {now.day} {now:%b %Y}"
 
 
 def token_parts(out):
