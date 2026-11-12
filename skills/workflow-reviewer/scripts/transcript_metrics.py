@@ -1678,8 +1678,10 @@ def tfidf(documents, bigrams=True, top=None):
     return vectors, surface
 
 
-def similar_pairs(left, right, threshold, surface, same=False):
-    """[(i, j, score, shared terms)] for vector pairs at or over the threshold, best first (ties by position)."""
+def similar_pairs(left, right, threshold, surface, same=False, stats=None):
+    """[(i, j, score, shared terms)] for vector pairs at or over the threshold, best first (ties by position).
+
+    `stats`, when given, receives the best score of any pair, over the threshold or not."""
     index = {}
     for j, v in enumerate(right):
         for t, w in v.items():
@@ -1691,6 +1693,8 @@ def similar_pairs(left, right, threshold, surface, same=False):
             for j, x in index.get(t, ()):
                 if not same or j > i:
                     scores[j] = scores.get(j, 0.0) + w * x
+        if stats is not None and scores:
+            stats["best"] = max(stats.get("best", 0.0), max(scores.values()))
         for j, score in scores.items():
             if score >= threshold - 1e-9:
                 shared = sorted(((v[t] * right[j][t], t) for t in v if t in right[j]), reverse=True)
@@ -1744,7 +1748,8 @@ def frontmatter(lines):
 def skill_files(folders, plugin_folders, repo):
     """Every SKILL.md the host reads: [{name, description, path, display, lines, body_start}] and the number unreadable."""
     seen, found, unreadable = set(), [], 0
-    for base, _ in skill_dirs(folders, repo) + skill_dirs(plugin_folders, repo):
+    plugin_dirs = skill_dirs(plugin_folders, repo)
+    for base, _ in skill_dirs(folders, repo) + plugin_dirs:
         for md in sorted(base.glob("*/SKILL.md")):
             real = os.path.realpath(md)
             if real in seen or len(found) >= MAX_SKILL_FILES:
@@ -1758,7 +1763,8 @@ def skill_files(folders, plugin_folders, repo):
             lines = text.split("\n")
             meta, body_start = frontmatter(lines)
             found.append({"name": meta.get("name") or md.parent.name, "description": meta.get("description", ""), "path": real,
-                          "display": display_path(real, repo), "lines": lines, "body_start": body_start})
+                          "display": display_path(real, repo), "lines": lines, "body_start": body_start,
+                          "plugin": any(base == d for d, _ in plugin_dirs)})
     return found, unreadable
 
 
@@ -1897,6 +1903,8 @@ def overlaps_summary(events, mapping, repo, loaded, offered, thresholds):
     skill_threshold, directive_threshold = thresholds
     files, unreadable = skill_files(mapping.get("skill_folders"), mapping.get("plugin_skill_folders"), repo)
     loaded_names, offered_names = list(loaded), offered or []
+    # Plugin folders hold every plugin's skills, installed or not: only the ones the host offered count.
+    files = [f for f in files if not f["plugin"] or (offered is not None and named_in(f["name"], offered_names))]
     listed = listed_descriptions(events)
     file_names = {f["name"] for f in files}
     from_listing = [{"name": n, "description": d, "path": None, "display": None, "lines": [], "body_start": 0}
@@ -1930,7 +1938,8 @@ def overlaps_summary(events, mapping, repo, loaded, offered, thresholds):
     out["scanned"].update(instruction_files=len(instructions), directive_lines={"skills": len(skill_lines), "instructions": len(inst_lines)})
     dvec, dsurface = tfidf([t for _, _, t in skill_lines] + [t for _, _, t in inst_lines])
     left, right = dvec[:len(skill_lines)], dvec[len(skill_lines):]
-    matches = similar_pairs(left, right, directive_threshold, dsurface)
+    stats = {}
+    matches = similar_pairs(left, right, directive_threshold, dsurface, stats=stats)
     top, eligible = [], 0
     for i, j, score, shared in matches:
         sf, sn, _ = skill_lines[i]
@@ -1942,7 +1951,12 @@ def overlaps_summary(events, mapping, repo, loaded, offered, thresholds):
                         "score_pct": round(100 * score), "shared_terms": shared, "both_loaded": bool(both),
                         "judge": "eligible" if both else "static"})
     out["directive_pairs"] = {"threshold": directive_threshold, "total": len(matches), "eligible": eligible,
-                              "static": len(matches) - eligible, "more": max(0, len(matches) - TOP_OVERLAPS), "top": top}
+                              "static": len(matches) - eligible, "more": max(0, len(matches) - TOP_OVERLAPS),
+                              "best_pct": round(100 * min(1.0, stats.get("best", 0.0))), "top": top}
+    listed_files = sorted(({"path": f["display"], "loaded": bool(f["loaded"]), "directive_lines": len(directive_lines(f["lines"]))} for f in instructions),
+                          key=lambda f: (not f["loaded"], f["path"]))
+    out["instruction_files"] = {"total": len(listed_files), "loaded": sum(f["loaded"] for f in listed_files),
+                                "more": max(0, len(listed_files) - TOP_OVERLAPS), "top": listed_files[:TOP_OVERLAPS]}
     out["hooks"] = hook_summary(mapping, events, repo)
     return out
 

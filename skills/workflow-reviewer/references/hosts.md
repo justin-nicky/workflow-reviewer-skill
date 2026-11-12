@@ -120,10 +120,14 @@ The scan reads these files and writes nothing. A host lists its folders in its m
 
 | Host | Skill folders (`skill_folders`) | Plugin skill folders (`plugin_skill_folders`) | Hook files (`hook_files`) |
 |---|---|---|---|
-| Claude Code | `.claude/skills/` (repo and parents), `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`) | `~/.claude/plugins/cache/*/*/*/skills/` | `.claude/settings.json`, `.claude/settings.local.json`, `~/.claude/settings.json` (format `claude-settings`: `hooks.<Event>[].matcher` and `.hooks[].command`) |
+| Claude Code | `.claude/skills/` (repo and parents), `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`) | the desktop app's folders under `~/Library/Application Support/Claude/local-agent-mode-sessions/`: `skills-plugin/*/*/skills/` and `*/*/rpm/*/skills/` (plus one category level below it) | `.claude/settings.json`, `.claude/settings.local.json`, `~/.claude/settings.json` (format `claude-settings`: `hooks.<Event>[].matcher` and `.hooks[].command`) |
 | Codex | `.agents/skills/`, `~/.agents/skills/`, `~/.codex/skills/`, `/etc/codex/skills/` | none declared | unknown |
 | Cursor | `.cursor/skills/`, `~/.cursor/skills/`, `.agents/skills/`, `~/.agents/skills/`, `.claude/skills/`, `.codex/skills/` | none declared | unknown |
 | Devin | `.cognition/skills/`, `~/.claude/skills/` | none declared | unknown |
 | Kiro | `.kiro/skills/`, `~/.kiro/skills/` | none declared | unknown |
+
+Plugin skills do not live under `~/.claude` (its `plugins/store` held none on the machine checked): the Claude desktop app keeps them in its own data folder (macOS path shown; Windows and Linux paths are unverified). Those folders also hold skills nobody enabled, so the scan counts only the ones the host offered.
+
+Skill descriptions without a file: Claude Code's `skill_listing` attachment (`content`, one `- name: description` line per skill), Codex's developer-message skill list (the `(file: …)` suffix is removed) and Devin's `skills-loaded` entries. Instruction files with content: Claude Code's `instructions` attachment (`files[]`: path, type, content). Mapping keys: `offered_desc_from`/`offered_desc_item` (regex with name and description groups), `offered_desc_pairs`, `instruction_items`.
 
 Mapping keys: `[[plugin_skill_folders]]` and `[[hook_files]]` take the same fields as `[[skill_folders]]` (`path`, `scope`, `walk`, `base`, `base_env`), plus `glob = true` for a pattern under the base. `hooks_format` names the file shape. Always-on instructions are what the host reported loading this session (for example Devin's `rules-loaded`), plus the repo's `CLAUDE.md`, `AGENTS.md`, `~/.claude/CLAUDE.md` and Cursor rules with `alwaysApply: true`.

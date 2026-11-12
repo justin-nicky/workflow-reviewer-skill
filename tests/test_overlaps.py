@@ -120,13 +120,34 @@ def test_an_offered_skill_with_no_file_is_not_scanned_not_guessed(cli, tmp_path)
 APP = ("Library", "Application Support", "Claude", "local-agent-mode-sessions")
 
 
-def test_plugin_skill_folders_are_the_desktop_apps_plugin_folders(cli, tmp_path):
+def plugin_layout(cli):
     root = cli.home.joinpath(*APP)
     skill(root / "skills-plugin" / "acc" / "org" / "skills", "from-skills-plugin", "Alpha description about origami")
     skill(root / "acc" / "org" / "rpm" / "plugin_x" / "skills", "from-rpm", "Beta description about volcano monitoring")
     skill(root / "acc" / "org" / "rpm" / "plugin_x" / "skills" / "engineering", "from-category", "Gamma description about telescopes")
+    skill(root / "acc" / "org" / "rpm" / "plugin_x" / "skills" / "in-progress", "draft", "Delta description about pottery")
     skill(cli.home / ".claude" / "plugins" / "cache" / "mkt" / "plug" / "1.0" / "skills", "guessed-location", "Never read")
-    assert run(cli, tmp_path)["scanned"]["skills"] == 3
+
+
+def test_plugin_skill_folders_are_the_desktop_apps_plugin_folders(cli, tmp_path):
+    plugin_layout(cli)
+    names = ("from-skills-plugin", "from-rpm", "plugin:from-category")
+    o = run(cli, tmp_path, names=names)
+    assert o["scanned"]["skills"] == 3 and o["scanned"]["from_files"] == 3 and o["scanned"]["not_scanned"] == 0
+
+
+def test_plugin_skills_nobody_offered_are_left_out(cli, tmp_path):
+    plugin_layout(cli)                                     # 'draft' and the rest are on disk but were never offered
+    assert run(cli, tmp_path, names=("from-rpm",))["scanned"]["skills"] == 1
+    assert run(cli, tmp_path, names=("from-rpm",))["scanned"]["from_files"] == 1
+
+
+def test_without_an_offered_list_plugin_skills_are_not_assumed_installed(cli, tmp_path):
+    plugin_layout(cli)
+    skill(cli.home / ".claude" / "skills", "mine", "Epsilon description about gardening")
+    path = write_jsonl(tmp_path / "s.jsonl", [cc_user("go", 1), cc_assistant("mz", 90, usage=usage(1, 1))])
+    o = cli.json(path, "--host", "claude-code")[1]["skills"]["overlaps"]
+    assert o["scanned"]["skills"] == 1
 
 
 def test_the_threshold_flag_moves_the_cut(cli, tmp_path):
@@ -428,6 +449,8 @@ def test_an_instruction_file_recorded_as_loaded_makes_its_pair_eligible(cli, tmp
     top = o["directive_pairs"]["top"][0]
     assert (top["skill"], top["instruction"], top["instruction_line"], top["judge"], top["both_loaded"]) == ("tdd", "~/.claude/CLAUDE.md", 2, "eligible", True)
     assert o["directive_pairs"]["eligible"] == 1 and DIRECTIVE not in text and "then push" not in text
+    assert o["instruction_files"] == {"total": 1, "loaded": 1, "more": 0, "top": [{"path": "~/.claude/CLAUDE.md", "loaded": True, "directive_lines": 1}]}
+    assert o["directive_pairs"]["best_pct"] >= 45
 
 
 def test_a_skill_that_was_not_loaded_stays_static_even_with_a_loaded_instruction(cli, tmp_path):
@@ -482,3 +505,18 @@ def test_long_realistic_descriptions_find_the_real_overlaps_and_little_else(cli,
     for a, b in (("charts-a", "charts-b"), ("charts-b", "charts-c"), ("charts-a", "charts-c"), ("sql-a", "sql-b"), ("browser-a", "browser-b"), ("docs-a", "docs-b")):
         assert frozenset((a, b)) in found, (a, b)
     assert o["skill_pairs"]["threshold"] == 0.15 and o["skill_pairs"]["total"] <= 12
+
+
+def test_the_best_directive_score_is_reported_even_when_nothing_crosses_the_threshold(cli, tmp_path):
+    skill(cli.home / ".claude" / "skills", "tdd", "Test driven development", body="Always run the full test suite before every commit.")
+    rule_file(cli, "Never delete the production database without a backup copy.\n")
+    pairs = run(cli, tmp_path)["directive_pairs"]
+    assert pairs["total"] == 0 and 0 <= pairs["best_pct"] < 45
+
+
+def test_instruction_files_are_listed_with_loaded_status_and_capped(cli, tmp_path):
+    (cli.repo / "AGENTS.md").write_text("Always check the docs before every commit.\n")
+    rule_file(cli, "Never skip the tests.\n")
+    listed = run(cli, tmp_path)["instruction_files"]
+    assert listed["total"] == 2 and listed["loaded"] == 0 and {f["path"] for f in listed["top"]} == {"AGENTS.md", "CLAUDE.md"}
+    assert all(f["loaded"] is False for f in listed["top"])
