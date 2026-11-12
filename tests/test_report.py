@@ -219,10 +219,10 @@ def test_hostile_text_comes_out_inert(cli, tmp_path, payload):
 
 
 def test_only_backticks_format_text(cli, tmp_path):
-    data = findings(bottom_line="Use `a<b>` and **not bold** and [link](x).")
+    data = findings(bottom_line="Use `a<b>` and _not italic_ and [link](x).")
     render(cli, tmp_path, data)
     text = report_file(tmp_path).read_text(encoding="utf-8")
-    assert "<code>a&lt;b&gt;</code>" in text and "**not bold**" in text and "<a " not in text
+    assert "<code>a&lt;b&gt;</code>" in text and "_not italic_" in text and "<a " not in text
 
 
 SECRET = "API_KEY=sk_" "live_abcdefghijklmnop0123456789"
@@ -379,3 +379,118 @@ def test_the_opener_never_uses_a_shell(monkeypatch):
 def test_the_script_still_imports_no_network_module():
     source = SCRIPT.read_text(encoding="utf-8")
     assert not re.search(r"^\s*(import|from)\s+(socket|urllib|http|requests|ssl|ftplib|smtplib)\b", source, re.M)
+
+
+# ---- step 3b: visual-check fixes ---------------------------------------------------------------------------------------
+
+def test_the_disclosure_marker_points_down_when_open(cli, tmp_path):
+    render(cli, tmp_path)
+    css = report_file(tmp_path).read_text(encoding="utf-8")
+    closed = re.search(r"summary::before\{content:\"(\\[0-9A-F]+)\"", css).group(1)
+    opened = re.search(r"details\[open\]>summary::before\{([^}]*)\}", css).group(1)
+    assert closed == "\\25B8" and 'content:"\\25BE"' in opened and "rotate" not in css
+
+
+def test_applies_to_is_a_plain_tag_after_confidence(cli, tmp_path):
+    render(cli, tmp_path)
+    text = report_file(tmp_path).read_text(encoding="utf-8")
+    assert text.count('<li class="tag">All hosts</li>') == 1 and text.count('<li class="tag">Claude Code</li>') == 1
+    first = text[text.index('<li class="tag impact">High impact'):]
+    first = first[:first.index("</ul>")]
+    assert first.index("confidence</li>") < first.index("All hosts</li>")
+    _, md = None, cli.run(CLAUDE, "--host", "claude-code", "--report", "-", "--report-format", "md", stdin=json.dumps(FINDINGS)).stdout
+    assert "medium confidence, All hosts" in md and "low confidence, Claude Code" in md
+
+
+@pytest.mark.parametrize("value", ["mars", "All hosts", "", 5, None])
+def test_applies_to_must_be_all_hosts_or_a_known_host(cli, tmp_path, value):
+    data = findings()
+    data["actions"][0]["applies_to"] = value
+    proc = render(cli, tmp_path, data)
+    assert proc.returncode == 7 and any("actions[0].applies_to" in e for e in json.loads(proc.stdout)["errors"])
+
+
+@pytest.mark.parametrize("value", ["all hosts", "claude-code", "codex", "cursor", "devin", "kiro"])
+def test_applies_to_accepts_all_hosts_and_known_hosts(value):
+    data = findings()
+    data["actions"][0]["applies_to"] = value
+    assert tm.validate_findings(data) == []
+
+
+def test_at_most_one_bold_span_and_only_in_the_bottom_line(cli, tmp_path):
+    ok = findings(bottom_line="A **bold** claim and `code`.")
+    render(cli, tmp_path, ok)
+    text = report_file(tmp_path).read_text(encoding="utf-8")
+    assert '<p class="bottom-line">A <strong>bold</strong> claim and <code>code</code>.</p>' in text
+    assert tm.validate_findings(findings(bottom_line="**one** and **two**")) and \
+        "bottom_line" in tm.validate_findings(findings(bottom_line="**one** and **two**"))[0]
+    for field in ("title",):
+        assert any(field in e for e in tm.validate_findings(findings(title="a **b** c")))
+    data = findings()
+    data["actions"][0]["why"]["cause"] = "a **b** c"
+    data["skills"][0]["evidence"] = "x **y** z"
+    errors = tm.validate_findings(data)
+    assert any("actions[0].why.cause" in e for e in errors) and any("skills[0].evidence" in e for e in errors)
+
+
+def test_evidence_items_may_be_240_characters(cli, tmp_path):
+    data = findings()
+    data["actions"][0]["why"]["evidence"] = ["e" * 240]
+    assert tm.validate_findings(data) == []
+    data["actions"][0]["why"]["evidence"] = ["e" * 241]
+    assert any("evidence[0]" in e and "240" in e for e in tm.validate_findings(data))
+
+
+@pytest.mark.parametrize("seconds, text", [(0, "0 s"), (166, "166 s"), (599, "599 s"), (600, "10 min"), (3599, "60 min"),
+                                           (3600, "about 1.0 h"), (24840, "about 6.9 h")])
+def test_time_units(seconds, text):
+    assert tm.fmt_secs(seconds) == text
+
+
+def test_all_three_parts_of_the_time_row_use_the_same_rule(cli, tmp_path):
+    out = {"time": {"active_s": 166, "tool_s": 700, "waiting_s": 24840}}
+    full = {"tokens": {"not_measurable": "x"}, "tools": {"total": 0, "by_category": {}, "errors": 0}, "time": out["time"],
+            "verify": {"total": 0, "before_last_edit": 0}, "actors": [], "interruptions": {"count": 0}}
+    row = next(v for rid, _, v in tm.metric_rows(full) if rid == "time")
+    assert row == "166 s active, 12 min in tools, about 6.9 h waiting on you"
+    full["time"] = {"wall_s": 24840}
+    assert next(v for rid, _, v in tm.metric_rows(full) if rid == "time") == "about 6.9 h wall clock (coarse)"
+
+
+def install_skills(cli, names):
+    for name in names:
+        folder = cli.home / ".claude" / "skills" / name
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text("---\ndescription: d\n---\nbody\n")
+
+
+def test_other_installed_skills_row_counts_what_the_findings_do_not_mention(cli, tmp_path):
+    install_skills(cli, ["hello", "code-review", "extra-a", "extra-b", "extra-c"])
+    _, metrics = cli.json(CLAUDE, "--host", "claude-code")
+    assert metrics["skills"]["inventory_total"] == 5 and "_inventory_names" not in metrics["skills"]
+    render(cli, tmp_path)                                  # the findings mention hello and code-review
+    text = report_file(tmp_path).read_text(encoding="utf-8")
+    assert '<span class="skill-name muted">Other installed skills</span>' in text and "Not exercised in this task (3 skills)" in text
+    assert text.index("Not exercised") > text.index("G1: state-doc pruning")
+    md = cli.run(CLAUDE, "--host", "claude-code", "--report", "-", "--report-format", "md", stdin=json.dumps(FINDINGS)).stdout
+    assert "- Other installed skills: No verdict. Not exercised in this task (3 skills)" in md
+
+
+def test_the_other_row_comes_from_the_metrics_run_not_the_agent(cli, tmp_path):
+    install_skills(cli, ["hello", "code-review", "x1"])
+    render(cli, tmp_path)
+    assert "(1 skill)" in report_file(tmp_path).read_text(encoding="utf-8")
+
+
+def test_the_other_row_is_left_out_when_zero_or_unknown(cli, tmp_path):
+    install_skills(cli, ["hello", "code-review", "pr-review", "tdd"])      # all mentioned (or none left over)
+    render(cli, tmp_path)
+    assert "Other installed skills" not in report_file(tmp_path).read_text(encoding="utf-8")
+    assert tm.other_skill_count(None, FINDINGS) is None and tm.other_skill_count(["a"], {"skills": [{"name": "a"}]}) is None
+    assert tm.other_skill_count(["a", "b"], {"skills": [{"name": "a"}]}) == 1
+
+
+def test_installed_skills_in_the_inventory_beyond_the_ten_shown_are_counted(cli, tmp_path):
+    install_skills(cli, [f"s{i:02d}" for i in range(14)])
+    render(cli, tmp_path)
+    assert "Not exercised in this task (14 skills)" in report_file(tmp_path).read_text(encoding="utf-8")

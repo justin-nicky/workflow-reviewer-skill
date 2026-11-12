@@ -54,9 +54,8 @@ ol.actions>li.impact-high{--impact:var(--impact-high)}ol.actions>li.impact-mediu
 details{margin:.35rem 0 0 1.85rem;border-top:1px solid var(--rule)}details:first-of-type{border-top:0}
 summary{cursor:pointer;list-style:none;padding:.55rem 0;font-weight:600;font-size:.95rem}
 summary::-webkit-details-marker{display:none}
-summary::before{content:"\25B8";display:inline-block;width:1rem;color:var(--ink-3);transition:transform 120ms ease}
-details[open]>summary::before{transform:rotate(90deg)}
-@media (prefers-reduced-motion:reduce){summary::before{transition:none}}
+summary::before{content:"\25B8";display:inline-block;width:1rem;color:var(--ink-3)}
+details[open]>summary::before{content:"\25BE"}
 details ul{margin:0 0 .75rem;padding-left:1.1rem}details li{margin:.3rem 0;max-width:40em}
 .label{font-weight:600}
 ul.skills{list-style:none;margin:0;padding:0}
@@ -80,7 +79,7 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <h1>Workflow review: Spec 042 close-out checks</h1>
 <p class="scope">Turns 1–7 of one Claude Code session, reviewed on DATE</p>
 </header>
-<p class="bottom-line">Most of this session&#x27;s cost is re-reading a large context: <code>CURRENT_STATE.md</code> is loaded on every call and has grown to mostly history.</p>
+<p class="bottom-line">Most of this session&#x27;s cost is re-reading a <strong>large context</strong>: <code>CURRENT_STATE.md</code> is loaded on every call and has grown to mostly history.</p>
 <figure class="anatomy" aria-labelledby="anatomy-cap">
 <div class="bar" role="img" aria-label="Token composition: cache read 91.7%, cache write 8.1%, output 0.2%, fresh input under 0.1%">
 <span class="seg-read" style="flex: 91.7479" title="Cache read: 951K tokens (91.7%)"></span>
@@ -101,7 +100,7 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <tr><th scope="row">Fresh input</th><td>44</td></tr>
 <tr><th scope="row">Context at invocation</th><td>73.3K</td></tr>
 <tr><th scope="row">Tool calls</th><td>11 (4 shell), 1 error</td></tr>
-<tr><th scope="row">Time</th><td>3 min active, 12 s in tools, 0 s waiting on you</td></tr>
+<tr><th scope="row">Time</th><td>166 s active, 12 s in tools, 0 s waiting on you</td></tr>
 <tr><th scope="row">Verify runs</th><td>1 <span class="muted">(expected: this session only reads)</span></td></tr>
 <tr><th scope="row">Subagents</th><td>1</td></tr>
 <tr><th scope="row">Interruptions</th><td>1</td></tr>
@@ -118,6 +117,7 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <li class="tag">Low effort</li>
 <li class="tag">Low risk</li>
 <li class="tag">Medium confidence</li>
+<li class="tag">All hosts</li>
 </ul>
 <details>
 <summary>Why</summary>
@@ -143,6 +143,7 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <li class="tag">Medium effort</li>
 <li class="tag warn">High risk</li>
 <li class="tag warn">Low confidence</li>
+<li class="tag">Claude Code</li>
 </ul>
 <details>
 <summary>Why</summary>

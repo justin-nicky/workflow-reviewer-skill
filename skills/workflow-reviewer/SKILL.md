@@ -50,7 +50,7 @@ The skill's scope ends at the report. A later "apply item 1" is an ordinary requ
 
 ## How the report is made
 
-Send only judgments; the script works out every number. Run the same selection arguments as the metrics run with `--report -` and the findings JSON on stdin (`schema_version` 1: `title`, `bottom_line`, `actions` 0 to 5 in rank order, `skills`, optional `closing_question` (only with a gap) and `metric_notes`). Exit 7 lists what to fix. The script writes the HTML report, opens it where a display exists, and prints the bottom line, the top action and the file path. Use `--report-format md` where there is no browser, and `--no-open` to skip opening. The full flow rewrite comes later.
+Send only judgments; the script works out every number. Run the same selection arguments as the metrics run with `--report -` and the findings JSON on stdin (`schema_version` 1: `title`, `bottom_line`, `actions` 0 to 5 in rank order (each may carry `applies_to`: `all hosts` or one host name), `skills`, optional `closing_question` (only with a gap) and `metric_notes`). `bottom_line` may hold one `**span**`; no other field may. Exit 7 lists what to fix. The script writes the HTML report, opens it where a display exists, and prints the bottom line, the top action and the file path. Use `--report-format md` where there is no browser, and `--no-open` to skip opening. The full flow rewrite comes later.
 
 ## Script flags
 

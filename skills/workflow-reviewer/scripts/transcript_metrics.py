@@ -1654,6 +1654,7 @@ def skills_summary(events, host, repo, offered=None, folders=None, mapping=None)
         summary["offered"] = {"total": len(offered), "names": offered[:TOP_OFFERED]}
         summary["used_not_offered"] = [n for n in loaded if not is_offered(n, offered)][:TOP_LOADED_SKILLS]
         summary["offered_note"] = "a skill used but not offered is normal for explicit-only skills"
+    summary["_inventory_names"] = None if no_folders else [i["name"] for i in inventory]     # removed before output
     summary.update(inventory=shown, inventory_total=None if no_folders else len(inventory),
                    instruction_files=instruction_files(repo))
     host_rules = host_instruction_files(events)
@@ -1717,9 +1718,13 @@ VERDICTS = ("keep", "improve", "merge", "gap", "overlap", "none")
 METRIC_IDS = ("calls", "output", "cache", "fresh", "context", "tools", "time", "verify", "subagents", "interruptions", "tokens")
 FINDINGS_KEYS = ("schema_version", "title", "bottom_line", "actions", "skills", "closing_question", "metric_notes")
 ACTION_KEYS = ("title", "impact", "effort", "risk", "confidence", "why", "what")
-LIMIT = {"title": 80, "bottom_line": 300, "action_title": 100, "text": 300, "evidence": 160, "skill_name": 60,
+APPLIES_TO = ("all hosts", "claude-code", "codex", "cursor", "devin", "kiro")
+LIMIT = {"title": 80, "bottom_line": 300, "action_title": 100, "text": 300, "evidence": 240, "skill_name": 60,
          "skill_evidence": 240, "closing": 300, "note": 120, "actions": 5, "evidence_items": 3, "skills": 20, "overlaps": 5}
 MD_LINES = 80
+
+
+BOLD_RE = re.compile(r"\*\*.+?\*\*")
 
 
 def _text(errors, path, value, limit):
@@ -1729,6 +1734,10 @@ def _text(errors, path, value, limit):
         errors.append(f"{path}: must not be empty")
     elif len(value) > limit:
         errors.append(f"{path}: {len(value)} characters, the limit is {limit}")
+    elif BOLD_RE.search(value) and path != "bottom_line":
+        errors.append(f"{path}: **emphasis** is only allowed in bottom_line")
+    elif path == "bottom_line" and len(BOLD_RE.findall(value)) > 1:
+        errors.append("bottom_line: at most one **emphasis** span is allowed")
 
 
 def _object(errors, path, value, required, optional=()):
@@ -1765,8 +1774,10 @@ def validate_findings(data):
     ranks = []
     for i, action in enumerate(actions):
         at = f"actions[{i}]"
-        if not _object(errors, at, action, ACTION_KEYS):
+        if not _object(errors, at, action, ACTION_KEYS, ("applies_to",)):
             continue
+        if "applies_to" in action and action["applies_to"] not in APPLIES_TO:
+            errors.append(f"{at}.applies_to: must be one of {', '.join(APPLIES_TO)} (got {action['applies_to']!r})")
         if "title" in action:
             _text(errors, f"{at}.title", action["title"], LIMIT["action_title"])
         for key, allowed in (("impact", IMPACT), ("effort", EFFORT), ("risk", RISK), ("confidence", CONFIDENCE)):
@@ -1860,11 +1871,12 @@ def fmt_pct(p):
 
 
 def fmt_secs(s):
+    """Seconds below 10 minutes, minutes up to an hour, then hours with one decimal."""
     s = int(s)
-    return f"{s} s" if s < 60 else f"{s / 60:.0f} min" if s < 3600 else f"{s / 3600:.1f} h"
+    return f"{s} s" if s < 600 else f"{s / 60:.0f} min" if s < 3600 else f"about {s / 3600:.1f} h"
 
 
-HOST_NAMES = {"claude-code": "Claude Code", "codex": "Codex", "cursor": "Cursor", "devin": "Devin"}
+HOST_NAMES = {"claude-code": "Claude Code", "codex": "Codex", "cursor": "Cursor", "devin": "Devin", "kiro": "Kiro"}
 
 
 def scope_line(out, now):
@@ -1907,7 +1919,8 @@ def metric_rows(out):
     elif "active_s" in tm_:
         value = f"{fmt_secs(tm_['active_s'])} active, {fmt_secs(tm_['tool_s'])} in tools, {fmt_secs(tm_['waiting_s'])} waiting on you"
     else:
-        value = f"about {fmt_secs(tm_['wall_s'])} wall clock (coarse)"
+        wall = fmt_secs(tm_["wall_s"])
+        value = f"{wall if wall.startswith('about') else 'about ' + wall} wall clock (coarse)"
     rows.append(("time", "Time", value))
     v = out["verify"]
     rows.append(("verify", "Verify runs", f"{v['total']}" + (f" ({v['before_last_edit']} before the last edit)" if v["before_last_edit"] else "")))
@@ -1944,6 +1957,24 @@ def skill_rows(findings):
     return rows
 
 
+def applies_label(action):
+    value = action.get("applies_to")
+    return None if value is None else "All hosts" if value == "all hosts" else HOST_NAMES[value]
+
+
+def other_skill_count(names, findings):
+    """Installed skills the findings do not mention (None when the inventory is unknown or all are mentioned)."""
+    if names is None:
+        return None
+    mentioned = {s["name"] for s in findings.get("skills", [])}
+    left = sum(1 for n in names if n not in mentioned)
+    return left or None
+
+
+def other_skill_text(count):
+    return f"Not exercised in this task ({count} skill{'' if count == 1 else 's'})"
+
+
 def flags(action):
     return [w for w, on in (("High risk", action["risk"] == "high"), ("Low confidence", action["confidence"] == "low"),
                             ("High effort", action["effort"] == "high")) if on]
@@ -1968,9 +1999,12 @@ def _esc(text):
     return escape(text, quote=True)
 
 
-def _inline(text):
-    """Escape, then let `backticks` (and nothing else) become <code>."""
-    return re.sub(r"`([^`]+)`", r"<code>\1</code>", _esc(text))
+def _inline(text, bold=False):
+    """Escape, then let `backticks` become <code> (and, where allowed, one **span** become <strong>)."""
+    text = _esc(text)
+    if bold:
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text, count=1)
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
 
 
 REPORT_CSS = """
@@ -2022,9 +2056,8 @@ ol.actions>li.impact-high{--impact:var(--impact-high)}ol.actions>li.impact-mediu
 details{margin:.35rem 0 0 1.85rem;border-top:1px solid var(--rule)}details:first-of-type{border-top:0}
 summary{cursor:pointer;list-style:none;padding:.55rem 0;font-weight:600;font-size:.95rem}
 summary::-webkit-details-marker{display:none}
-summary::before{content:"\\25B8";display:inline-block;width:1rem;color:var(--ink-3);transition:transform 120ms ease}
-details[open]>summary::before{transform:rotate(90deg)}
-@media (prefers-reduced-motion:reduce){summary::before{transition:none}}
+summary::before{content:"\\25B8";display:inline-block;width:1rem;color:var(--ink-3)}
+details[open]>summary::before{content:"\\25BE"}
 details ul{margin:0 0 .75rem;padding-left:1.1rem}details li{margin:.3rem 0;max-width:40em}
 .label{font-weight:600}
 ul.skills{list-style:none;margin:0;padding:0}
@@ -2043,7 +2076,7 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 """
 
 
-def render_html(out, findings, now):
+def render_html(out, findings, now, inventory_names=None):
     """The report page. `findings` is already cleaned; `out` is the metrics run."""
     notes = findings.get("metric_notes", {})
     h = ["<!DOCTYPE html>", '<html lang="en">', "<head>", '<meta charset="utf-8">',
@@ -2052,7 +2085,7 @@ def render_html(out, findings, now):
          f"<title>Workflow review: {_esc(findings['title'])}</title>", "<style>" + REPORT_CSS + "</style>", "</head>", "<body>",
          '<main class="sheet">', "<header>", f"<h1>Workflow review: {_inline(findings['title'])}</h1>",
          f'<p class="scope">{_esc(scope_line(out, now))}</p>', "</header>",
-         f'<p class="bottom-line">{_inline(findings["bottom_line"])}</p>']
+         f'<p class="bottom-line">{_inline(findings["bottom_line"], bold=True)}</p>']
     parts = token_parts(out)
     if parts and parts[1]:
         shown, total = parts
@@ -2087,6 +2120,8 @@ def render_html(out, findings, now):
             for key, bad in (("effort", "high"), ("risk", "high"), ("confidence", "low")):
                 cls = "tag warn" if a[key] == bad else "tag"
                 h.append(f'<li class="{cls}">{a[key].capitalize()} {key}</li>')
+            if applies_label(a):
+                h.append(f'<li class="tag">{_esc(applies_label(a))}</li>')
             w, wh = a["what"], a["why"]
             h += ["</ul>", "<details>", "<summary>Why</summary>", "<ul>", f"<li>{_inline(wh['cause'])}</li>",
                   f'<li><span class="label">Cost:</span> {_inline(wh["cost"])}</li>']
@@ -2098,12 +2133,16 @@ def render_html(out, findings, now):
         h.append("</ol>")
     h.append("</section>")
     rows = skill_rows(findings)
-    if rows:
+    other = other_skill_count(inventory_names, findings)
+    if rows or other:
         h += ['<section aria-labelledby="h-skills">', '<h2 id="h-skills">Skills audit</h2>', '<ul class="skills">']
         for name, verdict, evidence, overlaps in rows:
             extra = " Overlaps with " + ", ".join(f"<code>{_esc(o)}</code>" for o in overlaps) + "." if overlaps else ""
             h += ["<li>", f'<span class="skill-name">{_esc(name)}</span>', f'<span class="verdict v-{verdict}">{VERDICT_LABEL[verdict]}</span>',
                   f'<span class="skill-evidence">{_inline(evidence)}{extra}</span>', "</li>"]
+        if other:
+            h += ["<li>", '<span class="skill-name muted">Other installed skills</span>', '<span class="verdict v-none">No verdict</span>',
+                  f'<span class="skill-evidence">{other_skill_text(other)}</span>', "</li>"]
         h += ["</ul>", "</section>"]
     if findings.get("closing_question"):
         h.append(f'<aside class="closing" aria-label="Next step"><p>{_inline(findings["closing_question"])}</p></aside>')
@@ -2111,7 +2150,7 @@ def render_html(out, findings, now):
     return "\n".join(h)
 
 
-def render_report_md(out, findings, now):
+def render_report_md(out, findings, now, inventory_names=None):
     """The same report as markdown, at most MD_LINES lines."""
     lines = [f"# Workflow review: {findings['title']}", scope_line(out, now), f"**Bottom line:** {findings['bottom_line']}", "## Metrics"]
     notes = findings.get("metric_notes", {})
@@ -2126,7 +2165,8 @@ def render_report_md(out, findings, now):
     for n, a in enumerate(findings["actions"], 1):
         warn = flags(a)
         lines.append(f"{n}. **{a['title']}**: {a['impact'].capitalize()} impact, {a['effort']} effort, {a['risk']} risk, "
-                     f"{a['confidence']} confidence" + (f" (! {', '.join(warn)})" if warn else ""))
+                     f"{a['confidence']} confidence" + (f", {applies_label(a)}" if applies_label(a) else "")
+                     + (f" (! {', '.join(warn)})" if warn else ""))
         lines += [f"   - Why: {a['why']['cause']}", f"   - Cost: {a['why']['cost']}"]
         if a["why"]["evidence"]:
             lines.append("   - Evidence: " + "; ".join(a["why"]["evidence"]))
@@ -2134,9 +2174,12 @@ def render_report_md(out, findings, now):
                   f"   - Watch for: {a['what']['watch_for']}"]
     rows = skill_rows(findings)
     tail = [f"> {findings['closing_question']}"] if findings.get("closing_question") else []
-    if rows:
+    other = other_skill_count(inventory_names, findings)
+    if rows or other:
         lines.append("## Skills audit")
         skill_lines = [f"- {name}: {VERDICT_LABEL[v]}. {ev}" + (f" Overlaps with {', '.join(o)}." if o else "") for name, v, ev, o in rows]
+        if other:
+            skill_lines.append(f"- Other installed skills: No verdict. {other_skill_text(other)}")
         room = MD_LINES - len(lines) - len(tail)
         if len(skill_lines) > room:
             hidden = len(skill_lines) - (room - 1)
@@ -2187,14 +2230,14 @@ def open_file(path):
                        stderr=subprocess.DEVNULL, timeout=15, check=False)
 
 
-def report_main(out, findings, args, redact_on):
+def report_main(out, findings, args, redact_on, inventory_names=None):
     """Render the report for this metrics run. Returns 0."""
     now = datetime.now(timezone.utc)
     findings = clean_findings(findings, redact_on)
     if args.report_format == "md":
-        sys.stdout.write(render_report_md(out, findings, now))
+        sys.stdout.write(render_report_md(out, findings, now, inventory_names))
         return 0
-    path = write_report(render_html(out, findings, now))
+    path = write_report(render_html(out, findings, now, inventory_names))
     if not args.no_open and can_open():
         try:
             open_file(str(path))
@@ -2740,8 +2783,9 @@ def main(argv=None):
             if out["skills"].get("inventory_note"):
                 out["coverage"].setdefault("notes", []).append(out["skills"]["inventory_note"])
     code = 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
+    inventory_names = out["skills"].pop("_inventory_names", None) if isinstance(out.get("skills"), dict) else None
     if findings is not None and "coverage" in out:
-        report_main(out, findings, args, redact_on)
+        report_main(out, findings, args, redact_on, inventory_names)
         return code
     emit(out, args.format, redact_on)
     return code
