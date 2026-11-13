@@ -392,6 +392,9 @@ def parse_lines(lines, mapping, actor="main"):
                     except ValueError:
                         pass
                 name, call_id = get_first(c, rule.get("call_name")) or "", get_first(c, rule.get("call_id"))
+                via = rule.get("call_via")
+                if via and name == via["tool"] and isinstance(inp, dict) and isinstance(inp.get(via["name"]), str):
+                    name, inp = inp[via["name"]], inp.get(via["input"])    # a generic call that carries the real tool and its arguments
                 category = None
                 if rule.get("call_kind"):         # the kind and raw input sit on the message, keyed by call id
                     at_id = lambda path: path.replace("{id}", str(call_id))
@@ -737,8 +740,17 @@ def analyse(events, stats, mapping, custom_patterns=()):
 
 # ---- window, time, turns ---------------------------------------------------------------
 
-REVIEWER_RE = re.compile(    # the invocation itself: /workflow-reviewer or $workflow-reviewer starting a prompt
-    r"^\s*[/$]workflow-reviewer\b|<command-(?:name|message)>/?workflow-reviewer", re.I)
+REVIEWER_RE = re.compile(    # the invocation itself, in each host's own form: a typed /workflow-reviewer or $workflow-reviewer starting
+    r"^\s*(?:<user_input[^>]*>\s*)?[/$]workflow-reviewer\b"                      # the prompt (Cline wraps it in <user_input>),
+    r"|^\s*(?:<user_input[^>]*>\s*)?(?:please\s+)?(?:use|run|invoke|start)\s+(?:the\s+)?[/$]?workflow-reviewer\b"   # asking for it by name,
+    r"|<command-(?:name|message)>/?workflow-reviewer"                              # Claude Code's command markers,
+    r"|<manually_attached_skills>(?:(?!</manually_attached_skills>).)*?\bSkill Name:\s*workflow-reviewer\b",   # Cursor's attached skill
+    re.I | re.S)
+
+
+def is_invocation(ev):
+    """The prompt that invokes the skill: its text, or the typed /name the mapping read from it (Devin)."""
+    return bool(REVIEWER_RE.search(ev["text"])) or ev.get("slash_skill") == "workflow-reviewer"
 LAG_SECONDS = 30
 MAX_EVENTS = 100
 MAX_INTERRUPTION_TURNS = 50
@@ -787,7 +799,7 @@ def mark_repeated_prompts(events):
 def reviewer_cut(events):
     """Index of the event that opens the turn holding the latest /workflow-reviewer prompt."""
     for ev in reversed(events):
-        if is_turn_start(ev) and REVIEWER_RE.search(ev["text"]):
+        if is_turn_start(ev) and is_invocation(ev):
             opener = next((e for e in events if e["turn_open"] and e["turn"] == ev["turn"]), ev)
             return min(opener["i"], ev["i"])
     return None
@@ -841,17 +853,25 @@ def turn_error_summary(events, mapping):
 
 
 COARSE_LABEL = "coarse: prompt timestamps only, minute precision; last turn's duration unknown"
+COARSE_NEXT_LABEL = "coarse: prompt timestamps only, minute precision; until the next prompt"
 
 
-def coarse_time_summary(events):
-    """Wall time between the first and last prompt, for hosts that only write a clock inside prompts."""
+def coarse_time_summary(events, later=None):
+    """Wall time for hosts that only write a clock inside prompts.
+
+    With a prompt after the window (the next task, or the reviewer's own invocation) the window runs until that
+    prompt. Without one it runs from the first to the last prompt, and the last turn's duration is unknown."""
     stamps = [e["prompt_ts"] for e in events if e["actor"] == "main" and e["prompt_ts"] is not None]
-    if len(stamps) < 2:
-        return {"not_measurable": "fewer than two prompts carry a timestamp"}
     na = {"not_measurable": "host records no timestamps beyond the prompt clock"}
-    wall = round(max(stamps) - min(stamps))
+    if later is not None and stamps:
+        wall, label = round(later - min(stamps)), COARSE_NEXT_LABEL
+    elif len(stamps) >= 2:
+        wall, label = round(max(stamps) - min(stamps)), COARSE_LABEL
+    else:
+        return {"not_measurable": "fewer than two prompts carry a timestamp"}
+    wall = max(0, wall)
     # minute precision: each prompt time may be off by up to a minute either way
-    return {"wall_s": wall, "wall_range_s": [max(0, wall - 60), wall + 60], "precision": COARSE_LABEL,
+    return {"wall_s": wall, "wall_range_s": [max(0, wall - 60), wall + 60], "precision": label,
             "tool_s": na, "waiting_s": na}
 
 
@@ -999,6 +1019,8 @@ def actor_rows(events, mapping, custom, links=None, metas=None):
                      "tool_s": round(tool_seconds(evs, mapping.get("tool_time_source") == "result_spans")) if mapping["capabilities"].get("has_timestamps") else None})
         if actor in links:
             rows[-1]["link"] = links[actor]["link"]
+            if "match_score" in links[actor]:
+                rows[-1].update(match_score=links[actor]["match_score"], runner_up_score=links[actor]["runner_up_score"])
         history = metas.get(actor, {}).get("history")
         if history:
             rows[-1].update(history_from_ordinal=history["from_ordinal"], history_records_skipped=history["skipped"],
@@ -1138,26 +1160,69 @@ def spawn_text(call):
     return " ".join(v for v in inp.values() if isinstance(v, str)) if isinstance(inp, dict) else ""
 
 
+def words(text):
+    return set(re.findall(r"\w+", text.lower()))
+
+
+def brief_score(brief, spawn):
+    """How much a subagent's first message and a spawn call's arguments say the same thing, 0 to 1.
+
+    One text inside the other counts as 1; otherwise the overlap of their word sets (Jaccard)."""
+    brief = brief.strip()
+    if not brief or not spawn.strip():
+        return 0.0
+    if brief in spawn or spawn.strip() in brief:
+        return 1.0
+    a, b = words(brief), words(spawn)
+    return len(a & b) / len(a | b) if a | b else 0.0
+
+
+MIN_BRIEF_SCORE = 0.3
+
+
 def place_subagents(events):
-    """Without timestamps, put each subagent's events right after the call that spawned it (matched by brief)."""
+    """Without timestamps, put each subagent's events right after the call that spawned it.
+
+    The spawn is the call whose arguments overlap the subagent's first message best (briefs often share a
+    template, so the first match is not good enough). A spawn serves one subagent: pairs are taken best score
+    first, and equal scores go in order (the spawn that came first to the subagent that came first).
+    Returns (events, placed) where placed maps each placed actor to its score and the best other score.
+    """
     out = [e for e in events if e["actor"] == "main"]
-    placed = set()
     subs = {}
     for e in events:
         if e["actor"] != "main":
             subs.setdefault(e["actor"], []).append(e)
-    for evs in subs.values():
-        brief = next((e["text"] for e in evs if e["role"] == "user" and e["text"].strip()), "")[:80]
-        pos = next((k for k, e in enumerate(out) if e["actor"] == "main" and brief and any(
-            call_cat(c) == "agent" and brief in spawn_text(c) for c in e["calls"])), None)
-        if pos is None:
-            out += evs
+    spawns = [(k, c) for k, e in enumerate(out) for c in e["calls"] if call_cat(c) == "agent"]
+    briefs = {a: next((e["text"] for e in evs if e["role"] == "user" and e["text"].strip()), "") for a, evs in subs.items()}
+    scores = {(a, n): brief_score(briefs[a], spawn_text(c)) for a in subs for n, (_, c) in enumerate(spawns)}
+    order = {a: n for n, a in enumerate(subs)}
+    taken, chosen = set(), {}
+    for (a, n), score in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0][1], order[kv[0][0]])):
+        if score >= MIN_BRIEF_SCORE and a not in chosen and n not in taken:
+            chosen[a] = n
+            taken.add(n)
+    placed, inserted = {}, []
+    for a, evs in subs.items():
+        if a not in chosen:
+            inserted.append(evs)
             continue
-        placed.add(evs[0]["actor"])
-        while pos + 1 < len(out) and out[pos + 1]["actor"] != "main":
-            pos += 1
-        out[pos + 1:pos + 1] = evs
-    return out, placed
+        others = [v for (b, n), v in scores.items() if b == a and n != chosen[a]]
+        placed[a] = {"score": round(scores[(a, chosen[a])], 2), "runner_up": round(max(others), 2) if others else None,
+                     "spawn": chosen[a]}
+    after = {}
+    for a, n in chosen.items():
+        after.setdefault(spawns[n][0], []).append(subs[a])
+    result = []
+    for k, e in enumerate(out):
+        result.append(e)
+        for evs in after.get(k, []):
+            result += evs
+    for evs in inserted:                                              # no spawn explains these: at the end, flagged
+        for e in evs:
+            e["unplaced"] = True
+        result += evs
+    return result, placed
 
 
 def first_record(lines):
@@ -1302,9 +1367,13 @@ def link_subagents(events, metas, mapping, placed, main_ids=()):
                 for e in evs:
                     e["turn"] = spawn[0]["turn"]
         elif actor in placed:
-            info[actor] = {"link": "brief", "call_id": None}
+            info[actor] = {"link": "brief", "call_id": None, "match_score": placed[actor]["score"],
+                           "runner_up_score": placed[actor]["runner_up"]}
         else:
             info[actor] = {"link": "timestamp" if any(e["ts"] is not None for e in evs) else "none", "call_id": None}
+        if info[actor]["link"] != "none":
+            for e in evs:
+                e.pop("unplaced", None)                    # something explains where it belongs
     return info
 
 
@@ -3194,7 +3263,7 @@ tool_time_source turnless_activity type_path variant variants versions""".split(
 RULE_KEYS = frozenset("""call_command_name call_command_regex call_id call_input call_kind call_name call_raw calls event_id
 instruction_always_on instruction_bytes instruction_items instruction_paths interrupt match model msg_id non_turn_reason offered_block
 offered_desc_from offered_desc_item offered_desc_pairs offered_each offered_from offered_item offered_section offered_skills prompt_time
-call_split result_error result_exit_code result_exit_code_regex result_finished result_id result_started result_text results role skill_command
+call_split call_via result_error result_exit_code result_exit_code_regex result_finished result_id result_started result_text results role skill_command
 spawned_agent spawned_model text timestamp turn turn_error turn_regex turn_start usage_cache_read usage_cache_write usage_context usage_dedupe_key
 usage_fallback usage_input usage_input_includes_cache usage_output usage_present""".split())
 FIELD_KEYS = frozenset("version msg_id model timestamp event_id".split())
@@ -4338,6 +4407,9 @@ def main(argv=None):
         mark_repeated_prompts(events)
     links = link_subagents(events, metas, mapping, placed, main_ids - {None})
     cut = reviewer_cut(events)
+    cut_turn = events[cut]["turn"] if cut is not None else None
+    unlinked = [a for a, v in links.items() if v["link"] == "none"]
+    whole_session = cut is None and args.from_turn is None and args.to_turn is None
     if args.events:
         lo, _, hi = args.events.partition(":")
         picked = [e for e in events if int(lo) <= e["i"] <= int(hi or lo)]
@@ -4347,7 +4419,8 @@ def main(argv=None):
     elif args.sample is not None:
         out = {"sample": [ln[:300] for ln in raw if ln.strip()][:min(args.sample, MAX_SAMPLE)]}
     else:
-        window = [e for e in events if cut is None or e["i"] < cut]
+        # a subagent no spawn explains belongs to no window; only a whole-session run lists it
+        window = [e for e in events if (cut is None or e["turn"] < cut_turn) and (whole_session or not e.get("unplaced"))]
         if args.list_turns:
             rows = turn_rows(window, mapping, args.verify_patterns)
             firsts = {e["turn"]: e for e in window if is_turn_start(e)}
@@ -4360,8 +4433,8 @@ def main(argv=None):
                 listed = listed[-LIST_TURNS_SHOWN:]
             out = {"header": header, "turns": listed}
         else:
-            earlier = [e["turn"] for e in events if is_turn_start(e) and REVIEWER_RE.search(e["text"])
-                       and cut is not None and e["i"] < cut]
+            earlier = [e["turn"] for e in events if is_turn_start(e) and is_invocation(e)
+                       and cut is not None and e["turn"] < cut_turn]
             lo, window_note = args.from_turn or 1, None
             if args.from_turn is None and earlier:
                 lo = max(earlier) + 1
@@ -4396,6 +4469,10 @@ def main(argv=None):
                 out["coverage"].setdefault("warnings", []).append(
                     f"token cross-check: {checked['mismatches']} of {checked['calls']} calls where input + cache_read "
                     "differs from context_input_tokens")
+            if unlinked:
+                out["coverage"]["unlinked_subagents"] = len(unlinked)
+                out["coverage"].setdefault("warnings", []).append(
+                    f"unlinked subagents: {len(unlinked)} (not placed in any window)")
             if stats["skill_list_unparsed"]:
                 out["coverage"].setdefault("warnings", []).append("skill list found but not parsed; offered list may be incomplete")
             if health["unattributed_types"]:                    # unseen record types no metric was hinted at: listed, as a warning
@@ -4418,7 +4495,10 @@ def main(argv=None):
             if mapping["capabilities"].get("has_timestamps"):
                 out["time"] = time_summary(window, args.idle_threshold, mapping.get("tool_time_source") == "result_spans")
             elif has_prompt_clock(mapping):
-                out["time"] = coarse_time_summary(window)
+                last = max((e["turn"] for e in window if e["actor"] == "main"), default=None)
+                after = [e for e in events if e["actor"] == "main" and e["prompt_ts"] is not None
+                         and last is not None and e["turn"] > last]
+                out["time"] = coarse_time_summary(window, min(after, key=lambda e: e["turn"])["prompt_ts"] if after else None)
             else:
                 out["time"] = {"not_measurable": "host records no timestamps"}
             all_turns = turn_rows(window, mapping, args.verify_patterns)

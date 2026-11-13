@@ -53,6 +53,8 @@ text = ["message.content[type=text].text"]
 calls = "message.content[type=tool_use]"
 call_name = "name"
 call_input = "input"
+# A subagent is started by a generic call that names the real tool and carries its arguments.
+call_via = { tool = "CallDynamicTool", name = "toolName", input = "arguments" }
 
 # The user pressing stop is an interruption; any other error ending a turn is a turn error.
 [[records]]

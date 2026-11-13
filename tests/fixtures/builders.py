@@ -136,6 +136,13 @@ def cu_turn_ended():
     return {"type": "turn_ended", "status": "success"}
 
 
+def cu_spawn(prompt, description="explore", tool="Task"):
+    """A Cursor subagent spawn: the parent's CallDynamicTool call, naming the tool and carrying its arguments."""
+    return ("CallDynamicTool", {"namespace": "builtin", "toolName": tool,
+                                "arguments": {"description": description, "model": "m", "subagent_type": "generalPurpose",
+                                              "run_in_background": False, "prompt": prompt}})
+
+
 # ---- Codex Desktop (rollout shape of 0.162.x) ------------------------------------------------
 # Every record carries an `ordinal`; user prompts are response_item messages; commands are JavaScript.
 
