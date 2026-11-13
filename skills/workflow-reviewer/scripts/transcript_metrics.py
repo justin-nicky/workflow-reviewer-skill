@@ -1683,12 +1683,12 @@ def has_prompt_clock(mapping):
 
 
 def not_measurable(mapping):
+    """What the host does not record, in plain words (the capability flags stay in coverage.capabilities)."""
     labels = {"has_tokens": "tokens", "has_timestamps": "time", "has_tool_results": "tool results",
               "has_ids": "message ids"}
     if has_prompt_clock(mapping):                 # wall time is reported coarsely; only the rest is missing
-        labels["has_timestamps"] = "tool time and waiting time"
-    return [f"{labels[k]} ({k}=false)" for k, v in mapping["capabilities"].items()
-            if not v and k in labels]
+        labels["has_timestamps"] = "tool timing"
+    return [labels[k] for k, v in mapping["capabilities"].items() if not v and k in labels]
 
 
 # ---- redaction and output ----------------------------------------------------------------
@@ -2500,6 +2500,8 @@ def validate_findings(data):
             continue
         if "name" in skill:
             _text(errors, f"{at}.name", skill["name"], LIMIT["skill_name"])
+            if isinstance(skill["name"], str) and skill["name"].strip().lower() == "other installed skills":
+                errors.append(f"{at}.name: the report adds the 'other installed skills' row itself; leave it out")
         if "verdict" in skill:
             _enum(errors, f"{at}.verdict", skill["verdict"], VERDICTS)
         if "evidence" in skill:
@@ -2603,8 +2605,8 @@ def metric_rows(out):
     elif "active_s" in tm_:
         value = f"{fmt_secs(tm_['active_s'])} active, {fmt_secs(tm_['tool_s'])} in tools, {fmt_secs(tm_['waiting_s'])} waiting on you"
     else:
-        wall = fmt_secs(tm_["wall_s"])
-        value = f"{wall if wall.startswith('about') else 'about ' + wall} wall clock (coarse)"
+        value = coarse_time_view(tm_)["wall"]                    # minutes and their range, never a raw number of seconds
+        value += ", " + tm_["precision"].rsplit("; ", 1)[-1]
     rows.append(("time", "Time", value))
     v = out["verify"]
     rows.append(("verify", "Verify runs", f"{v['total']}" + (f" ({v['before_last_edit']} before the last edit)" if v["before_last_edit"] else "")))
@@ -2623,7 +2625,9 @@ def coverage_items(out):
     items += cov.get("warnings", [])
     if cov.get("version_note"):
         items.append(cov["version_note"])
-    items += [f"not measurable: {n}" for n in cov.get("not_measurable", [])]
+    if cov.get("not_measurable"):
+        host = HOST_NAMES.get(cov["host"], str(cov["host"]).title())
+        items.append(f"{host} doesn't record: " + ", ".join(cov["not_measurable"]))
     return items
 
 

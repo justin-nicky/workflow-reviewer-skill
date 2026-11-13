@@ -453,8 +453,9 @@ def test_all_three_parts_of_the_time_row_use_the_same_rule(cli, tmp_path):
             "verify": {"total": 0, "before_last_edit": 0}, "actors": [], "interruptions": {"count": 0}}
     row = next(v for rid, _, v in tm.metric_rows(full) if rid == "time")
     assert row == "166 s active, 12 min in tools, about 6.9 h waiting on you"
-    full["time"] = {"wall_s": 24840}
-    assert next(v for rid, _, v in tm.metric_rows(full) if rid == "time") == "about 6.9 h wall clock (coarse)"
+    full["time"] = {"wall_s": 24840, "wall_range_s": [24780, 24900], "precision": tm.COARSE_LABEL}      # a coarse time is minutes and a range
+    assert next(v for rid, _, v in tm.metric_rows(full) if rid == "time") == \
+        "about 414 min (between 413–415 min), last turn's duration unknown"
 
 
 def install_skills(cli, names):

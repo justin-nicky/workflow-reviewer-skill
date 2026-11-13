@@ -65,7 +65,7 @@ def test_only_the_part_that_is_measurable_leaves_the_not_measurable_list(cli, tm
     out = run(cli, tmp_path, stamped("a", "11:40 AM"), stamped("b", "11:41 AM"))
     listed = out["coverage"]["not_measurable"]
     assert not any(n.startswith("time ") for n in listed)
-    assert any("tool time and waiting time" in n for n in listed)
+    assert "tool timing" in listed
 
 
 # ---- subagent link: a markdown link to the subagent id -----------------------------------------------

@@ -320,7 +320,7 @@ def test_cursor_report_keeps_its_not_measurable_line_intact(cli, tmp_path):
     from fixtures.builders import cu_assistant, cu_user
     path = write_jsonl(tmp_path / "c.jsonl", [cu_user("go"), cu_assistant("ok")])
     proc = cli.run(path, "--host", "cursor", fmt="md")
-    assert "tokens (has_tokens=false)" in proc.stdout
+    assert '"has_tokens":false' in proc.stdout and '"tool timing"' in proc.stdout
     assert "[REDACTED]" not in proc.stdout
 
 
