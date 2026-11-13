@@ -64,7 +64,7 @@ python -m pip install pytest
 python -m pytest -q
 ```
 
-Tests run the script black-box on synthetic fixtures only. Real transcripts are never committed. CI runs pytest on macOS, Linux and Windows with Python 3.11 to 3.13. Design notes: `docs/`.
+Tests run the script black-box on synthetic fixtures only. Real transcripts are never committed. CI runs pytest on Linux with Python 3.11 to 3.13 (macOS and Windows come later). Design notes: `docs/`.
 
 ## License
 
