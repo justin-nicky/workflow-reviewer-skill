@@ -8,6 +8,8 @@ disable-model-invocation: true
 
 Review **the task just completed in this session**. You judge; a script counts. The deliverable is one report.
 
+`<skill dir>` below is the folder this SKILL.md is in (Claude Code also shows it as the skill's base directory).
+
 ## Ground rules
 
 - Read-only. Never edit, install, enable, push or open a pull request. Do not write files yourself: the script writes the report, and a user adapter only on an explicit `--save-adapter`.
@@ -66,13 +68,15 @@ One JSON object; fields, limits and a full example are in [findings](references/
 
 ## Step 6: render
 
-Pipe the findings into the same command with the same selection arguments:
+Pass the findings on standard input with the same selection arguments, through a heredoc. Write no temp file:
 
 ```bash
-python3 -I <skill dir>/scripts/transcript_metrics.py --host <host> --from-turn <N> --to-turn <M> --report - --no-open
+python3 -I <skill dir>/scripts/transcript_metrics.py --host <host> --from-turn <N> --to-turn <M> --report - <<'EOF'
+{ ...findings JSON... }
+EOF
 ```
 
-Reply in chat with exactly three things: the bottom line, the top action's title, and the report path the script printed. Nothing else. Drop `--no-open` where a browser should open. With no browser or on a cloud host, add `--report-format md` and paste the markdown the script prints instead of a path. Exit `7` means fix the findings and rerun.
+The report opens in the browser by default; the script skips that when there is no display. Reply in chat with exactly three things: the bottom line, the top action's title, and the report path the script printed. Nothing else. With no browser or on a cloud host, add `--report-format md` and paste the markdown the script prints instead of a path. Exit `7` means fix the findings and rerun.
 
 ## Step 7: opt-in research
 
