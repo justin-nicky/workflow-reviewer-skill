@@ -19,6 +19,13 @@ The agent sends judgments only; the script works out every number. Pipe one JSON
 | `closing_question` | allowed only when at least one skill has the verdict `gap` |
 | `metric_notes` | optional short notes keyed by a metric row id: `calls`, `output`, `cache`, `fresh`, `context`, `tools`, `time`, `verify`, `subagents`, `interruptions`, `tokens` |
 
+## Writing the text
+
+- Write for the person who will read the page, not for the metrics output. Use plain words. Never use the metrics' field names in any text: not `loaded_total`, `directive_pairs`, `repeated_reads`, `has_tokens`, not `judge`, not dotted paths such as `skills.overlaps`. Say "both skills were loaded" and "this file was read three times".
+- One problem per action. If the cause, the fix or the cost differ, write two actions.
+- Evidence is what happened: turn or event numbers and what they show. "Not measurable on this host" is never evidence; it belongs in `metric_notes`, or in a `cost` that says what could not be counted.
+- Before you conclude, look at the `actors`. When subagents did the work, the analysis covers them: their tool calls, their own repeats and the briefs they were given.
+
 Only `` `backticks` `` format text (they become code). Every string is redacted like the metrics, so a secret that slips in is masked, but do not put one there. Do not send numbers: the report's table, bar and counts come from the metrics run, and a `metrics` key is an unknown-key error.
 
 ## Example
@@ -51,7 +58,7 @@ Only `` `backticks` `` format text (they become code). Every string is redacted 
       "why": {
         "cause": "Both descriptions match a review request, so both load and their checklists disagree.",
         "cost": "About 9K extra tokens in context from turn 3.",
-        "evidence": ["both loaded in turn 3 (skills.overlaps: judge eligible)"]
+        "evidence": ["both skills were loaded in turn 3 and each says how to review a pull request"]
       },
       "what": {
         "change": "Keep `code-review`; narrow the other description to summarising pull requests.",

@@ -174,3 +174,57 @@ def test_the_step_5_example_covers_the_whole_schema():
     example = json.loads(next(p.values[0] for p in findings_examples() if '"closing_question"' in p.values[0]))
     assert tm.validate_findings(example) == []
     assert example["actions"] and example["skills"] and example["closing_question"] and example["metric_notes"]
+
+
+# ---- the findings are written for the user, not in the script's field names -----------------------------------------------------------------
+
+GOLDEN_CURSOR = next(iter(sorted((ROOT / "tests/fixtures/golden/cursor-chat1").glob("*/"))))
+SECTIONS = r"(?:tokens|tools|verify|time|turns|actors|skills|coverage|window|interruptions)"
+
+
+def metric_field_names(cli):
+    """Every key the metrics output uses that reads as a field name: snake_case ones, `judge`, and dotted paths."""
+    names = {"judge"}
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key, inner in value.items():
+                if "_" in key and re.fullmatch(r"[a-z][a-z0-9_]*", key):
+                    names.add(key)
+                walk(inner)
+        elif isinstance(value, list):
+            for inner in value:
+                walk(inner)
+    for session, host in ((GOLDEN_CLAUDE, "claude-code"), (GOLDEN_CURSOR, "cursor")):
+        walk(cli.json(session, "--host", host, "--health-all")[1])
+    return names
+
+
+def prose(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for inner in value:
+            yield from prose(inner)
+    elif isinstance(value, dict):
+        for key, inner in value.items():
+            if key != "metric_notes":                       # the keys of metric_notes are row ids, but its values are prose
+                yield from prose(inner)
+            else:
+                yield from prose(list(inner.values()))
+
+
+@pytest.mark.parametrize("body", findings_examples())
+def test_a_findings_example_never_uses_a_field_name_from_the_metrics_in_its_prose(cli, body):
+    names = metric_field_names(cli)
+    assert {"loaded_total", "directive_pairs", "has_tokens", "repeated_reads"} <= names
+    for sentence in prose(json.loads(body)):
+        for name in names:
+            assert not re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", sentence), (name, sentence)
+        assert not re.search(rf"\b{SECTIONS}\.[a-z_]+", sentence), sentence
+
+
+def test_skill_md_tells_the_agent_to_write_for_the_user():
+    skill = text(ROOT / "skills/workflow-reviewer/SKILL.md").lower()
+    for needle in ("field name", "one problem per action", "never evidence", "actors"):
+        assert needle in skill, needle

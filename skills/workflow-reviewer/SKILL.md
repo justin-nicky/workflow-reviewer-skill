@@ -52,8 +52,9 @@ Warnings in `coverage` (a warn row, a `one_way` metric, a version note) do not s
 1. Start from the summary: `tokens`, `tools`, `verify`, `time`, `turns`, `actors`, `skills` (including `skills.overlaps`), `coverage.health`.
 2. Check a candidate with `--events I:J` (at most 100 events) only to confirm evidence and find the instruction or config behind it.
 3. Match patterns with [checklist](references/checklist.md). Judge skills with [skills-audit](references/skills-audit.md): the verdicts, the three overlap types, and the `judge` field. Call two instructions a conflict only when `judge` is `eligible` (both loaded) and you read both lines. `static` pairs are notes, never "this caused rework".
-4. Use your own memory of the session only as a sanity check. If the numbers contradict what you remember, say so in one line and keep the numbers.
-5. Merge each finding with its fix into one action. Rank by tokens or time per session times sessions affected; a quality risk outranks a token-only item of similar size. At most 5.
+4. Check `actors` before concluding. When subagents did the work, the analysis covers them: their rows, their tool calls, how each was linked (a `none` link means no spawn explains it). Look at their events with `--events`, not only the main session.
+5. Use your own memory of the session only as a sanity check. If the numbers contradict what you remember, say so in one line and keep the numbers.
+6. Merge each finding with its fix into one action. Rank by tokens or time per session times sessions affected; a quality risk outranks a token-only item of similar size. At most 5.
 
 ## Step 5: write the findings
 
@@ -62,6 +63,8 @@ One JSON object; fields, limits and a full example are in [findings](references/
 - `schema_version` 1, `title`, `bottom_line` (at most one `**bold**` span).
 - `actions`: up to 5, in impact order, each with `why` (`cause`, `cost`, `evidence`) and `what` (`change`, `safe_because`, `watch_for`), plus `impact`, `effort`, `risk`, `confidence` and optionally `applies_to`.
 - `skills` with verdicts; `closing_question` only when a skill has the verdict `gap`; `metric_notes` for rows that need a caveat.
+- Write for the user, in plain words. No field names from the metrics (`loaded_total`, `judge`, `has_tokens`, dotted paths like `skills.overlaps`) in any text.
+- One problem per action. Evidence is what happened (turn or event numbers and what they show); "not measurable" is never evidence, so it goes in `metric_notes`.
 - Every claim carries evidence by turn or event number. Every number you write must agree with the metrics. `cost` says what the number covers (this window, or every session of a role); `safe_because` names the quality mechanism the change touches and why it still works.
 - Do not invent skills. A gap names the capability that is missing, not a product.
 - Leave out workflow summaries, "also noticed" lists, rejected ideas and problems with the review tool itself (mention those in chat only if they blocked the review).
