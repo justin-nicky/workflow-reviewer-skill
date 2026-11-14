@@ -25,7 +25,7 @@ Review **the task just completed in this session**. You judge; a script counts. 
 python3 -I <skill dir>/scripts/transcript_metrics.py --host <host> --list-turns --format json
 ```
 
-Pass `--host` (`claude-code`, `codex`, `cursor`, `devin`, `cline`, `kiro`) when you know which tool you run in; otherwise leave it out (`auto`). Find the turns of the task just completed: from its first prompt up to, not including, this invocation. Ask the user only if the boundary is genuinely unclear. A session id helps when you have one (`--session-id`; Claude Code: `${CLAUDE_SESSION_ID}`).
+Pass `--host` (`claude-code`, `codex`, `cursor`, `devin`, `cline`, `kiro`) when you know which tool you run in; otherwise leave it out (`auto`). The listing marks reviewer turns (`reviewer`) and names `default_window`: the work between the previous invocation and this one, or the original task again on a straight re-run. Use it unless the user says otherwise. Ask the user only if the boundary is genuinely unclear. A session id helps when you have one (`--session-id`; Claude Code: `${CLAUDE_SESSION_ID}`).
 
 ## Step 2: metrics
 
