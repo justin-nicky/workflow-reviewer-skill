@@ -805,6 +805,31 @@ def reviewer_cut(events):
     return None
 
 
+def default_window(reviewer_turns, turns):
+    """The turns a review covers when nobody names them: (from, to, note), to None meaning to the end.
+
+    It ends just before the latest reviewer invocation and starts just after the one before it (or at the
+    session start). Reviewer turns are never in it. When nothing but reviewer turns lie between the last two
+    invocations (a re-run), it is the window the earlier invocation had."""
+    if not reviewer_turns:
+        return 1, None, None
+    end, rerun_of = reviewer_turns[-1], None
+    while True:
+        before = [t for t in reviewer_turns if t < end]
+        start = (before[-1] + 1) if before else 1
+        if any(start <= t < end for t in turns) or not before:
+            break
+        end, rerun_of = before[-1], rerun_of or reviewer_turns[-1]
+    note = None
+    if rerun_of is not None:
+        note = (f"re-run: no new work between the /workflow-reviewer invocations; the window is the one the invocation in "
+                f"turn {end} had (turns {start}\u2013{end - 1}); pass --from-turn and --to-turn to override")
+    elif before:
+        note = (f"window starts at turn {start}, after the earlier /workflow-reviewer invocation in turn {before[-1]} "
+                f"(already audited); pass --from-turn N to override")
+    return start, end - 1, note
+
+
 def tool_seconds(events, spans_only=False):
     """Seconds spent waiting on tools by these events' calls, with overlapping intervals merged.
 
@@ -4411,7 +4436,7 @@ def main(argv=None):
         mark_repeated_prompts(events)
     links = link_subagents(events, metas, mapping, placed, main_ids - {None})
     cut = reviewer_cut(events)
-    cut_turn = events[cut]["turn"] if cut is not None else None
+    reviewer_turns = sorted({e["turn"] for e in events if is_turn_start(e) and is_invocation(e)})
     unlinked = [a for a, v in links.items() if v["link"] == "none"]
     whole_session = cut is None and args.from_turn is None and args.to_turn is None
     if args.events:
@@ -4424,27 +4449,30 @@ def main(argv=None):
         out = {"sample": [ln[:300] for ln in raw if ln.strip()][:min(args.sample, MAX_SAMPLE)]}
     else:
         # a subagent no spawn explains belongs to no window; only a whole-session run lists it
-        window = [e for e in events if (cut is None or e["turn"] < cut_turn) and (whole_session or not e.get("unplaced"))]
+        window = [e for e in events if whole_session or not e.get("unplaced")]
+        main_turns = sorted({e["turn"] for e in window if is_turn_start(e)})
+        d_from, d_to, d_note = default_window(reviewer_turns, main_turns)
         if args.list_turns:
             rows = turn_rows(window, mapping, args.verify_patterns)
             firsts = {e["turn"]: e for e in window if is_turn_start(e)}
             listed = [{"index": r["turn"], "time": iso(firsts[r["turn"]]["ts"]) if r["turn"] in firsts else None,
-                       "preview": r["preview"]} for r in rows]
+                       "preview": r["preview"], **({"reviewer": True} if r["turn"] in reviewer_turns else {})} for r in rows]
             if args.all or len(listed) <= LIST_TURNS_SHOWN:
                 header = f"showing all {len(listed)} turns"
             else:
                 header = f"showing {LIST_TURNS_SHOWN} of {len(listed)} turns (use --all for every turn)"
                 listed = listed[-LIST_TURNS_SHOWN:]
-            out = {"header": header, "turns": listed}
+            out = {"header": header, "turns": listed,
+                   "default_window": {"from_turn": d_from, "to_turn": d_to if d_to is not None else (main_turns[-1] if main_turns else 0)}}
         else:
-            earlier = [e["turn"] for e in events if is_turn_start(e) and is_invocation(e)
-                       and cut is not None and e["turn"] < cut_turn]
-            lo, window_note = args.from_turn or 1, None
-            if args.from_turn is None and earlier:
-                lo = max(earlier) + 1
-                window_note = (f"window starts at turn {lo}, after the earlier /workflow-reviewer invocation "
-                               f"in turn {max(earlier)} (already audited); pass --from-turn N to override")
-            window = [e for e in window if e["turn"] >= lo and (args.to_turn is None or e["turn"] <= args.to_turn)]
+            explicit = args.from_turn is not None or args.to_turn is not None
+            if explicit:                  # a bound the user left out is the plain one: session start, just before the latest invocation
+                lo = args.from_turn or 1
+                hi = args.to_turn if args.to_turn is not None else (reviewer_turns[-1] - 1 if reviewer_turns else None)
+                window_note = None
+            else:
+                lo, hi, window_note = d_from, d_to, d_note
+            window = [e for e in window if e["turn"] >= lo and (hi is None or e["turn"] <= hi)]
             out = analyse(window, stats, mapping, args.verify_patterns)
             last_ts = max((e["ts"] for e in events if e["ts"] is not None), default=None)
             lag = None
@@ -4491,7 +4519,7 @@ def main(argv=None):
                     non_turn[e["non_turn"]] = non_turn.get(e["non_turn"], 0) + 1
             out["window"] = {"reviewer_invocation_found": cut is not None, "events": len(window),
                              "non_turn_user_records": non_turn,
-                             "from_turn": lo, "to_turn": args.to_turn}
+                             "from_turn": lo, "to_turn": args.to_turn, "reviewer_turns": reviewer_turns}
             out["interruptions"] = interruption_summary(window, mapping)
             turn_errors = turn_error_summary(window, mapping)
             if turn_errors is not None:

@@ -36,7 +36,8 @@ def test_from_turn_starts_the_window_later(cli, tmp_path):
 def test_list_turns_prints_index_time_and_an_80_char_preview(cli, tmp_path):
     _, out = cli.json(three_turns(tmp_path), "--host", "claude-code", "--list-turns")
     turns = out["turns"]
-    assert [t["index"] for t in turns] == [1, 2, 3]
+    assert [t["index"] for t in turns] == [1, 2, 3, 4]               # every turn; the reviewer's own is marked
+    assert turns[3]["reviewer"] is True and not any(t.get("reviewer") for t in turns[:3])
     assert turns[0]["preview"] == "add rate limiting to /login"
     assert len(turns[2]["preview"]) == 80
     assert turns[0]["time"].startswith("2026-11-01T10:00:00")
