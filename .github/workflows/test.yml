@@ -16,4 +16,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install pytest
-      - run: python -m pytest -q
+      - name: Run the tests
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q -rf --tb=line 2>&1 | tee pytest-out.txt
+          code=${PIPESTATUS[0]}
+          # failures become annotations, which are readable without signing in
+          grep -E "^(FAILED|ERROR)|Error" pytest-out.txt | head -30 | cut -c1-400 | while IFS= read -r line; do echo "::error::${line}"; done
+          exit $code
