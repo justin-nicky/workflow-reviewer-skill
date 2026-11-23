@@ -2918,7 +2918,7 @@ def write_report(text):
             break
         except FileExistsError:
             n += 1
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     os.chmod(path, 0o600)
     return path
@@ -3450,7 +3450,7 @@ def save_adapter(name, text, host_version, replace):
     if fresh:
         os.chmod(folder, 0o700)
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
         f.write(adapter_text(text, host_version))
     os.chmod(target, 0o600)
     return target, None
@@ -4129,7 +4129,7 @@ def make_replica(reader, mapping, host):
         dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         text = "\n".join(json.dumps(r, ensure_ascii=False) for r in data) + "\n" if name.endswith(".jsonl") else json.dumps(data, ensure_ascii=False, indent=1)
         fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
     return folder, {"files": len(rewritten), "source_strings_checked": len(strings_in(docs, set())), "leaked": 0}
 
