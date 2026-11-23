@@ -138,12 +138,31 @@ def test_the_old_markdown_report_files_are_gone():
         assert "report-template" not in text(doc) and "sample-report.md" not in text(doc), doc.name
 
 
-def test_the_sample_report_is_the_rendered_golden_page():
+SAMPLE_SKILLS = ["hello", "code-review", "pr-review", "tdd"] + [f"skill-{n:02d}" for n in range(1, 9)]
+
+
+def render_sample(cli, tmp_path):
+    """The sample report as the script renders it: the Claude Code golden replica plus the sample findings."""
+    for name in SAMPLE_SKILLS:
+        folder = cli.home / ".claude" / "skills" / name
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text("---\ndescription: d\n---\nbody\n", encoding="utf-8")
+    session = next(iter(sorted((ROOT / "tests" / "fixtures" / "golden" / "claude-code").glob("*.jsonl")))).with_suffix("")
+    cli.env_extra["TMPDIR"] = str(tmp_path / "tmp")
+    (tmp_path / "tmp").mkdir()
+    findings = (ROOT / "tests" / "fixtures" / "findings" / "sample.json").read_text(encoding="utf-8")
+    proc = cli.run(session, "--host", "claude-code", "--report", "-", "--no-open", stdin=findings)
+    assert proc.returncode == 0, proc.stderr
+    (path,) = (tmp_path / "tmp" / "workflow-reviewer").glob("review-*.html")
+    return path.read_text(encoding="utf-8")
+
+
+def test_the_sample_report_is_the_render_of_the_golden_session_and_the_sample_findings(cli, tmp_path):
     sample = ROOT / "examples" / "sample-report.html"
-    golden = ROOT / "tests" / "fixtures" / "golden" / "claude-code-report.html"
     strip = lambda s: re.sub(r"reviewed on [^<]*<", "reviewed on DATE<", s)
-    assert sample.is_file() and strip(text(sample)) == strip(text(golden))
+    assert sample.is_file() and strip(text(sample)) == strip(render_sample(cli, tmp_path))
     assert "http://" not in text(sample) and "https://" not in text(sample)
+    assert "this session only reads" not in text(sample)
 
 
 # ---- the examples in the docs ------------------------------------------------------------------------------------------------------------

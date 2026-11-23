@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "title": "Add a subtract function and its test",
+  "bottom_line": "The code change was cheap; most of the cost was **context, not work**: a 73K-token prompt re-read on all 15 calls, and a subagent that spent about 100K tokens to list one folder.",
+  "actions": [
+    {
+      "title": "Move project history out of `CLAUDE.md`",
+      "impact": "high",
+      "effort": "low",
+      "risk": "low",
+      "confidence": "medium",
+      "why": {
+        "cause": "`CLAUDE.md` is loaded on every call and has grown into a log of past decisions, most of which no task needs.",
+        "cost": "Most of the 73K-token context, re-read on all 15 API calls of this task.",
+        "evidence": [
+          "the context stood at 73K tokens when the review started, with only two small files read",
+          "`CLAUDE.md` holds 22 dated history entries and 9 current rules"
+        ]
+      },
+      "what": {
+        "change": "Move the dated entries into `docs/HISTORY.md` and keep only the current rules in `CLAUDE.md`.",
+        "safe_because": "No rule, gate or approval step changes, and the history stays one read away.",
+        "watch_for": "A rule that only lived inside a history entry. Check that none of the moved entries says must or never."
+      },
+      "applies_to": "all hosts"
+    },
+    {
+      "title": "Run one-command jobs directly, not in a subagent",
+      "impact": "medium",
+      "effort": "low",
+      "risk": "low",
+      "confidence": "high",
+      "why": {
+        "cause": "A folder listing was handed to a subagent, which starts with a fresh context and has to cache it before doing anything.",
+        "cost": "About 100K tokens, mostly cache writes, for a single `ls` in turn 4.",
+        "evidence": [
+          "turn 4: one subagent, 2 API calls, 1 tool call",
+          "the subagent wrote 53K tokens to the cache before its only command"
+        ]
+      },
+      "what": {
+        "change": "Add one line to the agent rules: use a subagent for multi-step research, not for single commands.",
+        "safe_because": "Subagents stay available for the work they suit, and review roles are untouched.",
+        "watch_for": "Long investigations squeezed into the main context. Keep subagents for anything over a few steps."
+      },
+      "applies_to": "all hosts"
+    },
+    {
+      "title": "Keep one review skill",
+      "impact": "medium",
+      "effort": "medium",
+      "risk": "high",
+      "confidence": "low",
+      "why": {
+        "cause": "`code-review` and `pr-review` describe the same request, so both are offered and their checklists disagree on missing tests.",
+        "cost": "About 9K extra tokens in context whenever a review is asked for.",
+        "evidence": [
+          "the two descriptions overlap by 71%",
+          "one says block on a missing test, the other calls it a suggestion"
+        ]
+      },
+      "what": {
+        "change": "Keep `code-review`, and narrow `pr-review` to writing pull-request summaries.",
+        "safe_because": "The review step and its blocking rule stay; only the duplicate checklist goes.",
+        "watch_for": "A summary format you relied on disappearing."
+      },
+      "applies_to": "claude-code"
+    },
+    {
+      "title": "Outline first when asked to explain everything",
+      "impact": "low",
+      "effort": "low",
+      "risk": "low",
+      "confidence": "high",
+      "why": {
+        "cause": "A request to explain every line produced a long answer that was stopped part-way.",
+        "cost": "Small here: the tokens of the stopped answer bought nothing.",
+        "evidence": [
+          "turn 6 was interrupted while the answer was being written"
+        ]
+      },
+      "what": {
+        "change": "For explain-everything requests, give a short outline first and expand the parts asked for.",
+        "safe_because": "Nothing is skipped; the detail is one reply away.",
+        "watch_for": "Outlines too thin to be useful. Expand when asked."
+      },
+      "applies_to": "all hosts"
+    }
+  ],
+  "skills": [
+    {"name": "hello", "verdict": "keep", "evidence": "Used once by slash command in turn 2. Small and does one thing."},
+    {"name": "code-review", "verdict": "overlap", "evidence": "71% description overlap; both are offered for review requests.", "overlaps_with": ["pr-review"]},
+    {"name": "pr-review", "verdict": "merge", "evidence": "See action 3."},
+    {"name": "tdd", "verdict": "improve", "evidence": "Says run only the failing test; `AGENTS.md` says run the full suite after every change. Both were loaded."},
+    {"name": "subagent guidance", "verdict": "gap", "evidence": "Nothing tells the agent when a subagent is worth its start-up cost. See action 2."}
+  ],
+  "closing_question": "Search for skills or host features that cover G1? Reply yes and the review will check official sources only.",
+  "metric_notes": {
+    "verify": "after the last edit",
+    "subagents": "a folder listing; see action 2",
+    "interruptions": "turn 6, during a long explanation"
+  }
+}

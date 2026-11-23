@@ -101,6 +101,6 @@
   ],
   "closing_question": "Search for skills or host features that cover G1? Reply yes in the chat and the review will check official sources only.",
   "metric_notes": {
-    "verify": "expected: this session only reads"
+    "verify": "after the last edit"
   }
 }

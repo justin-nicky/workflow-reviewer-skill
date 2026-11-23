@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Workflow review: Spec 042 close-out checks</title>
+<title>Workflow review: Add a subtract function and its test</title>
 <style>
 :root{color-scheme:light;--page:#eef1f2;--sheet:#fcfcfb;--ink:#1d2733;--ink-2:#4a5562;--ink-3:#6b7580;--rule:#d9dee2;--code-bg:#f1f3f4;
 --impact-high:#d03b3b;--impact-medium:#ec835a;--impact-low:#8a949e;--warn:#fab219;--warn-edge:#c98500;
@@ -76,10 +76,10 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <body>
 <main class="sheet">
 <header>
-<h1>Workflow review: Spec 042 close-out checks</h1>
-<p class="scope">Turns 1–7 of one Claude Code session (verified adapter), reviewed on 5 Jan 2026</p>
+<h1>Workflow review: Add a subtract function and its test</h1>
+<p class="scope">Turns 1–7 of one Claude Code session (verified adapter), reviewed on 22 Nov 2026</p>
 </header>
-<p class="bottom-line">Most of this session&#x27;s cost is re-reading a <strong>large context</strong>: <code>CURRENT_STATE.md</code> is loaded on every call and has grown to mostly history.</p>
+<p class="bottom-line">The code change was cheap; most of the cost was <strong>context, not work</strong>: a 73K-token prompt re-read on all 15 calls, and a subagent that spent about 100K tokens to list one folder.</p>
 <figure class="anatomy" aria-labelledby="anatomy-cap">
 <div class="bar" role="img" aria-label="Token composition: cache read 91.7%, cache write 8.1%, output 0.2%, fresh input under 0.1%">
 <span class="seg-read" style="flex: 91.7479" title="Cache read: 951K tokens (91.7%)"></span>
@@ -101,9 +101,9 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <tr><th scope="row">Context at invocation</th><td>73.3K</td></tr>
 <tr><th scope="row">Tool calls</th><td>11 (4 shell), 1 error</td></tr>
 <tr><th scope="row">Time</th><td>166 s active, 12 s in tools, 0 s waiting on you</td></tr>
-<tr><th scope="row">Verify runs</th><td>1 <span class="muted">(expected: this session only reads)</span></td></tr>
-<tr><th scope="row">Subagents</th><td>1</td></tr>
-<tr><th scope="row">Interruptions</th><td>1</td></tr>
+<tr><th scope="row">Verify runs</th><td>1 <span class="muted">(after the last edit)</span></td></tr>
+<tr><th scope="row">Subagents</th><td>1 <span class="muted">(a folder listing; see action 2)</span></td></tr>
+<tr><th scope="row">Interruptions</th><td>1 <span class="muted">(turn 6, during a long explanation)</span></td></tr>
 </tbody>
 </table>
 </section>
@@ -111,7 +111,7 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <h2 id="h-actions">Do these, ranked by impact</h2>
 <ol class="actions">
 <li class="impact-high">
-<div class="action-head"><span class="rank" aria-hidden="true"></span><h3>Trim <code>CURRENT_STATE.md</code></h3></div>
+<div class="action-head"><span class="rank" aria-hidden="true"></span><h3>Move project history out of <code>CLAUDE.md</code></h3></div>
 <ul class="tags" aria-label="Ratings">
 <li class="tag impact">High impact</li>
 <li class="tag">Low effort</li>
@@ -122,17 +122,43 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <details>
 <summary>Why</summary>
 <ul>
-<li><code>CLAUDE.md</code> loads it and nothing says to prune it, so it keeps growing.</li>
-<li><span class="label">Cost:</span> About 12% of the context, re-read on every call.</li>
-<li><span class="label">Evidence:</span> 68,252 bytes (about 17K tokens); re-cached after each long gap</li>
+<li><code>CLAUDE.md</code> is loaded on every call and has grown into a log of past decisions, most of which no task needs.</li>
+<li><span class="label">Cost:</span> Most of the 73K-token context, re-read on all 15 API calls of this task.</li>
+<li><span class="label">Evidence:</span> the context stood at 73K tokens when the review started, with only two small files read; <code>CLAUDE.md</code> holds 22 dated history entries and 9 current rules</li>
 </ul>
 </details>
 <details>
 <summary>What to do</summary>
 <ul>
-<li>Move closed entries into <code>docs/HISTORY.md</code>, read on demand.</li>
-<li><span class="label">Safe because:</span> No gate, role or approval changes.</li>
-<li><span class="label">Watch for:</span> An open carry-over moved by mistake.</li>
+<li>Move the dated entries into <code>docs/HISTORY.md</code> and keep only the current rules in <code>CLAUDE.md</code>.</li>
+<li><span class="label">Safe because:</span> No rule, gate or approval step changes, and the history stays one read away.</li>
+<li><span class="label">Watch for:</span> A rule that only lived inside a history entry. Check that none of the moved entries says must or never.</li>
+</ul>
+</details>
+</li>
+<li class="impact-medium">
+<div class="action-head"><span class="rank" aria-hidden="true"></span><h3>Run one-command jobs directly, not in a subagent</h3></div>
+<ul class="tags" aria-label="Ratings">
+<li class="tag impact">Medium impact</li>
+<li class="tag">Low effort</li>
+<li class="tag">Low risk</li>
+<li class="tag">High confidence</li>
+<li class="tag">All hosts</li>
+</ul>
+<details>
+<summary>Why</summary>
+<ul>
+<li>A folder listing was handed to a subagent, which starts with a fresh context and has to cache it before doing anything.</li>
+<li><span class="label">Cost:</span> About 100K tokens, mostly cache writes, for a single <code>ls</code> in turn 4.</li>
+<li><span class="label">Evidence:</span> turn 4: one subagent, 2 API calls, 1 tool call; the subagent wrote 53K tokens to the cache before its only command</li>
+</ul>
+</details>
+<details>
+<summary>What to do</summary>
+<ul>
+<li>Add one line to the agent rules: use a subagent for multi-step research, not for single commands.</li>
+<li><span class="label">Safe because:</span> Subagents stay available for the work they suit, and review roles are untouched.</li>
+<li><span class="label">Watch for:</span> Long investigations squeezed into the main context. Keep subagents for anything over a few steps.</li>
 </ul>
 </details>
 </li>
@@ -148,42 +174,43 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <details>
 <summary>Why</summary>
 <ul>
-<li>Both descriptions match the same request, so both load.</li>
-<li><span class="label">Cost:</span> About 9K extra tokens in context.</li>
-<li><span class="label">Evidence:</span> 71% description overlap</li>
+<li><code>code-review</code> and <code>pr-review</code> describe the same request, so both are offered and their checklists disagree on missing tests.</li>
+<li><span class="label">Cost:</span> About 9K extra tokens in context whenever a review is asked for.</li>
+<li><span class="label">Evidence:</span> the two descriptions overlap by 71%; one says block on a missing test, the other calls it a suggestion</li>
 </ul>
 </details>
 <details>
 <summary>What to do</summary>
 <ul>
-<li>Keep <code>code-review</code>; narrow the other description.</li>
-<li><span class="label">Safe because:</span> The blocking rule stays.</li>
-<li><span class="label">Watch for:</span> A summary you relied on disappearing.</li>
+<li>Keep <code>code-review</code>, and narrow <code>pr-review</code> to writing pull-request summaries.</li>
+<li><span class="label">Safe because:</span> The review step and its blocking rule stay; only the duplicate checklist goes.</li>
+<li><span class="label">Watch for:</span> A summary format you relied on disappearing.</li>
 </ul>
 </details>
 </li>
 <li class="impact-low">
-<div class="action-head"><span class="rank" aria-hidden="true"></span><h3>Resolve the duplicate <code>workflow-reviewer</code></h3></div>
+<div class="action-head"><span class="rank" aria-hidden="true"></span><h3>Outline first when asked to explain everything</h3></div>
 <ul class="tags" aria-label="Ratings">
 <li class="tag impact">Low impact</li>
-<li class="tag warn">High effort</li>
+<li class="tag">Low effort</li>
 <li class="tag">Low risk</li>
 <li class="tag">High confidence</li>
+<li class="tag">All hosts</li>
 </ul>
 <details>
 <summary>Why</summary>
 <ul>
-<li>Two copies under one name.</li>
-<li><span class="label">Cost:</span> Not measurable here.</li>
-<li><span class="label">Evidence:</span> two skills with one name</li>
+<li>A request to explain every line produced a long answer that was stopped part-way.</li>
+<li><span class="label">Cost:</span> Small here: the tokens of the stopped answer bought nothing.</li>
+<li><span class="label">Evidence:</span> turn 6 was interrupted while the answer was being written</li>
 </ul>
 </details>
 <details>
 <summary>What to do</summary>
 <ul>
-<li>Rename one copy.</li>
-<li><span class="label">Safe because:</span> No role depends on the name.</li>
-<li><span class="label">Watch for:</span> The wrong copy loading.</li>
+<li>For explain-everything requests, give a short outline first and expand the parts asked for.</li>
+<li><span class="label">Safe because:</span> Nothing is skipped; the detail is one reply away.</li>
+<li><span class="label">Watch for:</span> Outlines too thin to be useful. Expand when asked.</li>
 </ul>
 </details>
 </li>
@@ -195,36 +222,36 @@ details>summary::before{content:"";width:0}details:not([open])>*:not(summary){di
 <li>
 <span class="skill-name">hello</span>
 <span class="verdict v-keep">Keep</span>
-<span class="skill-evidence">Used once, small.</span>
+<span class="skill-evidence">Used once by slash command in turn 2. Small and does one thing.</span>
 </li>
 <li>
 <span class="skill-name">code-review</span>
 <span class="verdict v-overlap">Overlaps</span>
-<span class="skill-evidence">Loaded together with its twin. Overlaps with <code>pr-review</code>.</span>
+<span class="skill-evidence">71% description overlap; both are offered for review requests. Overlaps with <code>pr-review</code>.</span>
 </li>
 <li>
 <span class="skill-name">pr-review</span>
 <span class="verdict v-merge">Merge or cut</span>
-<span class="skill-evidence">See action 2.</span>
+<span class="skill-evidence">See action 3.</span>
 </li>
 <li>
 <span class="skill-name">tdd</span>
 <span class="verdict v-improve">Improve</span>
-<span class="skill-evidence">Conflicts with <code>AGENTS.md</code>.</span>
+<span class="skill-evidence">Says run only the failing test; <code>AGENTS.md</code> says run the full suite after every change. Both were loaded.</span>
 </li>
 <li>
-<span class="skill-name">G1: state-doc pruning</span>
+<span class="skill-name">G1: subagent guidance</span>
 <span class="verdict v-gap">Gap</span>
-<span class="skill-evidence">Nothing prunes <code>CURRENT_STATE.md</code> at close-out.</span>
+<span class="skill-evidence">Nothing tells the agent when a subagent is worth its start-up cost. See action 2.</span>
 </li>
 <li>
-<span class="skill-name">commit-helper</span>
+<span class="skill-name muted">Other installed skills</span>
 <span class="verdict v-none">No verdict</span>
-<span class="skill-evidence">Not loaded.</span>
+<span class="skill-evidence">Not exercised in this task (8 skills)</span>
 </li>
 </ul>
 </section>
-<aside class="closing" aria-label="Next step"><p>Search for skills or host features that cover G1? Reply yes in the chat and the review will check official sources only.</p></aside>
+<aside class="closing" aria-label="Next step"><p>Search for skills or host features that cover G1? Reply yes and the review will check official sources only.</p></aside>
 </main>
 </body>
 </html>
