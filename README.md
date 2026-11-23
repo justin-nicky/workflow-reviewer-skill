@@ -4,11 +4,26 @@ An agent skill that reviews **the coding-agent task you just finished**, in the 
 
 You get a short HTML report. The agent's reply in chat is the bottom line, the top action and the report's file path. A deterministic script counts everything; the agent only judges.
 
-See a rendered report: [examples/sample-report.html](examples/sample-report.html) (synthetic data).
+See a rendered report: [examples/sample-report.html](examples/sample-report.html) (synthetic data; open the file in a browser).
 
 ## Install
 
-Requires **Python 3.11 or newer** (the macOS system `python3` is 3.9). The script exits with code 5 and says so on an older version. Copy or symlink `skills/workflow-reviewer/` into your host's skill folder, or run `npx skills add justin-nicky/workflow-reviewer-skill`.
+```bash
+npx skills add justin-nicky/workflow-reviewer-skill -g
+```
+
+The [Skills CLI](https://www.npmjs.com/package/skills) puts one copy in `~/.agents/skills/workflow-reviewer` (read by Codex and Cursor) and links it into `~/.claude/skills/` for Claude Code. Add `-a <agent>` to pick the tools, or `--copy` to copy instead of link.
+
+Or by hand: clone the repo and copy (or symlink) `skills/workflow-reviewer/` into your host's skill folder:
+
+```bash
+git clone https://github.com/justin-nicky/workflow-reviewer-skill
+cp -r workflow-reviewer-skill/skills/workflow-reviewer ~/.claude/skills/
+```
+
+Requires **Python 3.11 or newer**. macOS ships 3.9, so install a newer one (`brew install python@3.12`, or python.org). If `python3` is too old the script exits with code 5 and says so, and the skill retries with `python3.11` or newer.
+
+For hosts the CLI does not cover, use the host's own folder:
 
 | Host | Skill folder | How to invoke it |
 |---|---|---|
@@ -64,7 +79,7 @@ python -m pip install pytest
 python -m pytest -q
 ```
 
-Tests run the script black-box on synthetic fixtures only. Real transcripts are never committed. CI runs pytest on Linux with Python 3.11 to 3.13 (macOS and Windows come later). Design notes: `docs/`.
+Tests run the script black-box on synthetic fixtures only. Real transcripts are never committed. CI runs pytest on Linux, macOS and Windows with Python 3.11, 3.12 and 3.13. Design notes: `docs/`.
 
 ## License
 
