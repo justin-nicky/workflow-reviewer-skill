@@ -4137,7 +4137,7 @@ def make_replica(reader, mapping, host):
 def home_relative(path):
     text = str(path)
     home = str(Path.home())
-    return "~" + text[len(home):] if text.startswith(home) else text
+    return "~" + text[len(home):].replace("\\", "/") if text.startswith(home) else text
 
 
 def newest_replica(host):

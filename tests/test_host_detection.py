@@ -144,7 +144,7 @@ type_path = "role"
 detect = {{ env = ["JD_HOST_ACTIVE"] }}
 [container]
 kind = "json_document"
-roots = ["{sessions}"]
+roots = ["{sessions.as_posix()}"]
 [[container.documents]]
 file = "api.json"
 [capabilities]
@@ -157,7 +157,7 @@ match = {{ role = "user" }}
 role = "user"
 text = ["text"]
 ''')
-    cli.env_extra["XDG_CONFIG_HOME"] = str(cli.home / "xdg")
+    cli.env_extra["XDG_CONFIG_HOME"] = cli.env_extra["APPDATA"] = str(cli.home / "xdg")
     assert chosen(cli.json()[1]) == ("jd", "data presence")
     cli.env_extra["JD_HOST_ACTIVE"] = "1"
     claude_session(cli, age=100)

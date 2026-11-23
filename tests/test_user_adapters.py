@@ -12,7 +12,7 @@ from conftest import ROOT
 
 def adapter_dir(cli):
     folder = cli.home / "xdg" / "workflow-reviewer" / "hosts"
-    cli.env_extra["XDG_CONFIG_HOME"] = str(cli.home / "xdg")
+    cli.env_extra["XDG_CONFIG_HOME"] = cli.env_extra["APPDATA"] = str(cli.home / "xdg")
     return folder
 
 
@@ -113,8 +113,8 @@ def test_the_adapter_folder_follows_xdg_and_appdata():
     spec = importlib.util.spec_from_file_location("tm_adapters", SCRIPT)
     tm = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tm)
-    assert str(tm.user_adapter_dir({"XDG_CONFIG_HOME": "/x/cfg"}, "linux", "/home/u")) == "/x/cfg/workflow-reviewer/hosts"
-    assert str(tm.user_adapter_dir({}, "linux", "/home/u")) == "/home/u/.config/workflow-reviewer/hosts"
+    assert tm.user_adapter_dir({"XDG_CONFIG_HOME": "/x/cfg"}, "linux", "/home/u").as_posix() == "/x/cfg/workflow-reviewer/hosts"
+    assert tm.user_adapter_dir({}, "linux", "/home/u").as_posix() == "/home/u/.config/workflow-reviewer/hosts"
     assert str(tm.user_adapter_dir({"APPDATA": "C:/Users/u/AppData/Roaming"}, "win32", "C:/Users/u")).replace("\\", "/") == \
         "C:/Users/u/AppData/Roaming/workflow-reviewer/hosts"
 
@@ -122,7 +122,7 @@ def test_the_adapter_folder_follows_xdg_and_appdata():
 # ---- --save-adapter ----------------------------------------------------------------------------------------------------------
 
 def save(cli, tmp_path, text, *args, name="hx", records=None):
-    cli.env_extra["XDG_CONFIG_HOME"] = str(cli.home / "xdg")
+    cli.env_extra["XDG_CONFIG_HOME"] = cli.env_extra["APPDATA"] = str(cli.home / "xdg")
     path = write_jsonl(tmp_path / "s.jsonl", records if records is not None else session())
     return cli.run(path, "--save-adapter", name, *args, stdin=text)
 

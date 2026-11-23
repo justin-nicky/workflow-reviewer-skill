@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -20,7 +21,7 @@ schema_version = 1
 type_path = "role"
 [container]
 kind = "json_document"
-roots = ["{root}"]
+roots = ["{Path(root).as_posix()}"]
 [container.session]
 cwd_document = "meta.json"
 cwd_path = "cwd"

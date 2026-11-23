@@ -155,7 +155,7 @@ def test_make_replica_cannot_be_combined_with_report_or_events(cli, tmp_path):
 
 def bundle(cli, tmp_path, folder):
     cli.env_extra["TMPDIR"] = str(tmp_path / "tmp")
-    cli.env_extra["XDG_CONFIG_HOME"] = str(cli.home / "xdg")
+    cli.env_extra["XDG_CONFIG_HOME"] = cli.env_extra["APPDATA"] = str(cli.home / "xdg")
     proc = cli.run(folder, "--host", "cline", "--pr-bundle")
     return proc, json.loads(proc.stdout)
 
@@ -185,6 +185,7 @@ def test_the_bundle_runs_nothing_and_writes_nothing(cli, tmp_path, monkeypatch, 
     monkeypatch.setattr(tm.os, "system", lambda *a: called.append(a))
     monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(cli.home / "xdg"))
+    monkeypatch.setenv("APPDATA", str(cli.home / "xdg"))
     monkeypatch.setattr(tm.tempfile, "tempdir", None)
     monkeypatch.chdir(cli.repo)
     assert tm.main([str(folder), "--host", "cline", "--pr-bundle", "--format", "json"]) == 0
