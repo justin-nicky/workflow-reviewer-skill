@@ -9,8 +9,8 @@ import sys
 
 EXIT_PYTHON_VERSION = 5
 EXIT_NO_TRANSCRIPT = 6
-if sys.version_info < (3, 11):
-    sys.stderr.write("workflow-reviewer needs Python 3.11+, found %d.%d\n" % sys.version_info[:2])
+if sys.version_info < (3, 9):
+    sys.stderr.write("workflow-reviewer needs Python 3.9+, found %d.%d\n" % sys.version_info[:2])
     sys.exit(EXIT_PYTHON_VERSION)
 
 import argparse
@@ -24,9 +24,14 @@ import sqlite3
 import subprocess
 import tempfile
 import time
-import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+try:
+    import tomllib
+except ImportError:                     # Python 3.9 and 3.10: use the bundled copy of tomli (what tomllib was made from)
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "_vendor"))     # python -I drops the script folder
+    import tomli as tomllib
 
 MAPPING_DIR = Path(__file__).resolve().parent / "mappings"
 HOSTS = {"claude-code": "claude_code", "codex": "codex", "cursor": "cursor"}      # picked by auto-detection

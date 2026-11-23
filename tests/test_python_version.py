@@ -1,31 +1,17 @@
-import shutil
 import subprocess
 import sys
 
-import pytest
-
 from conftest import SCRIPT
 
-
-def older_python():
-    for name in ("/usr/bin/python3", "python3.9", "python3.10", "python3"):
-        exe = shutil.which(name) or name
-        try:
-            out = subprocess.run([exe, "-c", "import sys; print(sys.version_info[:2] < (3, 11))"],
-                                 capture_output=True, text=True).stdout.strip()
-        except OSError:
-            continue
-        if out == "True":
-            return exe
-    return None
+FAKE_OLD_PYTHON = (
+    "import runpy, sys; sys.version_info = (3, 8, 10, 'final', 0); "
+    "runpy.run_path(sys.argv[1], run_name='__main__')"
+)
 
 
-def test_old_python_gets_a_clear_message_and_its_own_exit_code(tmp_path):
-    exe = older_python()
-    if exe is None:
-        pytest.skip("no Python older than 3.11 on this machine")
-    proc = subprocess.run([exe, str(SCRIPT), "--format", "json"], capture_output=True, text=True,
+def test_python_older_than_3_9_gets_a_clear_message_and_its_own_exit_code(tmp_path):
+    proc = subprocess.run([sys.executable, "-c", FAKE_OLD_PYTHON, str(SCRIPT), "--format", "json"], capture_output=True, text=True,
                           cwd=str(tmp_path))
     assert proc.returncode == 5
-    assert "needs Python 3.11+" in proc.stderr
-    assert "ImportError" not in proc.stderr
+    assert "needs Python 3.9+" in proc.stderr and "found 3.8" in proc.stderr
+    assert "ImportError" not in proc.stderr and "Traceback" not in proc.stderr
