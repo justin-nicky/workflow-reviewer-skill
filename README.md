@@ -4,7 +4,9 @@ An agent skill that reviews **the coding-agent task you just finished**, in the 
 
 You get a short HTML report. The agent's reply in chat is the bottom line, the top action and the report's file path. A deterministic script counts everything; the agent only judges.
 
-See a rendered report: [examples/sample-report.html](examples/sample-report.html) (synthetic data; open the file in a browser).
+[![Sample workflow-reviewer report (synthetic session)](examples/sample-report.png)](https://justin-nicky.github.io/workflow-reviewer-skill/examples/sample-report.html)
+
+See a rendered report: [the sample report](https://justin-nicky.github.io/workflow-reviewer-skill/examples/sample-report.html) (synthetic data). The source is [examples/sample-report.html](examples/sample-report.html).
 
 ## Install
 
