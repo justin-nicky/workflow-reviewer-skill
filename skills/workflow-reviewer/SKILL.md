@@ -3,7 +3,7 @@ name: workflow-reviewer
 description: Review the coding-agent task you just finished, in this same session. Finds where tokens and time went without improving quality, which process slips happened, and which skills overlap or are missing. Explicit invocation only (/workflow-reviewer). Read-only; returns a report path.
 disable-model-invocation: true
 metadata:
-  version: "0.2.0"
+  version: "0.2.1"
 ---
 
 # workflow-reviewer
@@ -43,7 +43,7 @@ Add `--verify-pattern <regex>` for the project's own verify commands. Keep these
 - `2` The health table says a core metric is broken, or the mapping cannot be used. Follow [adapter-flow](references/adapter-flow.md).
 - `3` Several recent sessions. List them, ask which one, rerun with `--session-id <id>`. Never guess.
 - `4` Unsupported storage (a compressed rollout, or a file over 200 MB). Use degraded mode: the working tree and repo records only, confidence capped at medium; say what is missing.
-- `5` Python is older than 3.11. Say that 3.11 or newer is needed and retry with `python3.11` or newer if present.
+- `5` Python is older than 3.9. Say that 3.9 or newer is needed and retry with `python3.9` or a newer `python3.x` if present.
 - `6` No session found, or the host is not supported. Pause and offer the two options in [adapter-flow](references/adapter-flow.md): degraded mode, or build an adapter.
 - `7` The findings JSON is invalid (Step 6). Fix the listed errors and rerun.
 

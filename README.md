@@ -23,7 +23,7 @@ git clone https://github.com/justin-nicky/workflow-reviewer-skill
 cp -r workflow-reviewer-skill/skills/workflow-reviewer ~/.claude/skills/
 ```
 
-Requires **Python 3.11 or newer**. macOS ships 3.9, so install a newer one (`brew install python@3.12`, or python.org). If `python3` is too old the script exits with code 5 and says so, and the skill retries with `python3.11` or newer.
+Requires **Python 3.9 or newer**; the `python3` built into macOS works. On Python 3.8 or older the script exits with code 5 and says so, and the skill retries with a newer `python3.x` if one is installed (for example after `brew install python@3.12`, or from python.org).
 
 For hosts the CLI does not cover, use the host's own folder:
 
@@ -81,7 +81,7 @@ python -m pip install pytest
 python -m pytest -q
 ```
 
-Tests run the script black-box on synthetic fixtures only. Real transcripts are never committed. CI runs pytest on Linux, macOS and Windows with Python 3.11, 3.12 and 3.13. The original design documents are kept in `docs/history/` for reference only.
+Tests run the script black-box on synthetic fixtures only. Real transcripts are never committed. CI runs pytest on Linux, macOS and Windows with Python 3.9 to 3.13. The original design documents are kept in `docs/history/` for reference only.
 
 ## License
 

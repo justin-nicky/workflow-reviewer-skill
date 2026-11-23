@@ -48,6 +48,13 @@ def test_the_skill_version_matches_the_newest_changelog_entry():
     assert re.search(r"^## v([\d.]+)", text(ROOT / "CHANGELOG.md"), re.M).group(1) == version
 
 
+def test_the_docs_state_the_same_minimum_python_as_the_script():
+    gate = re.search(r"sys\.version_info < \(3, (\d+)\)", text(SCRIPT)).group(1)
+    assert gate == "9"
+    assert f"Python 3.{gate} or newer" in text(ROOT / "README.md")
+    assert f"older than 3.{gate}" in text(SKILL) and f"older than 3.{gate}" in text(SKILL_DIR / "references" / "hosts.md")
+
+
 def test_skill_md_is_short():
     assert len(text(SKILL).splitlines()) <= 150
 

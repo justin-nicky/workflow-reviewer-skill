@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.1
+
+- **Python 3.9 and newer.** Runs on Python 3.9+, including the Python built into macOS. Python 3.9 and 3.10 have no `tomllib`, so the skill carries a copy of tomli 2.5.0 (the parser `tomllib` was made from) in `scripts/_vendor/`; Python 3.11 and newer still use `tomllib`.
+
 ## v0.2.0
 
 - **Hosts.** Reads sessions from Claude Code, Codex (including Codex Desktop), Cursor, Devin (desktop app and CLI) and Cline. Kiro runs in degraded mode. Each host is a declarative mapping file, so a new host needs data, not code.

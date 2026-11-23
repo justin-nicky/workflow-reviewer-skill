@@ -53,7 +53,7 @@ Records the mapping deliberately skips are counted per type in `coverage.ignored
 | 2 | Format drift (output still printed from what parses), or a mapping that cannot be used: a `schema_version` newer than the script supports, an unsupported `[container]` kind, a hostile identifier, or a database table or column the mapping names that is missing |
 | 3 | Ambiguous session; list printed |
 | 4 | Unsupported input: a compressed `.zst` rollout, a document or database file over 200 MB, or a replica asked for from a kind of storage that cannot be copied yet |
-| 5 | Python older than 3.11; nothing was read |
+| 5 | Python older than 3.9; nothing was read |
 | 6 | No transcript found; the report lists where it looked and shows the working tree (`git status` and the staged and unstaged diff summaries) in degraded mode |
 | 7 | The findings JSON given to `--report -` is not valid; the errors are listed so they can be fixed and the report re-run |
 
