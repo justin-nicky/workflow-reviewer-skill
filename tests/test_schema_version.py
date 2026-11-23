@@ -1,5 +1,5 @@
 """Every mapping declares schema_version; a mapping newer than the script is refused (exit 2)."""
-import tomllib
+from tomlcompat import tomllib
 from pathlib import Path
 
 import pytest

@@ -16,7 +16,8 @@ def write_jsonl(path, records, truncate_last=False):
     text = "\n".join(lines) + "\n"
     if truncate_last:
         text = text.rstrip("\n")[:-15]
-    path.write_text(text, encoding="utf-8", newline="\n")
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:       # Path.write_text(newline=) needs Python 3.10
+        handle.write(text)
     return path
 
 

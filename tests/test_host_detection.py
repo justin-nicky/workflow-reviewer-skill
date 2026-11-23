@@ -43,7 +43,7 @@ def chosen(out):
 
 
 def test_claude_code_declares_its_environment_marker():
-    import tomllib
+    from tomlcompat import tomllib
     raw = tomllib.loads((ROOT / "skills/workflow-reviewer/scripts/mappings/claude_code.toml").read_text(encoding="utf-8"))
     assert raw["detect"] == {"env": ["CLAUDECODE"]}
     for other in ("codex", "cursor", "devin"):

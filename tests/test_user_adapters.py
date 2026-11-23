@@ -136,7 +136,7 @@ def test_save_adapter_writes_a_private_file_when_no_core_metric_is_broken(cli, t
     assert stat.S_IMODE(target.stat().st_mode) == 0o600 and stat.S_IMODE(target.parent.stat().st_mode) == 0o700
     text = target.read_text(encoding="utf-8")
     assert 'made_by = "workflow-reviewer adapter flow"' in text and 'made_from_version = "1.5.0"' in text
-    import tomllib
+    from tomlcompat import tomllib
     assert tomllib.loads(text)["host"] == "hx"
     # and the saved adapter now works as a host
     _, again = cli.json(write_jsonl(tmp_path / "t.jsonl", session()), "--host", "hx")

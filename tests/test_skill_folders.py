@@ -79,7 +79,7 @@ def test_an_env_var_replaces_the_declared_base(cli, tmp_path):
 
 def test_every_builtin_mapping_with_a_transcript_declares_its_folders():
     from conftest import ROOT
-    import tomllib
+    from tomlcompat import tomllib
     for name in ("claude_code", "codex", "cursor", "kiro"):
         raw = tomllib.loads((ROOT / "skills/workflow-reviewer/scripts/mappings" / f"{name}.toml").read_text(encoding="utf-8"))
         assert raw.get("skill_folders"), name

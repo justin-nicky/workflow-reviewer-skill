@@ -300,7 +300,7 @@ def test_a_subagent_rollout_passed_alone_only_warns_even_where_the_mapping_break
 
 
 def test_claude_code_and_codex_break_on_turnless_main_activity():
-    import tomllib
+    from tomlcompat import tomllib
     from conftest import ROOT
     for name in ("claude_code", "codex"):
         raw = tomllib.loads((ROOT / "skills/workflow-reviewer/scripts/mappings" / f"{name}.toml").read_text(encoding="utf-8"))

@@ -139,7 +139,7 @@ def test_the_environment_marker_chooses_cline(cli, tmp_path):
 
 
 def test_declared_marker_and_label():
-    import tomllib
+    from tomlcompat import tomllib
     raw = tomllib.loads((ROOT / "skills/workflow-reviewer/scripts/mappings/cline.toml").read_text(encoding="utf-8"))
     assert raw["detect"] == {"env": ["CLINE_ACTIVE"]} and raw["tested_versions"] == "4.1.26" and "made_by" not in raw
 
