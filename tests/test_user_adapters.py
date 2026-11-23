@@ -91,7 +91,7 @@ def test_the_built_in_variant_still_wins_on_a_built_in_shape(cli):
 
 
 def test_a_user_adapter_never_replaces_a_built_in_variant_on_a_tie(cli, tmp_path):
-    same = (ROOT / "skills/workflow-reviewer/scripts/mappings/codex.toml").read_text()
+    same = (ROOT / "skills/workflow-reviewer/scripts/mappings/codex.toml").read_text(encoding="utf-8")
     install(cli, "codex-copy", same.replace('variant = "desktop"', 'variant = "mine"') if False else same)
     desktop = ROOT / "tests" / "fixtures" / "golden" / "codex-desktop"
     files = sorted(desktop.glob("rollout-*.jsonl"))
@@ -134,7 +134,7 @@ def test_save_adapter_writes_a_private_file_when_no_core_metric_is_broken(cli, t
     target = cli.home / "xdg" / "workflow-reviewer" / "hosts" / "hx.toml"
     assert proc.returncode == 0 and out["saved"] == "~" + str(target)[len(str(cli.home)):] and out["label"] == "unproven"        # printed home-relative
     assert stat.S_IMODE(target.stat().st_mode) == 0o600 and stat.S_IMODE(target.parent.stat().st_mode) == 0o700
-    text = target.read_text()
+    text = target.read_text(encoding="utf-8")
     assert 'made_by = "workflow-reviewer adapter flow"' in text and 'made_from_version = "1.5.0"' in text
     import tomllib
     assert tomllib.loads(text)["host"] == "hx"

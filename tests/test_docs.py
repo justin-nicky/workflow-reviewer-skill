@@ -43,6 +43,11 @@ def test_the_frontmatter_parses_and_the_skill_is_explicit_only():
     assert "allow_implicit_invocation: false" in text(SKILL_DIR / "agents" / "openai.yaml")
 
 
+def test_the_skill_version_matches_the_newest_changelog_entry():
+    version = re.search(r'^  version: "([^"]+)"$', text(SKILL), re.M).group(1)
+    assert re.search(r"^## v([\d.]+)", text(ROOT / "CHANGELOG.md"), re.M).group(1) == version
+
+
 def test_skill_md_is_short():
     assert len(text(SKILL).splitlines()) <= 150
 
@@ -57,10 +62,13 @@ def test_the_ground_rules_and_the_seven_steps_are_there():
 
 # ---- flags and commands --------------------------------------------------------------------------------------------------------------
 
+SKILLS_CLI_FLAGS = {"--copy"}        # flags of `npx skills add` named in the README's install section
+
+
 @pytest.mark.parametrize("doc", DOCS, ids=lambda p: p.name)
 def test_every_flag_a_doc_mentions_exists(doc):
     mentioned = set(re.findall(r"(?<![\w-])--[a-z][a-z0-9-]*", text(doc)))
-    assert mentioned <= SCRIPT_FLAGS, sorted(mentioned - SCRIPT_FLAGS)
+    assert mentioned - SKILLS_CLI_FLAGS <= SCRIPT_FLAGS, sorted(mentioned - SKILLS_CLI_FLAGS - SCRIPT_FLAGS)
 
 
 @pytest.mark.parametrize("doc", DOCS, ids=lambda p: p.name)

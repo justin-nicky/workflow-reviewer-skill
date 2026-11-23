@@ -270,7 +270,7 @@ def long_path(prefix, sep, length):
 
 
 def assert_no_username_fragment(out, user):
-    for k in range(3, len(user) + 1):             # "tin/", "stin/", "alex/" ...
+    for k in range(3, len(user) + 1):             # "lex/", "alex/" ...
         for sep in ("/", "\\", "\\\\"):
             assert user[-k:] + sep not in out, (user[-k:], sep)
     assert user not in out

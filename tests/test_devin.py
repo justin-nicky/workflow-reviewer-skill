@@ -229,7 +229,7 @@ def test_a_rule_file_the_repo_scan_already_found_is_listed_once(cli, tmp_path):
 @pytest.mark.parametrize("schema, want", [(5, "old"), (20, "new")])
 def test_the_database_schema_number_breaks_a_variant_tie(cli, tmp_path, schema, want):
     from conftest import ROOT
-    text = (ROOT / "skills/workflow-reviewer/scripts/mappings/devin.toml").read_text()
+    text = (ROOT / "skills/workflow-reviewer/scripts/mappings/devin.toml").read_text(encoding="utf-8")
     text += ('\n[[variants]]\nname = "old"\nversions = "schema 1 to 10"\n'
              '\n[[variants]]\nname = "new"\nversions = "schema 11 and newer"\n')
     db = dv.DevinDb(tmp_path / "s.db", schema=schema)

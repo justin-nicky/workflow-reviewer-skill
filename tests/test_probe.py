@@ -88,7 +88,7 @@ def test_type_values_need_to_repeat_and_stay_short_identifiers(cli, tmp_path):
     group = out["probe"]["type_groups"]["type"]
     assert group["values"] == {"a_kind": 3} and group["more"] == 3
     hidden = [{"type": "only_once"}, {"type": "only_twice"}, {"type": "only_twice"}]
-    assert "only_once" not in write_jsonl(tmp_path / "t.jsonl", hidden).read_text() or "only_once" not in json.dumps(probe(cli, tmp_path / "t.jsonl")[1])
+    assert "only_once" not in write_jsonl(tmp_path / "t.jsonl", hidden).read_text(encoding="utf-8") or "only_once" not in json.dumps(probe(cli, tmp_path / "t.jsonl")[1])
 
 
 def test_the_caps_are_200_paths_and_50_values(cli, tmp_path):

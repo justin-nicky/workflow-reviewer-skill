@@ -303,7 +303,7 @@ def test_claude_code_and_codex_break_on_turnless_main_activity():
     import tomllib
     from conftest import ROOT
     for name in ("claude_code", "codex"):
-        raw = tomllib.loads((ROOT / "skills/workflow-reviewer/scripts/mappings" / f"{name}.toml").read_text())
+        raw = tomllib.loads((ROOT / "skills/workflow-reviewer/scripts/mappings" / f"{name}.toml").read_text(encoding="utf-8"))
         assert raw["turnless_activity"] == "broken", name
 
 

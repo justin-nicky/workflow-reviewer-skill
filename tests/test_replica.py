@@ -33,7 +33,7 @@ def planted_session(cli, tmp_path):
                tool_result("call-read", "read_files", text="Quarterly revenue is up", i=4, t=2), tool_result("call-skill", "skills", text="loaded", i=5, t=2)]
     msgs += results + [assistant(6, 5, text="done"), user_input("again", 7, 8), user_input("really", 8, 9), assistant(9, 12, text="ok")]
     folder = write_session(tmp_path / "sessions", SID, cli.repo, msgs)
-    meta = json.loads((folder / f"{SID}.json").read_text())
+    meta = json.loads((folder / f"{SID}.json").read_text(encoding="utf-8"))
     meta.update(prompt=f"secret {SECRET}", cwd=HOME, workspace_root=HOME)
     meta["metadata"]["title"] = f"acme-corp {EMAIL}"
     (folder / f"{SID}.json").write_text(json.dumps(meta))
@@ -73,9 +73,9 @@ def test_a_replica_gives_the_same_numbers_as_the_session(cli, tmp_path):
 def test_nothing_from_the_source_survives_in_any_position(cli, tmp_path):
     proc, out = replica(cli, tmp_path, planted_session(cli, tmp_path))
     assert proc.returncode == 0
-    text = "".join(p.read_text() for p in files_of(tmp_path))
+    text = "".join(p.read_text(encoding="utf-8") for p in files_of(tmp_path))
     for planted in PLANTED:
-        assert planted not in text and planted not in proc.stdout.replace("pytest-of-alex", ""), planted
+        assert planted not in text and planted not in proc.stdout, planted
     assert "/Users/" not in text and "@" not in text and "person" not in text
 
 
@@ -83,21 +83,21 @@ def test_the_replica_carries_structure_and_numbers_but_regenerated_ids_and_shift
     folder = planted_session(cli, tmp_path)
     replica(cli, tmp_path, folder)
     new = next(iter(sorted((tmp_path / "tmp" / "workflow-reviewer").glob("replica-cline-*/replica_session"))))
-    old_doc = json.loads((folder / f"{SID}.messages.json").read_text())
-    new_doc = json.loads((new / "replica_session.messages.json").read_text())
+    old_doc = json.loads((folder / f"{SID}.messages.json").read_text(encoding="utf-8"))
+    new_doc = json.loads((new / "replica_session.messages.json").read_text(encoding="utf-8"))
     assert [m["role"] for m in new_doc["messages"]] == [m["role"] for m in old_doc["messages"]]
     assert [m["metrics"] for m in new_doc["messages"] if "metrics" in m] == [m["metrics"] for m in old_doc["messages"] if "metrics" in m]
     assert {m["id"] for m in new_doc["messages"]}.isdisjoint({m["id"] for m in old_doc["messages"]})
     assert len({m["id"] for m in new_doc["messages"]}) == len(new_doc["messages"])
     old_ts, new_ts = [m["ts"] for m in old_doc["messages"]], [m["ts"] for m in new_doc["messages"]]
     assert all(isinstance(t, int) for t in new_ts) and [b - a for a, b in zip(new_ts, new_ts[1:])] == [b - a for a, b in zip(old_ts, old_ts[1:])]
-    assert new_ts[0] != old_ts[0] and json.loads((new / "replica_session.json").read_text())["cwd"] == "~/project"
+    assert new_ts[0] != old_ts[0] and json.loads((new / "replica_session.json").read_text(encoding="utf-8"))["cwd"] == "~/project"
 
 
 def test_the_exit_code_wrapper_and_the_skill_name_are_kept_because_the_mapping_declares_them(cli, tmp_path):
     folder = planted_session(cli, tmp_path)
     replica(cli, tmp_path, folder)
-    text = "".join(p.read_text() for p in files_of(tmp_path))
+    text = "".join(p.read_text(encoding="utf-8") for p in files_of(tmp_path))
     assert "with code 2" in text and "<user_input" in text and '"hello"' in text and "python3 -m pytest -q" in text
 
 

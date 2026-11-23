@@ -140,7 +140,7 @@ def test_the_environment_marker_chooses_cline(cli, tmp_path):
 
 def test_declared_marker_and_label():
     import tomllib
-    raw = tomllib.loads((ROOT / "skills/workflow-reviewer/scripts/mappings/cline.toml").read_text())
+    raw = tomllib.loads((ROOT / "skills/workflow-reviewer/scripts/mappings/cline.toml").read_text(encoding="utf-8"))
     assert raw["detect"] == {"env": ["CLINE_ACTIVE"]} and raw["tested_versions"] == "4.1.26" and "made_by" not in raw
 
 
@@ -166,6 +166,6 @@ def test_the_golden_replica_reproduces_the_real_sessions_numbers(cli):
 
 
 def test_the_golden_replica_holds_nothing_from_the_real_session():
-    text = "".join(p.read_text() for p in GOLDEN.iterdir())
+    text = "".join(p.read_text(encoding="utf-8") for p in GOLDEN.iterdir())
     for token in ("alex", "/Users/", "@"):
         assert token not in text

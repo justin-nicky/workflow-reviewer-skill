@@ -14,7 +14,7 @@ import pytest
 from conftest import ROOT, SCRIPT
 
 GOLDEN = ROOT / "tests" / "fixtures" / "golden"
-FINDINGS = json.loads((ROOT / "tests" / "fixtures" / "findings" / "golden.json").read_text())
+FINDINGS = json.loads((ROOT / "tests" / "fixtures" / "findings" / "golden.json").read_text(encoding="utf-8"))
 CLAUDE = next(iter(sorted((GOLDEN / "claude-code").glob("*.jsonl")))).with_suffix("")
 CURSOR = next(iter(sorted((GOLDEN / "cursor-chat1").glob("*/"))))
 
@@ -107,7 +107,7 @@ def test_no_actions_and_no_skills_are_valid(cli, tmp_path):
     proc = render(cli, tmp_path, findings(actions=[], skills=[], closing_question=None, metric_notes=None))
     out = json.loads(proc.stdout)
     assert proc.returncode == 0 and out["top_action"] is None
-    assert "No changes recommended" in report_file(tmp_path).read_text()
+    assert "No changes recommended" in report_file(tmp_path).read_text(encoding="utf-8")
 
 
 def test_report_and_mapping_cannot_both_read_stdin(cli, tmp_path):

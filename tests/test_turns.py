@@ -246,7 +246,7 @@ def test_cursor_subagent_brief_is_not_a_main_turn_however_the_files_are_passed(c
 
 def test_cursor_subagent_twin_outside_the_subagents_folder_is_still_not_a_main_turn(cli, tmp_path):
     main, sub = cursor_session(tmp_path)
-    twin = write_jsonl(tmp_path / "twin.jsonl", [json.loads(l) for l in sub.read_text().splitlines()])
+    twin = write_jsonl(tmp_path / "twin.jsonl", [json.loads(l) for l in sub.read_text(encoding="utf-8").splitlines()])
     for args in ([main, twin], [twin, main]):
         _, out = cli.json(*args, "--host", "cursor")
         assert out["window"]["turns_total"] == 2, args
