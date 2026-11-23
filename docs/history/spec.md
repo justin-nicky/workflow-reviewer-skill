@@ -3,6 +3,8 @@ labels: [ready-for-agent]
 title: workflow-reviewer, an agent skill that audits the coding-agent task you just finished
 ---
 
+> **Historical.** This is the original design document. The current behaviour is described in the [README](../../README.md) and in `skills/workflow-reviewer/references/`; where they differ, those win.
+
 ## Problem Statement
 
 Developers who run coding agents (Claude Code, Codex, Cursor, Kiro) on real tasks can't easily see where tokens and time went, or which process steps slipped. Transcripts are large, host-specific and change between releases. Asking the agent to describe its own work is unreliable, because it grades itself from recollection. Trimming cost is also risky: a "saving" that removes an independent review, final verification, a fail-closed rule or a human approval gate quietly lowers quality. Developers have no cheap, trustworthy way to ask "what did that task cost, what was wasted, and what should I change?"

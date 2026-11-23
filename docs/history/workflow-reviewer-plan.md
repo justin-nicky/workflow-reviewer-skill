@@ -1,3 +1,5 @@
+> **Historical.** This is the original design document. The current behaviour is described in the [README](../../README.md) and in `skills/workflow-reviewer/references/`; where they differ, those win.
+
 # workflow-reviewer: build plan
 
 An open-source agent skill that audits **the coding-agent task you just finished**. It finds where tokens and time went without improving quality, and which process slips happened. It returns a report in chat, with findings and proposals. **The audit reports only:** it never edits code, skills or config, and it never writes the report to disk.
