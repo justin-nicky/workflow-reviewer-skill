@@ -35,6 +35,7 @@ def devin_db(cli, age=3600):
     chain = db.session("d1", str(cli.repo.resolve()), created=now - age - 100, last=now - age)
     chain.add(dv.system(), dv.rules_loaded(["~/a.md"]), dv.user("go"), dv.assistant("ok", tokens=dv.metrics(1, 1, 1)))
     chain.done()
+    db.conn.close()                       # Windows cannot delete a database file that is still open
 
 
 def chosen(out):
