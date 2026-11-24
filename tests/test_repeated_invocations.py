@@ -1,8 +1,8 @@
 """The default window sits between the previous reviewer invocation and the latest one, for every host's invocation form."""
 import pytest
 from fixtures import devin as dv
-from fixtures.builders import (cc_assistant, cc_user, cu_assistant, cu_turn_ended, cu_user, cx_meta, cx_tokens, cx_user, usage,
-                               write_jsonl)
+from fixtures.builders import (cc_assistant, cc_user, cu_assistant, cu_turn_ended, cu_user, cx_meta, cx_tokens, cx_user, desktop as desktop_wrap,
+                               dx_assistant, dx_meta, dx_task_started, dx_usage, dx_user, usage, write_jsonl)
 from fixtures.cline import assistant as cl_assistant
 from fixtures.cline import user_input, write_session
 
@@ -123,3 +123,42 @@ def test_list_turns_marks_the_reviewer_turns_and_names_the_default_window(cli, t
 def test_list_turns_with_no_invocation_has_no_marks_and_the_whole_session(cli, tmp_path):
     _, out = cli.json(build(cli, tmp_path, "claude-code", [W, W]), "--host", "claude-code", "--list-turns")
     assert not any(t.get("reviewer") for t in out["turns"]) and out["default_window"] == {"from_turn": 1, "to_turn": 2}
+
+
+# ---- Codex 0.171 sends the skill as a link: "[$workflow-reviewer](/path/SKILL.md)" -----------------------------------------------------
+
+LINK = "[$workflow-reviewer](/home/u/.agents/skills/workflow-reviewer/SKILL.md) "
+
+
+def codex_link_session(cli, tmp_path, spec, desktop=False):
+    records = [dx_meta("i", cli.repo)] if desktop else [cx_meta("i", cli.repo)]
+    for n, kind in enumerate(spec):
+        text = LINK if kind == "review" else f"task {n}"
+        if desktop:
+            records += [dx_task_started(f"t{n}", n * 10 + 1), dx_user(text, n * 10 + 2), dx_usage(f"r{n}", 5, 0, 10, n * 10 + 3),
+                        dx_assistant("ok", n * 10 + 4)]
+        else:
+            records += [cx_user(text, n * 100 + 1), cx_tokens(1, 0, 10, n * 100 + 2)]
+    return write_jsonl(tmp_path / ("rollout-link.jsonl"), desktop_wrap(records) if desktop else records)
+
+
+@pytest.mark.parametrize("desktop", [False, True])
+def test_the_codex_link_form_is_a_reviewer_turn_and_ends_the_default_window(cli, tmp_path, desktop):
+    path = codex_link_session(cli, tmp_path, [W, W, R], desktop)
+    _, listed = cli.json(path, "--host", "codex", "--list-turns")
+    assert [bool(t.get("reviewer")) for t in listed["turns"]] == [False, False, True]
+    assert listed["default_window"] == {"from_turn": 1, "to_turn": 2}
+    _, out = cli.json(path, "--host", "codex")
+    assert out["window"]["reviewer_invocation_found"] is True and out["window"]["turns_total"] == 2
+
+
+def test_the_codex_link_form_works_for_a_second_invocation_too(cli, tmp_path):
+    path = codex_link_session(cli, tmp_path, [W, R, W, W, R], desktop=True)
+    _, out = cli.json(path, "--host", "codex", "--list-turns")
+    assert out["default_window"] == {"from_turn": 3, "to_turn": 4}
+
+
+def test_a_prompt_that_only_mentions_the_link_in_passing_is_not_an_invocation(cli, tmp_path):
+    records = [cx_meta("i", cli.repo), cx_user("please explain what [$workflow-reviewer](/x/SKILL.md) does", 1), cx_tokens(1, 0, 10, 2)]
+    _, out = cli.json(write_jsonl(tmp_path / "rollout-m.jsonl", records), "--host", "codex", "--list-turns")
+    assert not any(t.get("reviewer") for t in out["turns"])

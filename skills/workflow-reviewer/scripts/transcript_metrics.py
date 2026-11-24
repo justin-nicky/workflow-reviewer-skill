@@ -746,7 +746,7 @@ def analyse(events, stats, mapping, custom_patterns=()):
 # ---- window, time, turns ---------------------------------------------------------------
 
 REVIEWER_RE = re.compile(    # the invocation itself, in each host's own form: a typed /workflow-reviewer or $workflow-reviewer starting
-    r"^\s*(?:<user_input[^>]*>\s*)?[/$]workflow-reviewer\b"                      # the prompt (Cline wraps it in <user_input>),
+    r"^\s*(?:<user_input[^>]*>\s*)?(?:[/$]workflow-reviewer\b|\[[/$]workflow-reviewer\]\()"   # the prompt (Cline wraps it in <user_input>; Codex 0.171 sends a link),
     r"|^\s*(?:<user_input[^>]*>\s*)?(?:please\s+)?(?:use|run|invoke|start)\s+(?:the\s+)?[/$]?workflow-reviewer\b"   # asking for it by name,
     r"|<command-(?:name|message)>/?workflow-reviewer"                              # Claude Code's command markers,
     r"|<manually_attached_skills>(?:(?!</manually_attached_skills>).)*?\bSkill Name:\s*workflow-reviewer\b",   # Cursor's attached skill
