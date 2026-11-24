@@ -3,7 +3,7 @@ name: workflow-reviewer
 description: Review the coding-agent task you just finished, in this same session. Finds where tokens and time went without improving quality, which process slips happened, and which skills overlap or are missing. Explicit invocation only (/workflow-reviewer). Read-only; returns a report path.
 disable-model-invocation: true
 metadata:
-  version: "0.2.1"
+  version: "0.2.2"
 ---
 
 # workflow-reviewer

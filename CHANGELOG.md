@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.2
+
+- **Codex 0.171.** Reads Codex 0.171.0-alpha.13 sessions with the built-in mapping: the new tool-listing record is ignored, the skill link `[$workflow-reviewer](...)` is recognised as the invocation, and a message that only quotes the skills heading no longer triggers "skill list found but not parsed".
+- **No false pause.** A record type nobody has seen before now stops a review only when nothing else vouches for the metric it would feed. When the second count of that metric agrees, it is a warning that names the type, and the review goes on.
+- **Mapping reference.** `references/mapping-keys.md` lists every key a mapping may use, so an agent drafting an adapter does not need to read the script.
+
 ## v0.2.1
 
 - **Python 3.9 and newer.** Runs on Python 3.9+, including the Python built into macOS. Python 3.9 and 3.10 have no `tomllib`, so the skill carries a copy of tomli 2.5.0 (the parser `tomllib` was made from) in `scripts/_vendor/`; Python 3.11 and newer still use `tomllib`.
