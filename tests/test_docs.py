@@ -180,6 +180,39 @@ def test_the_sample_report_is_the_render_of_the_golden_session_and_the_sample_fi
     assert "this session only reads" not in text(sample)
 
 
+# ---- the mapping reference: an agent never needs the script's source ----------------------------------------------------------------------
+
+MAPPING_KEYS_DOC = SKILL_DIR / "references" / "mapping-keys.md"
+
+
+def documented(doc):
+    return set(re.findall(r"`([^`]+)`", text(doc)))
+
+
+def test_every_mapping_key_the_engine_accepts_is_listed_with_a_line_of_its_own():
+    known = documented(MAPPING_KEYS_DOC)
+    lines = text(MAPPING_KEYS_DOC).splitlines()
+    engine = {"top level": tm.TOP_KEYS, "rule": tm.RULE_KEYS, "fields": tm.FIELD_KEYS, "capabilities": tm.CAPABILITY_KEYS,
+              "checks": tm.CHECK_KEYS, "subagents": tm.SUBAGENT_KEYS}
+    missing = []
+    for where, keys in engine.items():
+        for key in sorted(keys):
+            if not any(re.match(rf"^- `{re.escape(key)}`", line) or re.match(rf"^\| `{re.escape(key)}`", line) for line in lines):
+                missing.append(f"{where}: {key}")
+    containers = {"kind", "globs", "roots", "documents", "merge", "session", "sessions", "nodes", "subagent_heads", "version",
+                  *(k for cols in tm.SQLITE_TABLES.values() for k in cols), "model", "file", "records", "name", "as_record", "by",
+                  "cwd_document", "cwd_path", "table", "column"}
+    missing += [f"container: {k}" for k in sorted(containers - known)]
+    sides = {"const", "match", "count", "distinct", "sum", "last", "actors", "equal", "at_most", "at_least", "warn", "broken"}
+    missing += [f"check side: {k}" for k in sorted(sides - known)]
+    assert not missing, missing
+
+
+def test_the_other_docs_point_to_the_mapping_reference():
+    for doc in (SKILL_DIR / "references" / "adding-a-host.md", SKILL_DIR / "references" / "adapter-flow.md", SKILL_DIR / "references" / "hosts.md"):
+        assert "mapping-keys.md" in text(doc), doc.name
+
+
 # ---- the examples in the docs ------------------------------------------------------------------------------------------------------------
 
 def findings_examples():

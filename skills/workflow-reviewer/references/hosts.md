@@ -1,5 +1,7 @@
 # Hosts
 
+Every mapping key, with one line each: [mapping-keys.md](mapping-keys.md).
+
 | Host | Skill locations | Transcripts | Explicit-only | Capabilities |
 |---|---|---|---|---|
 | Claude Code | `~/.claude/skills/`, project `.claude/skills/` (and parents up to the repo root), plugin skills | `~/.claude/projects/<slug>/<session>.jsonl` plus `<session>/subagents/*.jsonl`; moves with `CLAUDE_CONFIG_DIR` | `disable-model-invocation: true` (official) | full. Mapping checked against one real session in phase 0 (versions 2.1.295 to 2.1.309, plus 2.1.321 from a second real session) |

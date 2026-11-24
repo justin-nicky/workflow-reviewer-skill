@@ -89,4 +89,4 @@ Only if the user answers yes to the closing question. Use official sources only 
 
 ## References
 
-[findings](references/findings.md) (schema and example) · [checklist](references/checklist.md) · [skills-audit](references/skills-audit.md) · [adapter-flow](references/adapter-flow.md) · [hosts](references/hosts.md) (windows, time, exit codes, mapping keys) · [adding-a-host](references/adding-a-host.md)
+[findings](references/findings.md) (schema and example) · [checklist](references/checklist.md) · [skills-audit](references/skills-audit.md) · [adapter-flow](references/adapter-flow.md) · [hosts](references/hosts.md) (windows, time, exit codes, mapping keys) · [mapping-keys](references/mapping-keys.md) (every mapping key) · [adding-a-host](references/adding-a-host.md)
