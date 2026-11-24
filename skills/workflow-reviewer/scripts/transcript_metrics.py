@@ -1675,8 +1675,10 @@ def health_report(mapping, stats, events, records, drift, threshold):
     for kind, n in stats["unseen_types"].items():
         hit = [m for m, words in hints.items() if m in checks and measurable.get(m) and any(w in kind.lower() for w in words)]
         unattributed += [] if hit else [kind]
-        for m in hit:                                                        # evidence touching the metric: a core row breaks
-            add(m, "unseen record type", "structure", n, 0, "equal", False, "broken" if m in CORE_METRICS else "warn", type=kind)
+        for m in hit:         # a core metric breaks on an unseen type only when no second count vouches for it; otherwise it is a warning
+            vouched = second_passed[m]
+            add(m, "unseen record type", "structure", n, 0, "equal", False,
+                "broken" if m in CORE_METRICS and not vouched else "warn", type=kind)
 
     rows = []
     for m in HEALTH_METRICS:

@@ -213,6 +213,25 @@ def test_an_unseen_type_points_at_the_metric_its_record_would_feed(cli, tmp_path
         assert [m for m, row in r.items() if row["status"] in ("warn", "broken")] == [metric]
 
 
+def test_a_core_metric_with_a_passing_second_count_only_warns_on_an_unseen_type(cli, tmp_path):
+    code, out = run(cli, tmp_path, session() + [marker(reported=120), {"t": "usage_report"}], TOKEN_CHECK, "--health-all")
+    r = rows(out)
+    assert code == 0 and r["tokens"]["status"] == "warn"
+    unseen = [c for c in r["tokens"]["checks"] if c["name"] == "unseen record type"]
+    assert unseen and unseen[0]["type"] == "usage_report"           # the warning names the type
+    assert [m for m, row in r.items() if row["status"] in ("warn", "broken")] == ["tokens"]
+
+
+def test_a_core_metric_whose_second_count_fails_still_breaks_on_an_unseen_type(cli, tmp_path):
+    code, out = run(cli, tmp_path, session() + [marker(reported=5000), {"t": "usage_report"}], TOKEN_CHECK, "--health-all")
+    assert code == 2 and rows(out)["tokens"]["status"] == "broken"
+
+
+def test_a_core_metric_with_only_one_count_still_breaks_on_an_unseen_type(cli, tmp_path):
+    code, out = run(cli, tmp_path, session() + [{"t": "usage_report"}], "", "--health-all")
+    assert code == 2 and rows(out)["tokens"]["status"] == "broken" and rows(out)["tokens"]["checks"]
+
+
 def test_an_unseen_type_that_matches_no_metric_is_listed_as_a_warning_not_attributed(cli, tmp_path):
     code, out = run(cli, tmp_path, session() + [{"t": "zzz_novel"}], "", "--health-all")
     health = out["coverage"]["health"]
