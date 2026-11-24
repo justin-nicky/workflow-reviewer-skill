@@ -317,7 +317,7 @@ def test_tested_versions_and_observed_version_per_host(cli, tmp_path):
     assert out["coverage"]["transcript_version"] == "2.1.309"
     cx = write_jsonl(tmp_path / "rollout-x.jsonl", [cx_meta("i", cli.repo, cli_version="0.142.2"), cx_user("go", 1)])
     _, out = cli.json(cx, "--host", "codex")
-    assert out["coverage"]["tested_versions"] == "0.137.0-alpha.4 to 0.142.2, 0.162.0-alpha.17.2 (cli_version)"
+    assert out["coverage"]["tested_versions"] == "0.137.0-alpha.4 to 0.142.2, 0.162.0-alpha.17.2, 0.171.0-alpha.13 (cli_version)"
     assert out["coverage"]["transcript_version"] == "0.142.2"
     cu = write_jsonl(tmp_path / "c.jsonl", [cu_user("go")])
     _, out = cli.json(cu, "--host", "cursor")
