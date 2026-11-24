@@ -235,6 +235,12 @@ def dx_world_state(t):
     return cx_line("world_state", {"full": True, "state": {"model": "m"}}, t)
 
 
+def dx_additional_tools(t, n=4):
+    """Codex 0.171: a listing of the tools the model may call (not a call itself)."""
+    return cx_line("response_item", {"type": "additional_tools", "id": "at_1", "role": "developer",
+                                     "tools": [{"name": f"tool_{i}", "type": "function"} for i in range(n)]}, t)
+
+
 def dx_turn_context(t, model=None):
     payload = {"turn_id": "t1", "cwd": "/repo"}
     if model:

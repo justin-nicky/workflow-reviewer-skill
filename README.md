@@ -58,7 +58,7 @@ Run it right after the task, in the same session.
 | Host | Verified against | Notes |
 |---|---|---|
 | Claude Code | 2.1.295 to 2.1.309, 2.1.321 | full |
-| Codex | 0.137.0-alpha.4 to 0.142.2; 0.162.0-alpha.17.2 (Codex Desktop) | full |
+| Codex | 0.137.0-alpha.4 to 0.142.2; 0.162.0-alpha.17.2 (Codex Desktop); 0.171.0-alpha.13 (Codex Desktop) | full |
 | Devin (desktop 3000.12.43, CLI) | database schema 20 | full; read from Devin's local SQLite database (read-only). Cloud Devin has no local database: degraded mode |
 | Cline 4.1.26 | VS Code extension and CLI data under `~/.cline/data` | full for turns, tools, tokens, time and subagents; skills offered and instruction files are not recorded |
 | Cursor | transcripts carry no version | no tokens, tool results or ids; interruptions, turn errors and a coarse wall time |

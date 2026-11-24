@@ -1,7 +1,7 @@
 # Codex rollout mapping. Data only: dotted paths, [] wildcards, [k=v] filters.
 host = "codex"
 schema_version = 1
-tested_versions = "0.137.0-alpha.4 to 0.142.2, 0.162.0-alpha.17.2 (cli_version)"
+tested_versions = "0.137.0-alpha.4 to 0.142.2, 0.162.0-alpha.17.2, 0.171.0-alpha.13 (cli_version)"
 type_path = ["type", "payload.type"]
 turnless_activity = "broken"       # a main rollout with assistant records but no turn (a subagent rollout alone only warns)
 
@@ -93,8 +93,8 @@ text = ["payload.message"]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
 role = "meta"
 offered_from = ["payload.content[].text"]
-offered_block = "(?s)### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
-offered_section = "### Available skills|<skills_instructions>"
+offered_block = "(?sm)^### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
+offered_section = "(?m)^### Available skills$|<skills_instructions>"       # a heading on its own line; prose that quotes it is not a listing
 offered_item = "(?m)^- ([\\w:.\\-]+): "
 offered_desc_item = "(?m)^- ([\\w:.\\-]+): (.*?)(?: \\(file: [^)]*\\))?$"
 
@@ -153,7 +153,7 @@ match = { type = ["session_meta", "turn_context", "event_msg", "compacted"] }
 role = "ignore"
 
 [[variants.records]]
-match = { type = "response_item", "payload.type" = ["reasoning", "web_search_call", "ghost_snapshot"] }
+match = { type = "response_item", "payload.type" = ["reasoning", "web_search_call", "ghost_snapshot", "additional_tools"] }       # additional_tools (0.171): a listing of the tools the model may call, not a call
 role = "ignore"
 
 # Variant "desktop": Codex Desktop 0.162.x. Every record carries an `ordinal`; prompts are
@@ -182,8 +182,8 @@ turn_start = true
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
 role = "meta"
 offered_from = ["payload.content[].text"]
-offered_block = "(?s)### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
-offered_section = "### Available skills|<skills_instructions>"
+offered_block = "(?sm)^### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
+offered_section = "(?m)^### Available skills$|<skills_instructions>"       # a heading on its own line; prose that quotes it is not a listing
 offered_item = "(?m)^- ([\\w:.\\-]+): "
 offered_desc_item = "(?m)^- ([\\w:.\\-]+): (.*?)(?: \\(file: [^)]*\\))?$"
 
@@ -264,5 +264,5 @@ match = { type = "event_msg", "payload.type" = ["task_complete", "item_completed
 role = "ignore"
 
 [[variants.records]]
-match = { type = "response_item", "payload.type" = ["reasoning", "web_search_call", "ghost_snapshot"] }
+match = { type = "response_item", "payload.type" = ["reasoning", "web_search_call", "ghost_snapshot", "additional_tools"] }       # additional_tools (0.171): a listing of the tools the model may call, not a call
 role = "ignore"

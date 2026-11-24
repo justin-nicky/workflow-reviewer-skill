@@ -463,3 +463,47 @@ def test_the_spawn_task_name_may_be_the_last_segment_of_the_agent_path(cli, tmp_
         dx_meta("s1", cli.repo, parent="p1", agent_path="/root/worker"), dx_task_started("s-t1", 6), dx_user("short", 7)]))
     _, out = cli.json(parent, sub, "--host", "codex")
     assert out["actors"][1]["brief_bytes"] == 77
+
+
+# ---- Codex 0.171 ---------------------------------------------------------------------------------------------------------------------
+
+from fixtures.builders import dx_additional_tools  # noqa: E402
+
+QUOTING = ('A skill is a set of local instructions. The list is under "## Skills" and its "### Available skills" heading, '
+           "which names each skill and where its file is.")
+
+
+def test_a_tool_listing_is_ignored_and_is_not_drift(cli, tmp_path):
+    path = session(cli, tmp_path, dx_task_started("t1", 1), dx_additional_tools(2), dx_user("go", 3), dx_exec_cmd("ls", "c1", 4),
+                   dx_exec_output("c1", 5, "a", 0), dx_usage("r1", 5, 0, 7, 6), dx_assistant("ok", 7))
+    code, out = cli.json(path, "--host", "codex")
+    assert code == 0 and out["coverage"]["drift"]["unseen_types"] == {} and out["tools"]["total"] == 1
+    assert out["coverage"]["ignored_types"] and any("additional_tools" in k for k in out["coverage"]["ignored_types"])
+
+
+def test_the_tool_listing_is_ignored_in_the_classic_layout_too(cli, tmp_path):
+    from fixtures.builders import cx_call, cx_meta, cx_output, cx_tokens, cx_user
+    path = write_jsonl(tmp_path / "rollout-c.jsonl", [cx_meta("i", cli.repo, cli_version="0.171.0-alpha.13"), cx_user("go", 1),
+                                                    dx_additional_tools(2), cx_call("ls", "k1", 3), cx_output("k1", "a", 0, 4),
+                                                    cx_tokens(1, 0, 1, 5)])
+    code, out = cli.json(path, "--host", "codex")
+    assert code == 0 and out["coverage"]["drift"]["unseen_types"] == {}
+
+
+def test_the_newest_tested_codex_version_is_listed(cli, tmp_path):
+    path = write_jsonl(tmp_path / "rollout-v.jsonl", desktop([dx_meta("p1", cli.repo, version="0.171.0-alpha.13")]))
+    _, out = cli.json(path, "--host", "codex")
+    assert "0.171.0-alpha.13" in out["coverage"]["tested_versions"] and "version_note" in out["coverage"]
+
+
+def test_a_message_that_only_quotes_the_skills_heading_is_not_an_unparsed_list(cli, tmp_path):
+    """0.171 sends instructions that name the heading in prose, then the real listing in the next message."""
+    path = session(cli, tmp_path, cx_developer(QUOTING, 0), cx_developer(LISTING, 1), dx_task_started("t1", 2),
+                   dx_user("go", 3), dx_assistant("a", 4))
+    _, out = cli.json(path, "--host", "codex")
+    assert "warnings" not in out["coverage"] and out["skills"]["offered"]["total"] == 3
+
+
+def test_the_skills_heading_must_start_a_line_to_count_as_a_listing(cli, tmp_path):
+    out = listing_session(cli, tmp_path, QUOTING)
+    assert "warnings" not in out["coverage"]
