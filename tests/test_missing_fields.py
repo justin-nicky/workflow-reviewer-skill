@@ -88,3 +88,83 @@ def test_a_field_the_host_never_records_is_not_checked(cli, tmp_path):
     code, out, _, _ = run(cli, tmp_path, "codex", lambda rs: rs)
     assert code == 0 and out["tokens"]["cache_write"] == 0 and rows(out)["tokens"]["status"] in ("ok", "one_way")
 
+
+
+# ---- the breakdowns: per turn, per actor, the "other" bucket ---------------------------------------------------------------------
+
+def zero_paths(node, field, path=""):
+    """Every place in the output where `field` holds 0 (a missing number must be null everywhere)."""
+    found = []
+    if isinstance(node, dict):
+        for k, v in node.items():
+            here = f"{path}/{k}"
+            if k == field and v == 0 and not isinstance(v, bool):
+                found.append(here)
+            found += zero_paths(v, field, here)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            found += zero_paths(v, field, f"{path}[{i}]")
+    return found
+
+
+def value_paths(node, field, path=""):
+    found = []
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == field:
+                found.append((f"{path}/{k}", v))
+            found += value_paths(v, field, f"{path}/{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            found += value_paths(v, field, f"{path}[{i}]")
+    return found
+
+
+BREAKDOWN_CASES = {"codex usage field": ("codex", codex_output_renamed, "output"),
+                   "devin usage field": ("devin", devin_usage_field, "fresh_input")}
+
+
+@pytest.mark.parametrize("case", sorted(BREAKDOWN_CASES))
+def test_a_missing_field_is_null_in_every_breakdown(cli, tmp_path, case):
+    host, mutate, field = BREAKDOWN_CASES[case]
+    _, out, _, _ = run(cli, tmp_path, host, mutate)
+    assert not zero_paths(out, field), zero_paths(out, field)
+    places = value_paths(out, field)
+    assert any(p.startswith("/turns") for p, _ in places) and any(p.startswith("/actors") for p, _ in places)
+    assert all(v is None for _, v in places), places
+
+
+@pytest.mark.parametrize("case", sorted(BREAKDOWN_CASES))
+def test_the_markdown_says_not_measurable_and_never_none(cli, tmp_path, case):
+    host, mutate, field = BREAKDOWN_CASES[case]
+    if host == "devin":
+        db = tmp_path / "sessions.db"
+        shutil.copy(GOLDEN / "devin-subagent" / "sessions.db", db)
+        conn = sqlite3.connect(db)
+        mutate(conn)
+        conn.commit()
+        conn.close()
+        sel = [db, "--host", "devin", "--session-id", "golden-devin-subagent"]
+    else:
+        to_mutate, sel = files_of(host, tmp_path)
+        for f in to_mutate:
+            write(f, mutate(read(f)))
+        sel = [*sel, "--host", host]
+    md = cli.run(*sel, fmt="md").stdout
+    assert f"{field}: not measurable" in md and f'"{field}":"not measurable"' in md
+    assert "None" not in md
+
+
+# recorded from the goldens before missing fields were nulled in the breakdowns
+CODEX_TURN_OUTPUT = [529, 31, 132, 334, 9, 0]
+CODEX_ACTOR_OUTPUT = [906, 129]
+DEVIN_TURN_FRESH = [3012, 3583, 2128, 13201]
+
+
+def test_the_unmutated_goldens_keep_their_per_turn_numbers(cli, tmp_path):
+    """Present fields are untouched: the golden per-turn and per-actor token numbers are the ones recorded before this change."""
+    _, out = cli.json(*files_of("codex", tmp_path)[1], "--host", "codex")
+    assert [t["tokens"]["output"] for t in out["turns"]] == CODEX_TURN_OUTPUT
+    assert [a["tokens"]["output"] for a in out["actors"]] == CODEX_ACTOR_OUTPUT
+    _, dv_out = cli.json(GOLDEN / "devin-subagent" / "sessions.db", "--host", "devin", "--session-id", "golden-devin-subagent")
+    assert [t["tokens"]["fresh_input"] for t in dv_out["turns"]] == DEVIN_TURN_FRESH

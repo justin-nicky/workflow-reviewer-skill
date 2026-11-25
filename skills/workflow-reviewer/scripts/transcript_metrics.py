@@ -1575,20 +1575,26 @@ UNSEEN_HINTS = {"tokens": ("usage", "token", "assistant"), "tool_calls": ("tool"
 def null_missing_numbers(out):
     """A number whose field is missing is null ("not measurable"), never 0: read from the broken presence checks."""
     t = out.get("tokens") or {}
+    nulled = set()
     for row in out["coverage"]["health"].get("rows", []):
         for c in row.get("checks", []):
             if c.get("passed") or c.get("layer") != "presence":
                 continue
             if row["metric"] == "tokens" and "not_measurable" not in t:
                 fields = [c["field"]] if c.get("field") else list(USAGE_FIELDS)
-                for k in fields:
-                    t[TOKEN_KEY[k]] = None
+                nulled.update(TOKEN_KEY[k] for k in fields)
                 if c.get("field") is None:
-                    t["api_calls"] = None
+                    nulled.add("api_calls")
                 if set(fields) & {"input", "cache_read", "cache_write"}:
-                    t["context_at_invocation"] = None
+                    nulled.add("context_at_invocation")
             if row["metric"] == "turns" and c["name"] == "assistant activity without any turn":
                 out["window"]["turns_total"] = None
+    # the same numbers are missing in every breakdown that carries them: the window, each turn, each actor, the "other" rows
+    for tokens in [t] + [r.get("tokens") for r in out.get("turns", []) + out.get("actors", []) if isinstance(r, dict)]:
+        if isinstance(tokens, dict) and "not_measurable" not in tokens:
+            for k in nulled:
+                if k in tokens:
+                    tokens[k] = None
 
 
 def frozen_window(parsed, events, mapping, stats, lo, hi, whole_session):
@@ -1905,7 +1911,22 @@ def redact(text):
     return TOKEN_RE.sub(_mask_token, text)
 
 
-def _fmt(v):
+MISSING_NUMBER_KEYS = frozenset(ROW_TOKEN_KEYS) | {"context_at_invocation", "turns_total"}
+
+
+def _md_value(v, key=None):
+    """Markdown never prints None: a missing number is "not measurable", any other empty value is "none"."""
+    if v is None:
+        return NOT_MEASURABLE if key in MISSING_NUMBER_KEYS else "none"
+    if isinstance(v, dict):
+        return {k: _md_value(x, k) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_md_value(x, key) for x in v]
+    return v
+
+
+def _fmt(v, key=None):
+    v = _md_value(v, key)
     if isinstance(v, (dict, list)):
         return json.dumps(v, separators=(",", ":"), ensure_ascii=False)
     return str(v)
@@ -1935,7 +1956,7 @@ def render_md(out):
         if key == "time" and isinstance(value, dict) and "wall_range_s" in value:
             lines += [f"- {k}: {_fmt(v)}" for k, v in coarse_time_view(value).items()]
         elif isinstance(value, dict):
-            lines += [f"- {k}: {_fmt(v)}" for k, v in value.items()]
+            lines += [f"- {k}: {_fmt(v, k)}" for k, v in value.items()]
         elif isinstance(value, list):
             lines += [f"- {_fmt(v)}" for v in value]
         else:
