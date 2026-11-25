@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.4
+
+- **"Not recorded", never 0.** A number the host never writes is now shown as "not recorded by <host>" instead of 0. Cache writes on Codex and Devin are null in every breakdown, named in `tokens.not_recorded`, and left out of the token bar and its legend. This is expected, so it never pauses a review.
+- **Tool time on Devin.** When no tool result in the window carries Devin's own tool timing, tool time is "not recorded" rather than 0, and the report warns, naming the missing field. The exit code is unchanged.
+
 ## v0.2.3
 
 - **The review reads only its window.** Nothing after the reviewed work is read: not the review's own turn, and nothing written while it runs. Cross-checks compare the reviewed work only, so a running total that lags behind a live turn no longer looks like a mismatch.
