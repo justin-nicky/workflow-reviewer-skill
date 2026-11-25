@@ -13,6 +13,7 @@
 - **No adapter building during a review.** When a core number is missing, the agent says which, offers degraded mode or stopping, and points to the issues page. Adding an adapter is contributor work, described in `references/adapter-flow.md`.
 - **Experimental hosts.** Devin and Cline are labelled experimental; reports say "(experimental adapter)".
 - **Codex 0.171 skills updates.** A "Host skills update" message adds its skills to the offered list instead of raising a warning.
+- **Missing numbers are never 0.** A core field missing from every record that should carry it is null in every breakdown, shown as "not measurable", and stops the review with exit 2.
 
 ## v0.2.2
 
