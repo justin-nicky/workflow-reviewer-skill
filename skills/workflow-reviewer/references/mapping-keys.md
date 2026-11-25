@@ -13,6 +13,7 @@ A mapping is a TOML file of declarative data (see `scripts/mappings/*.toml` for 
 
 - `host`: the host's name (lower case, letters, digits, `_`, `-`).
 - `schema_version`: the mapping format number. Always `1`; a newer number than the script knows exits 2.
+- `stability`: `"experimental"` for a built-in mapping checked on few real sessions; reports then say "(experimental adapter)" instead of verified.
 - `tested_versions`: the host versions the mapping was checked on (`"0.1.0 to 0.2.0, 0.3.0 (cli_version)"`). Outside them the report says "newer than tested".
 - `type_path`: the path of a record's type (default `type`); a list of paths is joined with `/` (`["type", "payload.type"]`).
 - `detect`: `{ env = ["NAME"] }`, environment variable names (never values) that mean "this host is running". Used to choose a host when several have recent sessions.

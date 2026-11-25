@@ -3,6 +3,7 @@
 host = "cline"
 schema_version = 1
 tested_versions = "4.1.26"
+stability = "experimental"       # verified on few real sessions so far: reports say "(experimental adapter)"
 type_path = ["role", "type"]
 detect = { env = ["CLINE_ACTIVE"] }         # set in Cline's terminal (verified)
 # The cancelled reply is not stored: it shows as two prompts in a row with no assistant record between them.

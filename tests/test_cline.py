@@ -25,7 +25,7 @@ def build(cli, tmp_path, messages, **kw):
 def test_normal(cli, tmp_path):
     code, out = run(cli, build(cli, tmp_path, normal_messages()))
     c = out["coverage"]
-    assert code == 0 and c["host"] == "cline" and c["label"] == "verified" and c["variant"] == "default" and c["drift"]["ok"]
+    assert code == 0 and c["host"] == "cline" and c["label"] == "experimental" and c["variant"] == "default" and c["drift"]["ok"]
     assert out["window"]["turns_total"] == 2 and out["verify"]["total"] == 1 and out["tools"]["by_category"] == {"shell": 1}
     assert out["tools"]["errors"] == 0 and out["interruptions"]["count"] == 0
     assert out["tokens"]["api_calls"] == 3 and out["tokens"]["fresh_input"] == 3 * 40 and out["tokens"]["cache_read"] == 180
@@ -149,7 +149,7 @@ def test_declared_marker_and_label():
 def test_the_golden_replica_reproduces_the_real_sessions_numbers(cli):
     code, out = cli.json(GOLDEN, "--host", "cline", "--health-all")
     c, t = out["coverage"], out["tokens"]
-    assert code == 0 and c["drift"]["ok"] and c["drift"]["coverage_pct"] == 100.0 and c["label"] == "verified"
+    assert code == 0 and c["drift"]["ok"] and c["drift"]["coverage_pct"] == 100.0 and c["label"] == "experimental"
     assert (out["window"]["turns_total"], out["interruptions"]) == (12, {"count": 1, "turns": [6]})
     assert out["tools"]["by_category"] == {"read": 2, "skill": 1, "edit": 2, "shell": 8} and out["tools"]["total"] == 13
     assert out["tools"]["errors"] == 1 and out["verify"]["total"] == 1

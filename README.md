@@ -59,16 +59,16 @@ Run it right after the task, in the same session.
 |---|---|---|
 | Claude Code | 2.1.295 to 2.1.309, 2.1.321 | full |
 | Codex | 0.137.0-alpha.4 to 0.142.2; 0.162.0-alpha.17.2 (Codex Desktop); 0.171.0-alpha.13 (Codex Desktop) | full |
-| Devin (desktop 3000.12.43, CLI) | database schema 20 | full; read from Devin's local SQLite database (read-only). Cloud Devin has no local database: degraded mode |
-| Cline 4.1.26 | VS Code extension and CLI data under `~/.cline/data` | full for turns, tools, tokens, time and subagents; skills offered and instruction files are not recorded |
+| Devin (desktop 3000.12.43, CLI) | database schema 20 | experimental; read from Devin's local SQLite database (read-only). Cloud Devin has no local database: degraded mode |
+| Cline 4.1.26 | VS Code extension and CLI data under `~/.cline/data` | experimental; full for turns, tools, tokens, time and subagents; skills offered and instruction files are not recorded |
 | Cursor | transcripts carry no version | no tokens, tool results or ids; interruptions, turn errors and a coarse wall time |
 | Kiro | none | degraded mode: the working tree and repo records only |
 
-Every report says whether the adapter behind it is **verified** (built in, with tested versions) or **unproven** (made by a user or in the session). A `coverage.health` table says whether each number can be trusted: `ok` (a second independent count agrees), `one_way` (only one way to count it), `warn`, `broken` or `not_measurable`. Only a broken core metric stops the review (exit 2).
+Every report says whether the adapter behind it is **verified** (built in, with tested versions), **experimental** (built in, checked on few real sessions so far: Devin and Cline) or **unproven** (made by a user). A `coverage.health` table says whether each number can be trusted: `ok` (a second independent count agrees), `one_way` (only one way to count it), `warn`, `broken` or `not_measurable`. A cross-check that disagrees, or a record type the skill doesn't know, is a warning shown in the report. Only a core number that is clearly missing stops the review (exit 2).
 
 ## A host that is not supported, or a format that changed
 
-The agent offers degraded mode, or builds an adapter in about five minutes: probe the data, draft a mapping, save it as a user adapter, check the health table, and produce the report. If the host's version is newer than the tested one, it can also give you the exact commands to propose the adapter upstream; it never runs them. The procedure is in [adapter-flow.md](skills/workflow-reviewer/references/adapter-flow.md). To add a host as a built-in, follow [adding-a-host.md](skills/workflow-reviewer/references/adding-a-host.md).
+A review that meets a format change keeps going and names what it couldn't cross-check. If a core number is missing, the agent says which, offers degraded mode or stopping, and points you to [the issues page](https://github.com/justin-nicky/workflow-reviewer-skill/issues). It never builds an adapter during a review. Contributors who want to add or fix one follow [adapter-flow.md](skills/workflow-reviewer/references/adapter-flow.md), outside a review. To add a host as a built-in, follow [adding-a-host.md](skills/workflow-reviewer/references/adding-a-host.md).
 
 ## Reference
 

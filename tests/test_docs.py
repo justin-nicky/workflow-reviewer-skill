@@ -55,6 +55,20 @@ def test_the_docs_state_the_same_minimum_python_as_the_script():
     assert f"older than 3.{gate}" in text(SKILL) and f"older than 3.{gate}" in text(SKILL_DIR / "references" / "hosts.md")
 
 
+def test_a_review_never_weakens_a_check_or_builds_an_adapter():
+    body = text(SKILL).lower().replace("**", "")
+    assert "never remove, loosen or skip a health check" in body and "a failing check is a finding, not an obstacle" in body
+    assert "never build or save an adapter during a review" in body
+    assert "https://github.com/justin-nicky/workflow-reviewer-skill/issues" in text(SKILL)
+    flow = text(SKILL_DIR / "references" / "adapter-flow.md").lower()
+    assert "contributor" in flow and "outside a review" in flow
+
+
+def test_devin_and_cline_are_called_experimental():
+    for doc in (ROOT / "README.md", SKILL_DIR / "references" / "hosts.md"):
+        assert "experimental" in text(doc), doc.name
+
+
 def test_skill_md_is_short():
     assert len(text(SKILL).splitlines()) <= 150
 

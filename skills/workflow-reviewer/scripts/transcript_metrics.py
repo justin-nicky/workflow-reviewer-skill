@@ -3383,7 +3383,7 @@ def open_sqlite_session(args, repo, raw):
 TOP_KEYS = frozenset("""call_categories call_name_categories capabilities checks container detect fields health_hints hook_files hooks_format
 host interrupt_on_repeated_prompt interruption_prefixes made_by replica made_from_version not_a_turn_prefixes plugin_skill_folders records requires schema_version
 skill_detections skill_folders skill_tool_label subagent_marker subagents tested_versions token_method token_method_fallback
-tool_time_source turnless_activity type_path variant variants versions""".split())
+stability tool_time_source turnless_activity type_path variant variants versions""".split())
 RULE_KEYS = frozenset("""call_command_name call_command_regex call_id call_input call_kind call_name call_raw calls event_id
 instruction_always_on instruction_bytes instruction_items instruction_paths interrupt match model msg_id non_turn_reason offered_block
 offered_desc_from offered_desc_item offered_desc_pairs offered_each offered_from offered_item offered_section offered_skills prompt_time
@@ -3553,9 +3553,9 @@ def weakened_checks(raw, builtin):
 
 
 def mapping_label(mapping, source):
-    """verified: a built-in mapping with tested versions. unproven: anything a user made."""
+    """verified: a built-in mapping with tested versions. experimental: a built-in one that says so. unproven: anything a user made."""
     if source == "builtin" and mapping.get("label", "verified") == "verified" and mapping.get("tested_versions"):
-        return "verified"
+        return "experimental" if mapping.get("stability") == "experimental" else "verified"
     return "unproven"
 
 

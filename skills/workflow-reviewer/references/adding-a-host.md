@@ -11,4 +11,4 @@ A host with no built-in mapping (or a new transcript format of a known host) is 
 
 A user adapter for a host that already has a built-in mapping adds a variant, chosen by shape like the built-in ones. It never replaces a built-in variant, and on a tie the built-in wins.
 
-The agent's procedure for the whole flow, including when to pause and when to ask for a pull request, is in [adapter-flow.md](adapter-flow.md).
+The contributor guide for the whole flow, run outside a review, is [adapter-flow.md](adapter-flow.md). A user variant for a built-in host may add mappings but never remove or loosen that host's checks.

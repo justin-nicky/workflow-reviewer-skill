@@ -3,6 +3,7 @@
 host = "devin"
 schema_version = 1
 tested_versions = "Devin desktop app 3000.12.43 (database schema 20)"
+stability = "experimental"       # verified on few real sessions so far: reports say "(experimental adapter)"
 type_path = "role"
 
 # Tool time is the host's own start and end on each tool result, not the gap between records.

@@ -1,33 +1,21 @@
-# The adapter flow (the agent's procedure)
+# Adding or fixing an adapter (contributor guide)
 
-Use this when the host has no built-in adapter, or when a supported host's format has changed and the health table shows a broken core metric (exit 2). It builds a mapping from the structure of the host's own data, checks it, and saves it as a user adapter. It never installs anything, never opens a pull request, never pushes.
+This is contributor work, done outside a review: in its own session, or by hand. A review never builds or saves an adapter. When a review cannot measure a core number it says which one, offers degraded mode or stopping, and points to the issues page (https://github.com/justin-nicky/workflow-reviewer-skill/issues). Use this guide when you want to add a host that has no built-in adapter, or to fix a supported host whose format changed.
 
-## When to start
+Nothing here installs anything, opens a pull request or pushes. You run those commands yourself.
 
-- **Unsupported host** (no built-in mapping, or `--host auto` finds no known host): pause. Say the host is not supported out of the box and offer two choices: (a) degraded mode (working tree and repo records only), or (b) build an adapter, which takes about five minutes. Continue only if the user picks (b).
-- **Supported host, breaking health:** `coverage.health` has a core row that is `broken` (exit 2). Run the same flow; the result is saved as a user *variant* of that host, chosen by shape next to the built-in ones. It never replaces them.
-- Pause for nothing else. Warn rows and `one_way` rows continue with exit 0.
+## The steps
 
-## The flow
+1. **Probe.** `transcript_metrics.py --probe PATH --format json` on the host's session file, session folder or database. The output is structure only (paths, types, counts, short type values, timestamp shapes, array lengths), never content. Never open the host's settings or credential files (for Cline, nothing under `~/.cline/data/settings` or `secrets.json`).
+2. **Draft a mapping** in the shape of `scripts/mappings/*.toml`. [mapping-keys.md](mapping-keys.md) lists every key the engine accepts, so there is no need to read the script's source: `schema_version = 1`, a `[container]` (`jsonl`, `sqlite` or `json_document`), `[capabilities]`, `[fields]`, `[[records]]`, `[[skill_folders]]` where known, and `[[checks]]` (second counts) for the core metrics wherever the data allows it. Mark a metric the host does not record as not measurable: never guess a number, an offered-skills list or an instruction file.
+3. **Save and check.** `transcript_metrics.py <selection arguments for a session to check it on> --save-adapter NAME < draft.toml`. The script validates the draft, runs it on that session and writes the file only if no core number is missing. It never overwrites without `--replace`.
+   - A mapping for a host that already has a built-in one becomes a variant next to the built-in ones, chosen by shape. It may add record mappings, but it must keep every built-in check of that host with the same or a smaller tolerance and slack, the same or a higher severity, and no new way to skip it. Otherwise `--save-adapter` refuses with exit 2: "an adapter may add mappings, not remove or loosen checks".
+   - Never remove, loosen or skip a check to make a session pass. A check that fails is what the adapter has to explain.
+4. **Health.** Re-run with `--host NAME --health-all`. Core metrics must be `ok` or `one_way`. A user adapter is labelled `unproven`.
+5. **Fixtures.** `--make-replica` writes a synthetic replica of the session to `<tempdir>/workflow-reviewer/replica-<host>-<time>/`: record types, order, nesting and counts kept; all text, ids, paths and names replaced; numbers kept; timestamps shifted. A leak check runs first and nothing is written if any source string of six or more characters would survive. Look through it before sharing. Then add the mutation rows for the host in `tests/test_health_mutations.py` ([adding-a-host](adding-a-host.md)).
+6. **Pull request.** `--pr-bundle` prints the adapter path, the replica path, the expected numbers for the golden test, and the `gh` and `git` commands (fork, branch, copy the files, commit, push, `gh pr create` against the official repository). It runs nothing.
 
-1. **Probe.** `transcript_metrics.py --probe PATH` on the host's session file, session folder or database. Use `--format json`. The output is structure only (paths, types, counts, short type values, timestamp shapes, array lengths), so it is safe to read and to quote, but do not quote more of it than you need. Never open the host's settings or credential files (for Cline, nothing under `~/.cline/data/settings` or `secrets.json`).
-2. **Draft a mapping** in the shape of `scripts/mappings/*.toml`. [mapping-keys.md](mapping-keys.md) lists every key the engine accepts, so never read the script's source for this: `schema_version = 1`, a `[container]` (`jsonl`, `sqlite` or `json_document`), `[capabilities]`, `[fields]`, `[[records]]`, `[[skill_folders]]` where known, and `[[checks]]` (second counts) for the core metrics wherever the data allows it. Declarative keys only; an unknown key is refused. Mark a metric the host does not record as not measurable: never guess a number, an offered-skills list or an instruction file.
-3. **Save and check.** Pipe the draft to `transcript_metrics.py <same selection arguments as the metrics run> --save-adapter NAME < draft.toml`. The script validates it, runs it on this session and writes the file only if no core metric is broken (exit 2 and a list of what is broken otherwise; fix the draft and repeat). It never overwrites without `--replace`. Do not print the drafted mapping in the report.
-4. **Health.** Re-run with `--host NAME --health-all`. Core metrics must be `ok` or `one_way`. The adapter is labelled `unproven` in the output and in the report.
-5. **Full report.** Produce the normal review with the new adapter. Say in the Coverage row that the metrics come from an adapter made in this session (medium confidence).
-6. **A polite PR request,** only if the conditions below hold and the user agrees. The request only gives commands.
+## Before opening a pull request
 
-## The PR request
-
-Ask whether the user wants to share the adapter so it can become a built-in. Offer it only when all of this is true:
-
-- the local host version is **newer** than the mapping's `tested_versions` (`coverage.health.version.position` is `newer`), or the host has no built-in adapter at all;
-- you have checked upstream `main` of the official repository (`justin-nicky/workflow-reviewer-skill`, nowhere else) with your own web tool and found no adapter or fix for this host and version. If one exists, tell the user to update the skill instead and stop;
-- the version is known. When `coverage.health.version.position` is `unknown`, ask the user for the host version first.
-
-If the user agrees:
-
-1. `--make-replica` (only at the user's explicit choice) writes a synthetic replica of this session to `<tempdir>/workflow-reviewer/replica-<host>-<time>/`: record types, order, nesting and counts kept; all text, ids, paths and names replaced; numbers kept; timestamps shifted. A leak check runs first and nothing is written if any source string of six or more characters would survive. Tell the user the path and that it is synthetic, and suggest they look through it before sharing.
-2. `--pr-bundle` prints the adapter path, the replica path, the expected numbers for the golden test, and the exact `gh` and `git` commands (fork, branch, copy the files, commit, push, `gh pr create` against the official repository). It runs nothing. Give the commands to the user as they are; the user runs them.
-
-Never run those commands yourself, never push, never create a fork or a pull request, and never install anything.
+- Check upstream `main` of the official repository (`justin-nicky/workflow-reviewer-skill`) for an adapter or fix for this host and version first. If one exists, update the skill instead.
+- Know the host version. When `coverage.health.version.position` is `unknown`, find it before proposing the adapter.

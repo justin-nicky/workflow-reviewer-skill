@@ -108,3 +108,24 @@ def test_devin_explicit_only_skill(cli):
     tokens = out["actors"][0]["tokens"]
     assert (tokens["fresh_input"], tokens["cache_read"], tokens["output"], tokens["api_calls"]) == (1134, 25088, 316, 2)
     assert out["coverage"]["storage"]["off_chain_nodes"] == 18
+
+
+# ---- labels: Devin and Cline are experimental; Claude Code, Codex and Cursor are verified ---------------------------------------
+
+def test_devin_is_labelled_experimental(cli):
+    _, out = devin(cli, "subagent")
+    assert out["coverage"]["label"] == "experimental"
+
+
+def test_the_main_hosts_stay_verified(cli):
+    _, out = cli.json(one("claude-code/*.jsonl").with_suffix(""), "--host", "claude-code")
+    assert out["coverage"]["label"] == "verified"
+
+
+def test_an_experimental_adapter_is_named_in_the_report(cli, tmp_path):
+    import json
+    from test_report import FINDINGS
+    cli.env_extra["TMPDIR"] = str(tmp_path)
+    proc = cli.run(GOLDEN / "devin-subagent" / "sessions.db", "--host", "devin", "--session-id", "golden-devin-subagent",
+                   "--report", "-", "--no-open", "--report-format", "md", stdin=json.dumps(FINDINGS))
+    assert "(experimental adapter)" in proc.stdout
