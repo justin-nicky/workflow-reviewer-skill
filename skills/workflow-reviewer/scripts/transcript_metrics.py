@@ -3519,6 +3519,39 @@ def registry():
     return hosts, notes
 
 
+WEAKEN_ERROR = "an adapter may add mappings, not remove or loosen checks"
+SEVERITY_RANK = {"warn": 1, "broken": 2}
+
+
+def weakened_checks(raw, builtin):
+    """How a user mapping for a built-in host removes or loosens one of the host's built-in checks (empty when it does not).
+
+    Every variant of the user's mapping must keep each built-in check, by name, counting the same things the same way,
+    with the same or a smaller tolerance and slack, the same or a higher severity, and no new way to skip it."""
+    problems = []
+    for variant in resolve_variants(raw):
+        mine = {c.get("name"): c for c in variant.get("checks", []) if isinstance(c, dict)}
+        where = f"variant '{variant['variant']}': " if raw.get("variants") else ""
+        for b in builtin.get("checks", []):
+            name, c = b["name"], mine.get(b["name"])
+            if c is None:
+                problems.append(f"{where}removes check '{name}'")
+                continue
+            if any(c.get(k) != b.get(k) for k in ("metric", "first", "second")) or c.get("relation", "equal") != b.get("relation", "equal"):
+                problems.append(f"{where}changes what check '{name}' compares")
+            if float(c.get("tolerance_pct", 0)) > float(b.get("tolerance_pct", 0)):
+                problems.append(f"{where}loosens the tolerance of check '{name}'")
+            if int(c.get("slack_first", 0)) > int(b.get("slack_first", 0)):
+                problems.append(f"{where}loosens the slack of check '{name}'")
+            if SEVERITY_RANK.get(c.get("severity", "broken"), 0) < SEVERITY_RANK.get(b.get("severity", "broken"), 2):
+                problems.append(f"{where}lowers the severity of check '{name}'")
+            if c.get("skip_if_second_zero") and not b.get("skip_if_second_zero"):
+                problems.append(f"{where}lets check '{name}' be skipped")
+            if c.get("scope", "window") != b.get("scope", "window"):
+                problems.append(f"{where}changes the scope of check '{name}'")
+    return problems
+
+
 def mapping_label(mapping, source):
     """verified: a built-in mapping with tested versions. unproven: anything a user made."""
     if source == "builtin" and mapping.get("label", "verified") == "verified" and mapping.get("tested_versions"):
@@ -4410,6 +4443,11 @@ def main(argv=None):
             emit({"error": ("the mapping cannot be used: " + problems[0]) if save_text is not None else problems[0], "errors": problems}
                  if save_text is not None else {"error": problems[0]}, args.format, redact_on)
             return 2
+        if save_text is not None and override.get("host") in BUILTIN_NAMES and override.get("host") != "kiro":
+            weaker = weakened_checks(override, load_mapping(BUILTIN_NAMES[override["host"]]))
+            if weaker:
+                emit({"error": WEAKEN_ERROR, "problems": weaker}, args.format, redact_on)
+                return 2
     chosen_by = "--mapping" if override is not None else "--host" if args.host != "auto" else None
     if override is None and args.host == "auto" and not args.paths:
         decision = choose_host(args, repo, hosts)

@@ -184,3 +184,55 @@ def test_save_adapter_cannot_share_stdin_with_report_or_mapping(cli, tmp_path):
     path = write_jsonl(tmp_path / "s.jsonl", session())
     assert cli.run(path, "--save-adapter", "hx", "--mapping", "-", stdin=MAPPING).returncode == 2
     assert cli.run(path, "--save-adapter", "hx", "--report", "-", stdin=MAPPING).returncode == 2
+
+
+# ---- an adapter may add mappings, never remove or loosen checks -----------------------------------------------------------------
+
+from conftest import ROOT  # noqa: E402
+from fixtures.builders import cc_assistant, cc_bash_call, cc_user, usage  # noqa: E402
+
+BUILTIN_CODEX = (ROOT / "skills" / "workflow-reviewer" / "scripts" / "mappings" / "codex.toml").read_text(encoding="utf-8")
+BUILTIN_CLAUDE = (ROOT / "skills" / "workflow-reviewer" / "scripts" / "mappings" / "claude_code.toml").read_text(encoding="utf-8")
+TOKEN_CHECK_NAME = 'name = "tokens: summed per-response usage vs the final token_count total (output)"'
+
+
+def claude_records():
+    return [cc_user("go", 0), *cc_bash_call("m1", "c1", "ls", 2), cc_assistant("m2", 4, usage=usage(5, 20))]
+
+
+def without_check(text, name_line):
+    start = text.index(name_line)
+    block = text.rindex("[[checks]]", 0, start)
+    end = text.find("\n[[", start)
+    return text[:block] + text[end + 1:]
+
+
+def test_a_variant_that_drops_a_built_in_check_is_refused(cli, tmp_path):
+    proc = save(cli, tmp_path, without_check(BUILTIN_CODEX, TOKEN_CHECK_NAME), name="codex-mine")
+    out = json.loads(proc.stdout)
+    assert proc.returncode == 2 and out["error"] == "an adapter may add mappings, not remove or loosen checks"
+    assert any("tokens: summed per-response usage" in p for p in out["problems"])
+    assert not (cli.home / "xdg").exists()
+
+
+def test_a_variant_with_a_looser_tolerance_is_refused(cli, tmp_path):
+    looser = BUILTIN_CODEX.replace("tolerance_pct = 2\n", "tolerance_pct = 50\n", 1)
+    assert looser != BUILTIN_CODEX
+    proc = save(cli, tmp_path, looser, name="codex-mine")
+    out = json.loads(proc.stdout)
+    assert proc.returncode == 2 and any("tolerance" in p for p in out["problems"])
+
+
+def test_a_variant_that_skips_a_check_or_lowers_its_severity_is_refused(cli, tmp_path):
+    skipped = BUILTIN_CLAUDE.replace('relation = "at_least"\n', 'relation = "at_least"\nskip_if_second_zero = true\n', 1)
+    assert save(cli, tmp_path / "a", skipped, name="cc-a", records=claude_records()).returncode == 2
+    weaker = BUILTIN_CLAUDE.replace('second = { const = 95 }\nrelation = "at_least"\n', 'second = { const = 95 }\nrelation = "at_least"\nseverity = "warn"\n', 1)
+    assert weaker != BUILTIN_CLAUDE
+    assert save(cli, tmp_path / "b", weaker, name="cc-b", records=claude_records()).returncode == 2
+
+
+def test_a_variant_that_only_adds_record_mappings_is_allowed(cli, tmp_path):
+    added = BUILTIN_CLAUDE + '\n[[records]]\nmatch = { type = "brand_new_record" }\nrole = "ignore"\n'
+    proc = save(cli, tmp_path, added, name="cc-more", records=claude_records())
+    assert proc.returncode == 0, proc.stdout
+    assert (cli.home / "xdg" / "workflow-reviewer" / "hosts" / "cc-more.toml").is_file()
