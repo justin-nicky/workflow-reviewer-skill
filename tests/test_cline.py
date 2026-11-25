@@ -111,11 +111,11 @@ def test_the_second_counts_agree_with_the_session_metadata(cli, tmp_path):
     assert len(names) == 4 and all(c["passed"] for c in rows["tokens"]["checks"])
 
 
-def test_metadata_that_disagrees_with_the_messages_breaks_tokens(cli, tmp_path):
+def test_metadata_that_disagrees_with_the_messages_is_a_token_warning(cli, tmp_path):
     folder = build(cli, tmp_path, normal_messages(), usage_override={"inputTokens": 999, "outputTokens": 30, "cacheReadTokens": 180, "cacheWriteTokens": 0, "totalCost": 0})
     code, out = run(cli, folder, "--health-all")
-    assert code == 2 and not out["coverage"]["drift"]["ok"]
-    assert {r["metric"]: r["status"] for r in out["coverage"]["health"]["rows"]}["tokens"] == "broken"
+    assert code == 0
+    assert {r["metric"]: r["status"] for r in out["coverage"]["health"]["rows"]}["tokens"] == "warn"
 
 
 def test_a_session_is_chosen_by_its_working_directory_and_recency(cli, tmp_path):

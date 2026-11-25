@@ -1697,8 +1697,9 @@ def health_report(mapping, stats, events, records, drift, threshold, prior=(), w
             continue
         tol, slack = float(spec.get("tolerance_pct", 0)), int(spec.get("slack_first", 0))
         passed = check_passes(first, second, spec.get("relation", "equal"), tol, slack)
-        add(metric, spec["name"], "second count", first, second, spec.get("relation", "equal"), passed,
-            spec.get("severity") or ("broken" if metric in CORE_METRICS else "warn"), **({"tolerance_pct": tol} if tol else {}))
+        # a second count that disagrees is a warning with its two values, never a pause: the first count still stands
+        add(metric, spec["name"], "second count", first, second, spec.get("relation", "equal"), passed, "warn",
+            **({"tolerance_pct": tol} if tol else {}))
     second_passed = {m: any(c["layer"] == "second count" and c["passed"] for c in checks[m]) for m in HEALTH_METRICS}
 
     if measurable["turns"] and quantities["turns"] == 0:
@@ -1724,7 +1725,10 @@ def health_report(mapping, stats, events, records, drift, threshold, prior=(), w
     caps = mapping.get("capabilities", {})
     results, calls = quantities["results"], quantities["tool_calls"]
     active = any(e["role"] == "assistant" for e in events) or results > 0 or calls > 0     # results prove the agent replied
-    if measurable["tokens"] and active and not any(e["usage"] for e in events):
+    hints = {**UNSEEN_HINTS, **mapping.get("health_hints", {})}
+    renamed = any(any(w in kind.lower() for w in hints.get("tokens", ())) for kind in stats["unseen_types"])
+    if measurable["tokens"] and (active or renamed) and not any(e["usage"] for e in events):
+        # no usage at all on a host that records it: the replies happened (or a record named like them is new) but carry none
         add("tokens", "no token usage found", "presence", 0, 1, "at_least", False, "broken")
     if results > 0 and calls == 0:
         add("tool_calls", "results without calls", "presence", calls, results, "at_least", False, "broken")
@@ -1735,10 +1739,8 @@ def health_report(mapping, stats, events, records, drift, threshold, prior=(), w
     for kind, n in stats["unseen_types"].items():
         hit = [m for m, words in hints.items() if m in checks and measurable.get(m) and any(w in kind.lower() for w in words)]
         unattributed += [] if hit else [kind]
-        for m in hit:         # a core metric breaks on an unseen type only when no second count vouches for it; otherwise it is a warning
-            vouched = second_passed[m]
-            add(m, "unseen record type", "structure", n, 0, "equal", False,
-                "broken" if m in CORE_METRICS and not vouched else "warn", type=kind)
+        for m in hit:         # a record type nobody has seen is a warning naming it, never a pause
+            add(m, "unseen record type", "structure", n, 0, "equal", False, "warn", type=kind)
 
     rows = []
     for m in HEALTH_METRICS:
@@ -2709,11 +2711,37 @@ def metric_rows(out):
     return rows
 
 
+METRIC_NOUN = {"turns": "turn counts", "tool_calls": "tool call counts", "tokens": "token totals", "errors": "error counts",
+               "verify": "verify run counts", "interruptions": "interruption counts", "time": "times", "skills": "skill counts",
+               "subagents": "subagent counts"}
+
+
+def health_phrases(row):
+    """A health row that needs attention, in plain words: which number, what went wrong, the two values."""
+    noun, out = METRIC_NOUN.get(row["metric"], row["metric"]), []
+    for c in row.get("checks", []):
+        if c.get("passed"):
+            continue
+        num = lambda v: f"{v:,}" if isinstance(v, int) else (f"{v:,.1f}" if isinstance(v, float) else str(v))
+        if c["layer"] == "second count":
+            out.append(f"{noun} couldn't be cross-checked: {num(c['first'])} vs {num(c['second'])}")
+        elif c["name"] == "unseen record type":
+            out.append(f"a record type this version of the skill doesn't know: {c['type']} ({num(c['first'])} record"
+                       f"{'' if c['first'] == 1 else 's'}; may affect {noun})")
+        elif c["name"] == "coverage":
+            out.append(f"only {num(c['first'])}% of records recognised")
+        else:
+            out.append(f"{noun} missing: {c['name']}" if row["status"] == "broken" else f"{noun}: {c['name']}")
+    return list(dict.fromkeys(out)) or [f"{noun}: {row['status']}"]
+
+
 def coverage_items(out):
     cov, items = out["coverage"], []
     if not cov["drift"]["ok"] and cov["drift"].get("warning"):
         items.append(cov["drift"]["warning"])
-    items += [f"{r['metric']}: {r['status']}" for r in cov.get("health", {}).get("rows", []) if r["status"] in SEVERITY]
+    for r in cov.get("health", {}).get("rows", []):
+        if r["status"] in SEVERITY:
+            items += health_phrases(r)
     items += cov.get("warnings", [])
     if cov.get("version_note"):
         items.append(cov["version_note"])

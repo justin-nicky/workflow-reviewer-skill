@@ -73,3 +73,14 @@ def test_a_window_that_starts_later_compares_only_its_own_part_of_the_running_to
     check = tokens_check(out)
     assert check["passed"] and check["first"] == check["second"] == 20
 
+
+
+def test_the_same_lag_inside_the_window_is_a_warning_not_a_pause(cli, tmp_path):
+    records = codex_session(True)
+    # no invocation: the whole session is the window, so the lagging total is inside it
+    records = [r for r in records if not (r.get("payload", {}).get("type") == "message" and "workflow-reviewer" in json.dumps(r))]
+    proc = run(cli, tmp_path, "codex", records)
+    out = json.loads(proc.stdout)
+    assert proc.returncode == 0 and rows(out)["tokens"]["status"] == "warn"
+    check = tokens_check(out)
+    assert not check["passed"] and (check["first"], check["second"]) == (850, 60)

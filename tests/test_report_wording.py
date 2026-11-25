@@ -64,3 +64,33 @@ def test_the_agent_may_not_write_an_other_installed_skills_row(cli, tmp_path):
         proc = render(cli, tmp_path, data)
         out = json.loads(proc.stdout)
         assert proc.returncode == 7 and any("skills[" in e and "other installed skills" in e.lower() for e in out["errors"]), out
+
+
+# ---- the coverage row names the affected numbers in plain words -------------------------------------------------------------------
+
+from test_report import tm  # noqa: E402
+
+
+def coverage_out(rows, warnings=()):
+    return {"coverage": {"drift": {"ok": True}, "health": {"rows": rows}, "warnings": list(warnings), "host": "codex", "not_measurable": []}}
+
+
+def test_a_failed_cross_check_names_the_number_and_shows_both_values():
+    rows = [{"metric": "tokens", "status": "warn", "checks": [
+        {"name": "tokens: summed per-response usage vs the final token_count total (output)", "layer": "second count",
+         "first": 4133, "second": 3337, "passed": False}]}]
+    items = tm.coverage_items(coverage_out(rows))
+    assert items == ["token totals couldn't be cross-checked: 4,133 vs 3,337"]
+
+
+def test_an_unseen_record_type_is_named_with_what_it_may_affect():
+    rows = [{"metric": "tool_calls", "status": "warn", "checks": [
+        {"name": "unseen record type", "layer": "structure", "first": 2, "second": 0, "passed": False, "type": "response_item/new_thing"}]}]
+    assert tm.coverage_items(coverage_out(rows)) == [
+        "a record type this version of the skill doesn't know: response_item/new_thing (2 records; may affect tool call counts)"]
+
+
+def test_a_missing_core_number_says_so_plainly():
+    rows = [{"metric": "tokens", "status": "broken", "checks": [
+        {"name": "no token usage found", "layer": "presence", "first": 0, "second": 1, "passed": False}]}]
+    assert tm.coverage_items(coverage_out(rows)) == ["token totals missing: no token usage found"]

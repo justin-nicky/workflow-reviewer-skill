@@ -270,15 +270,15 @@ EXPECTED = {
     ("claude-code", "duplicate assistant"): (0, {"tool_calls": "warn"}),
     ("codex", "turn marker"): (2, {"turns": "broken"}),
     ("codex", "result records"): (2, {"tool_calls": "broken"}),
-    ("codex", "usage field"): (2, {"tokens": "broken"}),
+    ("codex", "usage field"): (0, {"tokens": "warn"}),   # tokens still come from the fallback records; the cross-check disagrees: a warning
     ("codex", "unknown type"): (0, {"tool_calls": "warn"}),   # tool calls have a passing second count: the unseen type is only a warning
     ("codex", "duplicate assistant"): (0, {"tool_calls": "warn"}),   # call ids are deduplicated, so the metric stays right
     ("cursor", "turn marker"): (0, {"turns": "warn"}),
-    ("cursor", "unknown type"): (2, {"tool_calls": "broken"}),   # no second count to vouch for tool calls: a type named like a tool record breaks them
+    ("cursor", "unknown type"): (0, {"tool_calls": "warn"}),   # an unseen type is a warning naming it, never a pause
     ("cursor", "duplicate assistant"): (0, {}),          # Cursor records no call ids or results: a duplicated call cannot be seen
-    ("devin", "turn marker"): (2, {"turns": "broken"}),
+    ("devin", "turn marker"): (0, {"turns": "warn"}),   # turns are still found; their second count disagrees: a warning
     ("devin", "result records"): (2, {"tool_calls": "broken"}),
-    ("devin", "usage field"): (2, {"tokens": "broken"}),
+    ("devin", "usage field"): (0, {"tokens": "warn"}),   # some usage remains; the cross-check disagrees: a warning
     ("devin", "unknown type"): (0, {"tool_calls": "warn"}),   # tool calls have a passing second count: the unseen type is only a warning
     ("devin", "duplicate assistant"): (0, {"tool_calls": "warn"}),
     # the pause is tied to evidence, not to coverage: padded with known records so coverage stays at 90% or more

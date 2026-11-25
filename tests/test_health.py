@@ -117,7 +117,7 @@ def test_counts_must_match_exactly(cli, tmp_path):
     code, out = run(cli, tmp_path, session() + [marker()] * N, TURN_CHECK, "--health-all")
     assert rows(out)["turns"]["status"] == "ok" and code == 0
     code, out = run(cli, tmp_path, session() + [marker()] * (N + 1), TURN_CHECK, "--health-all")
-    assert rows(out)["turns"]["status"] == "broken" and code == 2
+    assert rows(out)["turns"]["status"] == "warn" and code == 0          # a failed second count is a warning, never a pause
 
 
 def test_tokens_may_differ_by_two_percent(cli, tmp_path):
@@ -125,13 +125,13 @@ def test_tokens_may_differ_by_two_percent(cli, tmp_path):
     ok_code, ok = run(cli, tmp_path, base + [marker(102)], TOKEN_CHECK, "--health-all")
     assert rows(ok)["tokens"]["status"] == "ok" and ok_code == 0
     bad_code, bad = run(cli, tmp_path, base + [marker(110)], TOKEN_CHECK, "--health-all")
-    assert rows(bad)["tokens"]["status"] == "broken" and bad_code == 2
+    assert rows(bad)["tokens"]["status"] == "warn" and bad_code == 0
 
 
 def test_a_live_run_may_have_one_turn_still_open(cli, tmp_path):
     check = TURN_CHECK + "slack_first = 1\n"
-    assert run(cli, tmp_path, session() + [marker()] * (N - 1), check)[0] == 0
-    assert run(cli, tmp_path, session() + [marker()] * (N - 2), check)[0] == 2        # two open turns is not "live"
+    assert rows(run(cli, tmp_path, session() + [marker()] * (N - 1), check, "--health-all")[1])["turns"]["status"] == "ok"
+    assert rows(run(cli, tmp_path, session() + [marker()] * (N - 2), check, "--health-all")[1])["turns"]["status"] == "warn"   # two open turns is not "live"
 
 
 def test_a_check_is_skipped_when_the_second_record_does_not_exist_if_the_mapping_says_so(cli, tmp_path):
@@ -203,33 +203,19 @@ def test_a_missing_usage_field_breaks_tokens_and_a_missing_tool_name_breaks_tool
     assert code == 2 and rows(out)["tool_calls"]["status"] == "broken" and rows(out)["tokens"]["status"] != "broken"
 
 
-def test_an_unseen_type_points_at_the_metric_its_record_would_feed(cli, tmp_path):
-    # evidence touching a core metric breaks it; for any other metric it is a warn
-    for kind, metric, status, exit_code in (("tool_result_v2", "tool_calls", "broken", 2), ("usage_report", "tokens", "broken", 2),
-                                            ("skill_event", "skills", "warn", 0)):
+def test_an_unseen_type_points_at_the_metric_its_record_would_feed_as_a_warning(cli, tmp_path):
+    # a record type nobody has seen never pauses a review: it is a warning on the metric its record would feed, naming the type
+    for kind, metric in (("tool_result_v2", "tool_calls"), ("usage_report", "tokens"), ("skill_event", "skills")):
         code, out = run(cli, tmp_path, session() + [{"t": kind}], "", "--health-all")
         r = rows(out)
-        assert r[metric]["status"] == status and code == exit_code
+        assert r[metric]["status"] == "warn" and code == 0
         assert [m for m, row in r.items() if row["status"] in ("warn", "broken")] == [metric]
+        assert any(c.get("type") == kind for c in r[metric]["checks"])
 
 
-def test_a_core_metric_with_a_passing_second_count_only_warns_on_an_unseen_type(cli, tmp_path):
-    code, out = run(cli, tmp_path, session() + [marker(reported=120), {"t": "usage_report"}], TOKEN_CHECK, "--health-all")
-    r = rows(out)
-    assert code == 0 and r["tokens"]["status"] == "warn"
-    unseen = [c for c in r["tokens"]["checks"] if c["name"] == "unseen record type"]
-    assert unseen and unseen[0]["type"] == "usage_report"           # the warning names the type
-    assert [m for m, row in r.items() if row["status"] in ("warn", "broken")] == ["tokens"]
-
-
-def test_a_core_metric_whose_second_count_fails_still_breaks_on_an_unseen_type(cli, tmp_path):
+def test_an_unseen_type_with_a_failing_second_count_is_still_only_a_warning(cli, tmp_path):
     code, out = run(cli, tmp_path, session() + [marker(reported=5000), {"t": "usage_report"}], TOKEN_CHECK, "--health-all")
-    assert code == 2 and rows(out)["tokens"]["status"] == "broken"
-
-
-def test_a_core_metric_with_only_one_count_still_breaks_on_an_unseen_type(cli, tmp_path):
-    code, out = run(cli, tmp_path, session() + [{"t": "usage_report"}], "", "--health-all")
-    assert code == 2 and rows(out)["tokens"]["status"] == "broken" and rows(out)["tokens"]["checks"]
+    assert code == 0 and rows(out)["tokens"]["status"] == "warn"
 
 
 def test_an_unseen_type_that_matches_no_metric_is_listed_as_a_warning_not_attributed(cli, tmp_path):
@@ -284,7 +270,7 @@ def test_the_report_coverage_row_names_the_affected_metrics(cli, tmp_path):
     (tmp_path / "tmp").mkdir()
     proc = cli.run(path, "--mapping", tmp_path / "m.toml", "--report", "-", "--no-open", "--report-format", "md",
                    stdin=json.dumps(copy.deepcopy(FINDINGS)).replace("claude-code", "all hosts") if False else json.dumps(_findings()))
-    assert "Coverage: skills: warn" in proc.stdout
+    assert "Coverage: a record type this version of the skill doesn't know: skill_event (1 record; may affect skill counts)" in proc.stdout
 
 
 def _findings():
@@ -410,6 +396,7 @@ def test_a_host_that_records_no_tokens_is_never_asked_for_usage(cli, tmp_path):
     assert proc.returncode == 0 and rows(out)["tokens"]["status"] == "not_measurable"
 
 
-def test_a_second_count_that_fails_still_breaks_a_core_row_with_full_coverage(cli, tmp_path):
+def test_a_second_count_that_fails_is_a_warning_with_its_two_values_even_with_full_coverage(cli, tmp_path):
     code, out = run(cli, tmp_path, session() + [marker()] * (N + 3), TURN_CHECK, "--health-all")
-    assert code == 2 and rows(out)["turns"]["status"] == "broken"
+    check = next(c for c in rows(out)["turns"]["checks"] if c["layer"] == "second count")
+    assert code == 0 and rows(out)["turns"]["status"] == "warn" and (check["first"], check["second"]) == (N, N + 3)
