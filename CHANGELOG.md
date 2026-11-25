@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.3
+
+- **The review reads only its window.** Nothing after the reviewed work is read: not the review's own turn, and nothing written while it runs. Cross-checks compare the reviewed work only, so a running total that lags behind a live turn no longer looks like a mismatch.
+- **Warnings instead of pauses.** A cross-check that disagrees, or a record type the skill doesn't know, is now a warning in the report that names the number and shows both values. A review stops only when a core number is clearly missing.
+- **Checks can't be weakened.** `--save-adapter` refuses an adapter for a built-in host that removes or loosens one of its checks.
+- **No adapter building during a review.** When a core number is missing, the agent says which, offers degraded mode or stopping, and points to the issues page. Adding an adapter is contributor work, described in `references/adapter-flow.md`.
+- **Experimental hosts.** Devin and Cline are labelled experimental; reports say "(experimental adapter)".
+- **Codex 0.171 skills updates.** A "Host skills update" message adds its skills to the offered list instead of raising a warning.
+
 ## v0.2.2
 
 - **Codex 0.171.** Reads Codex 0.171.0-alpha.13 sessions with the built-in mapping: the new tool-listing record is ignored, the skill link `[$workflow-reviewer](...)` is recognised as the invocation, and a message that only quotes the skills heading no longer triggers "skill list found but not parsed".
