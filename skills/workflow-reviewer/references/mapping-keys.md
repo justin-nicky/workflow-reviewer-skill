@@ -40,7 +40,7 @@ A mapping is a TOML file of declarative data (see `scripts/mappings/*.toml` for 
 - `turnless_activity`: accepted for older mappings and ignored: assistant activity with no turn in the main session always means turns are missing (exit 2); in a subagent file it is a warning.
 - `token_method`: a sentence saying how tokens are counted; shown in the report.
 - `token_method_fallback`: the same, for the fallback counting.
-- `tool_time_source`: `"result_spans"` takes tool time from each result's own start and end.
+- `tool_time_source`: `"result_spans"` takes tool time from each result's own start and end. When no tool result in the window carries them, tool time is null ("not recorded by <host>") with a warning, never 0.
 - `health_hints`: a table of metric = list of words; an unseen record type containing a word is tied to that metric (extends the defaults).
 - `subagent_marker`: a path whose presence in a file's first record marks the file as a subagent's.
 - `subagents`: see "Subagents" below.
@@ -107,6 +107,8 @@ Each `[[records]]` has a `match`, a `role` and any of these keys.
 - `usage_output`: the path of the output token count.
 - `usage_cache_read`: the path of the cache-read token count.
 - `usage_cache_write`: the path of the cache-write token count.
+
+A usage field no rule declares is one the host never records: it is null in every breakdown and named in `tokens.not_recorded`; the reports say "not recorded by <host>". That is expected, not a failure.
 - `usage_input_includes_cache`: `true` when the input count includes cache reads, so fresh input is input minus cache read.
 - `usage_context`: the path of the host's own context-size count (a second count for tokens).
 - `usage_present`: a path whose existence makes a record with all-zero usage still count as an API call.
