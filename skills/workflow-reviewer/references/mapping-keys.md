@@ -140,6 +140,7 @@ Each `[[checks]]` counts one metric a second, independent way. Two keys name the
 - `tolerance_pct`: allowed difference in percent.
 - `slack_first`: extra amount the first value may be off by.
 - `skip_if_second_zero`: `true` skips the check when the second value is zero (the host does not write that record).
+- `scope`: `session` when the second side is a whole-session total (it cannot be split by turn); the check then runs only when the review covers the whole session. The default compares the window only.
 - `severity`: `warn` or `broken` when the check fails; the default is `broken` for a core metric (turns, tool calls, tokens) and `warn` otherwise.
 
 A side taken from raw records is a table: `match` (which records), `actors` (`all`, or `main` for the main session only) and one of `count` (the default), `distinct` (distinct values of a path), `sum` (a path's total), `last` (a path's last value), or `const` (a fixed number).

@@ -346,7 +346,8 @@ def parse_lines(lines, mapping, actor="main"):
               "prompt_ts": prompt_time(get_text(obj, rule["text"]), rule["prompt_time"]) if rule.get("prompt_time") else None,
               "spawned_agent": get_first(obj, rule.get("spawned_agent")),
               "offered": get_first(obj, rule.get("offered_skills")),
-              "usage_context": None, "slash_skill": None, "instruction": None, "spawned_model": None, "descriptions": {}}
+              "usage_context": None, "slash_skill": None, "instruction": None, "spawned_model": None, "descriptions": {},
+              "line": n}
         if rule.get("offered_desc_item"):                  # descriptions printed in the same listing as the names
             listing_text = get_text(obj, rule.get("offered_desc_from") or rule.get("offered_from", []))
             ev["descriptions"] = skill_descriptions_in(listing_text, None if rule.get("offered_desc_from") else rule.get("offered_block"),
@@ -1434,6 +1435,7 @@ def dedupe_calls(events):
             key = (c["id"], c["name"], json.dumps(c["input"], sort_keys=True, default=str)) if c["id"] is not None else None
             if key is not None and key in seen:
                 dropped += 1
+                ev["dup_calls"] = ev.get("dup_calls", 0) + 1
                 continue
             if key is not None:
                 seen.add(key)
@@ -1541,6 +1543,48 @@ UNSEEN_HINTS = {"tokens": ("usage", "token", "assistant"), "tool_calls": ("tool"
                 "interruptions": ("interrupt", "abort", "cancel"), "skills": ("skill",), "subagents": ("agent", "spawn", "thread")}
 
 
+def frozen_window(parsed, events, mapping, stats, lo, hi, whole_session):
+    """The window's own stats and raw records, from the lines up to its last record.
+
+    Each line belongs to the turn of the event at or before it in its file. Lines of a later turn (the review's own,
+    still running) are never read; lines before the window are kept only as `prior`, for running totals.
+    Returns (stats, records, prior, the kept lines of the first main file)."""
+    by_source = {}
+    for e in events:
+        if "line" in e and (whole_session or not e.get("unplaced")):
+            by_source.setdefault((e["actor"], e.get("file")), []).append((e["line"], e["turn"]))
+    out = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {}, "truncated_last_line": False,
+           "version": stats["version"], "skill_list_unparsed": 0}
+    records, prior, first_main = [], [], None
+    for actor, label, lines in parsed:
+        marks = sorted(by_source.get((actor, label), [])) or [(0, 1)]       # a file with no event at all: nothing to place it by
+        kept, turns, k = [], [], 0
+        for n, ln in enumerate(lines):
+            while k + 1 < len(marks) and marks[k + 1][0] <= n:
+                k += 1
+            turn = marks[k][1]
+            if hi is not None and turn > hi:
+                continue
+            kept.append(ln)
+            turns.append(turn)
+        if actor == "main" and first_main is None:
+            first_main = kept
+        _, st = parse_lines(kept, mapping, actor)
+        for key in ("lines", "classified", "skill_list_unparsed"):
+            out[key] += st[key]
+        out["truncated_last_line"] |= st["truncated_last_line"]
+        for bucket in ("unseen_types", "ignored_types"):
+            for t, c in st[bucket].items():
+                out[bucket][t] = out[bucket].get(t, 0) + c
+        for ln, turn in zip(kept, turns):
+            try:
+                obj = json.loads(ln)
+            except ValueError:
+                continue
+            (prior if turn < lo else records).append((actor, obj))
+    return out, records, prior, first_main
+
+
 def health_quantities(events):
     """Numbers the engine counted itself, which a mapping's checks can name on either side."""
     calls = [c for e in events for c in e["calls"]]
@@ -1572,13 +1616,25 @@ def health_quantities(events):
     return q
 
 
-def side_value(spec, quantities, records):
-    """One side of a check: an engine quantity by name, or a count/distinct/sum/last taken straight from the raw records."""
+def side_value(spec, quantities, records, prior=()):
+    """One side of a check: an engine quantity by name, or a count/distinct/sum/last taken straight from the raw records.
+
+    Records are the window's. A `last` side is a running total: its value at the window's end, minus its value
+    before the window's first record when the window starts later than the session."""
     if isinstance(spec, str):
         return quantities.get(spec)
     if "const" in spec:
         return spec["const"]
-    chosen = [o for actor, o in records if (spec.get("actors", "all") == "all" or actor == "main") and _matches(o, spec.get("match", {}))]
+    pick = lambda recs: [o for actor, o in recs if (spec.get("actors", "all") == "all" or actor == "main") and _matches(o, spec.get("match", {}))]
+    chosen = pick(records)
+    if "last" in spec and "sum" not in spec:
+        number = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+        at = lambda recs: next((v for v in (get_first(o, spec["last"]) for o in reversed(pick(recs))) if number(v)), None)
+        end = at(list(prior) + list(records))
+        if end is None or at(records) is None:
+            return None                       # no running total inside the window
+        start = at(prior)
+        return end - start if start is not None else end
     if "distinct" in spec:
         return len({json.dumps(v, sort_keys=True) for v in (get_first(o, spec["distinct"]) for o in chosen) if v is not None})
     if "sum" in spec or "last" in spec:
@@ -1617,11 +1673,13 @@ def measurable_metrics(mapping):
             "skills": True, "subagents": True}
 
 
-def health_report(mapping, stats, events, records, drift, threshold):
-    """One row per metric: its status and the checks that ran, each with its two values."""
+def health_report(mapping, stats, events, records, drift, threshold, prior=(), whole=True):
+    """One row per metric: its status and the checks that ran, each with its two values.
+
+    events and records are the window's; prior holds the records before it, for running totals (a `last` side)."""
     measurable = measurable_metrics(mapping)
     quantities = health_quantities(events)
-    quantities["duplicate_calls"] = stats.get("duplicate_calls", 0)
+    quantities["duplicate_calls"] = sum(e.get("dup_calls", 0) for e in events)
     checks = {m: [] for m in HEALTH_METRICS}
 
     def add(metric, name, layer, first, second, relation, passed, severity, **extra):
@@ -1630,10 +1688,12 @@ def health_report(mapping, stats, events, records, drift, threshold):
 
     for spec in mapping.get("checks", []):                                  # layer 2: the same metric counted a second way
         metric = spec["metric"]
-        first, second = side_value(spec["first"], quantities, records), side_value(spec["second"], quantities, records)
+        first, second = side_value(spec["first"], quantities, records, prior), side_value(spec["second"], quantities, records, prior)
         if metric not in checks or not measurable[metric] or first is None or second is None:
             continue
         if spec.get("skip_if_second_zero") and not second:      # the host does not write this second record at all
+            continue
+        if spec.get("scope") == "session" and not whole:          # a whole-session total says nothing about part of a session
             continue
         tol, slack = float(spec.get("tolerance_pct", 0)), int(spec.get("slack_first", 0))
         passed = check_passes(first, second, spec.get("relation", "equal"), tol, slack)
@@ -3304,7 +3364,7 @@ spawned_agent spawned_model text timestamp turn turn_error turn_regex turn_start
 usage_fallback usage_input usage_input_includes_cache usage_output usage_present""".split())
 FIELD_KEYS = frozenset("version msg_id model timestamp event_id".split())
 CAPABILITY_KEYS = frozenset("has_tokens has_timestamps has_tool_results has_ids".split())
-CHECK_KEYS = frozenset("name metric first second relation tolerance_pct slack_first skip_if_second_zero severity".split())
+CHECK_KEYS = frozenset("name metric first second relation tolerance_pct slack_first skip_if_second_zero severity scope".split())
 SUBAGENT_KEYS = frozenset("""agent_path brief_key call_id file_prefix forked_from history_start link_regex meta_file model ordinal
 parent_id self_id spawn_key""".split())
 REGEX_KEYS = frozenset("call_command_regex result_exit_code_regex turn_regex offered_block offered_item offered_section offered_desc_item link_regex".split())
@@ -4393,7 +4453,7 @@ def main(argv=None):
              "truncated_last_line": False, "version": None, "skill_list_unparsed": 0}
     if getattr(reader, "version", None) is not None:
         stats["version"] = str(reader.version)
-    metas, main_ids, records = {}, set(), []
+    metas, main_ids, records, parsed = {}, set(), [], []
     sub_cfg = mapping.get("subagents") or {}
     for src in reader.sources(mapping):
         actor = "main" if src.main else f"subagent:{src.stem}"
@@ -4415,6 +4475,7 @@ def main(argv=None):
                     records.append((actor, json.loads(ln)))
                 except ValueError:
                     pass
+        parsed.append((actor, src.label, [ln.strip() for ln in lines if ln.strip()]))
         ev, st = parse_lines(lines, mapping, actor)
         if not src.main and metas[actor].get("history") and st["version"] is None:
             st["version"] = metas[actor]["history"]["version"]
@@ -4480,13 +4541,21 @@ def main(argv=None):
             else:
                 lo, hi, window_note = d_from, d_to, d_note
             window = [e for e in window if e["turn"] >= lo and (hi is None or e["turn"] <= hi)]
+            # the window is frozen: nothing after its last record is read, for any number or check
+            stats, records, prior, first_kept = frozen_window(parsed, events, mapping, stats, lo, hi, whole_session)
+            if first_kept is not None and len(first_kept) < len(first_lines):     # the variant scores, from the window's lines too
+                rescored = choose_variant(raw_mapping, first_kept, version=getattr(reader, "version", None))[1]
+                if rescored["variant"] == variant_info["variant"]:
+                    variant_info = rescored
             out = analyse(window, stats, mapping, args.verify_patterns)
-            last_ts = max((e["ts"] for e in events if e["ts"] is not None), default=None)
+            last_ts = max((e["ts"] for e in events if e["ts"] is not None and (hi is None or e["turn"] <= hi)
+                           and (whole_session or not e.get("unplaced"))), default=None)
             lag = None
             if last_ts is not None and datetime.now(timezone.utc).timestamp() - last_ts < LAG_SECONDS:
                 lag = "latest turn may be incomplete: last record is under %ds old" % LAG_SECONDS
             drift = drift_report(mapping, stats, window, args.drift_threshold)
-            health = health_report(mapping, stats, events, records, drift, args.drift_threshold)
+            whole = lo <= 1 and (hi is None or hi >= max(main_turns, default=0))
+            health = health_report(mapping, stats, window, records, drift, args.drift_threshold, prior, whole)
             drift = settle_drift(drift, health)
             out["coverage"] = {"host": host, "tested_versions": mapping.get("tested_versions"),
                                "mapping_source": source, "variant": variant_info["variant"], "drift": drift,

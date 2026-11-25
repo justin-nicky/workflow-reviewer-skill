@@ -117,6 +117,7 @@ name = "input tokens vs metadata.usage.inputTokens"
 metric = "tokens"
 first = "tokens_input_incl_cache_main"
 second = { match = { "$doc" = "session" }, last = "metadata.usage.inputTokens", actors = "main" }
+scope = "session"                   # the session document holds whole-session totals: compared only when the window is the whole session
 skip_if_second_zero = true
 
 [[checks]]
@@ -124,6 +125,7 @@ name = "output tokens vs metadata.usage.outputTokens"
 metric = "tokens"
 first = "tokens_output_main"
 second = { match = { "$doc" = "session" }, last = "metadata.usage.outputTokens", actors = "main" }
+scope = "session"                   # the session document holds whole-session totals: compared only when the window is the whole session
 skip_if_second_zero = true
 
 [[checks]]
@@ -131,6 +133,7 @@ name = "cache read tokens vs metadata.usage.cacheReadTokens"
 metric = "tokens"
 first = "tokens_cache_read_main"
 second = { match = { "$doc" = "session" }, last = "metadata.usage.cacheReadTokens", actors = "main" }
+scope = "session"                   # the session document holds whole-session totals: compared only when the window is the whole session
 skip_if_second_zero = true
 
 [[checks]]
@@ -138,4 +141,5 @@ name = "fresh input tokens vs metadata.tokensIn"
 metric = "tokens"
 first = "tokens_fresh_main"
 second = { match = { "$doc" = "session" }, last = "metadata.tokensIn", actors = "main" }
+scope = "session"                   # the session document holds whole-session totals: compared only when the window is the whole session
 skip_if_second_zero = true
