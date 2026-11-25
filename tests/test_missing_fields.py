@@ -84,9 +84,10 @@ def test_the_reason_says_which_field_is_missing_from_how_many_records(cli, tmp_p
 
 
 def test_a_field_the_host_never_records_is_not_checked(cli, tmp_path):
-    """Codex records no cache writes, and its mapping does not declare them: cache_write stays 0 and nothing breaks."""
-    code, out, _, _ = run(cli, tmp_path, "codex", lambda rs: rs)
-    assert code == 0 and out["tokens"]["cache_write"] == 0 and rows(out)["tokens"]["status"] in ("ok", "one_way")
+    """Codex records no cache writes, and its mapping does not declare them: cache_write is "not recorded" (null), and nothing breaks."""
+    code, out, md, _ = run(cli, tmp_path, "codex", lambda rs: rs)
+    assert code == 0 and out["tokens"]["cache_write"] is None and rows(out)["tokens"]["status"] in ("ok", "one_way")
+    assert re.search(r"Cache read / write: [^\n/]+ / not recorded by Codex\n", md), md
 
 
 

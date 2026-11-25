@@ -314,6 +314,12 @@ QUANTITIES_OF_FIELD = {"input": ("tokens_fresh", "tokens_input_incl_cache", "tok
                        "cache_write": ("tokens_cache_write", "tokens_all")}
 
 
+def unrecorded_usage_fields(mapping):
+    """Usage fields that no usage rule of the mapping reads: the host never records them, so they are null, never 0."""
+    rules = [r for r in mapping.get("records", []) if "usage_output" in r or "usage_input" in r]
+    return [k for k in USAGE_FIELDS if rules and not any(r.get(f"usage_{k}") for r in rules)]
+
+
 def missing_usage_fields(events):
     """{field: carrier records} for each usage field a mapping declares that no carrier record in these events has.
 
@@ -1589,12 +1595,29 @@ def null_missing_numbers(out):
                     nulled.add("context_at_invocation")
             if row["metric"] == "turns" and c["name"] == "assistant activity without any turn":
                 out["window"]["turns_total"] = None
-    # the same numbers are missing in every breakdown that carries them: the window, each turn, each actor, the "other" rows
+    null_token_keys(out, nulled)
+
+
+def null_token_keys(out, keys):
+    """The same numbers are null in every breakdown that carries them: the window, each turn, each actor, the "other" rows."""
+    t = out.get("tokens") or {}
     for tokens in [t] + [r.get("tokens") for r in out.get("turns", []) + out.get("actors", []) if isinstance(r, dict)]:
         if isinstance(tokens, dict) and "not_measurable" not in tokens:
-            for k in nulled:
+            for k in keys:
                 if k in tokens:
                     tokens[k] = None
+
+
+def null_unrecorded_numbers(out, mapping):
+    """A number the host never records is null ("not recorded by <host>") everywhere, never 0. Expected, so not a failure:
+    no health row, no exit code. The window's tokens name the fields in `not_recorded`."""
+    t = out.get("tokens") or {}
+    if "not_measurable" in t:
+        return
+    gone = [TOKEN_KEY[k] for k in unrecorded_usage_fields(mapping)]
+    if gone:
+        t["not_recorded"] = gone
+        null_token_keys(out, gone)
 
 
 def frozen_window(parsed, events, mapping, stats, lo, hi, whole_session):
@@ -1914,19 +1937,21 @@ def redact(text):
 MISSING_NUMBER_KEYS = frozenset(ROW_TOKEN_KEYS) | {"context_at_invocation", "turns_total"}
 
 
-def _md_value(v, key=None):
-    """Markdown never prints None: a missing number is "not measurable", any other empty value is "none"."""
+def _md_value(v, key=None, gone=None):
+    """Markdown never prints None: a number the host never records is "not recorded by <host>" (`gone` maps those keys to
+    the words), a missing number is "not measurable", any other empty value is "none"."""
+    gone = gone or {}
     if v is None:
-        return NOT_MEASURABLE if key in MISSING_NUMBER_KEYS else "none"
+        return gone[key] if key in gone else NOT_MEASURABLE if key in MISSING_NUMBER_KEYS else "none"
     if isinstance(v, dict):
-        return {k: _md_value(x, k) for k, x in v.items()}
+        return {k: _md_value(x, k, gone) for k, x in v.items()}
     if isinstance(v, list):
-        return [_md_value(x, key) for x in v]
+        return [_md_value(x, key, gone) for x in v]
     return v
 
 
-def _fmt(v, key=None):
-    v = _md_value(v, key)
+def _fmt(v, key=None, gone=None):
+    v = _md_value(v, key, gone)
     if isinstance(v, (dict, list)):
         return json.dumps(v, separators=(",", ":"), ensure_ascii=False)
     return str(v)
@@ -1942,7 +1967,16 @@ def coarse_time_view(time):
     return {"wall": wall, **{k: v for k, v in time.items() if k not in ("wall_s", "wall_range_s")}}
 
 
+def not_recorded_words(out):
+    """{key: "not recorded by <host>"} for each number the host never records (tokens and time name them)."""
+    cov = out.get("coverage") or {}
+    host = HOST_NAMES.get(cov.get("host"), str(cov.get("host")).title())
+    keys = [k for section in ("tokens", "time") if isinstance(out.get(section), dict) for k in out[section].get("not_recorded", [])]
+    return {k: f"not recorded by {host}" for k in keys}
+
+
 def render_md(out):
+    gone = not_recorded_words(out)
     lines = ["# workflow-reviewer metrics"]
     if out.get("header"):
         lines.append(out["header"])
@@ -1956,9 +1990,9 @@ def render_md(out):
         if key == "time" and isinstance(value, dict) and "wall_range_s" in value:
             lines += [f"- {k}: {_fmt(v)}" for k, v in coarse_time_view(value).items()]
         elif isinstance(value, dict):
-            lines += [f"- {k}: {_fmt(v, k)}" for k, v in value.items()]
+            lines += [f"- {k}: {_fmt(v, k, gone)}" for k, v in value.items()]
         elif isinstance(value, list):
-            lines += [f"- {_fmt(v)}" for v in value]
+            lines += [f"- {_fmt(v, None, gone)}" for v in value]
         else:
             lines.append(str(value))
     return "\n".join(lines)
@@ -2760,8 +2794,10 @@ def token_parts(out):
     t = out["tokens"]
     if "not_measurable" in t:
         return None
-    parts = [("read", "Cache read", t["cache_read"]), ("write", "Cache write", t["cache_write"]),
-             ("output", "Output", t["output"]), ("fresh", "Fresh input", t["fresh_input"])]
+    gone = set(t.get("not_recorded", []))
+    parts = [(k, label, t[key]) for k, label, key in (("read", "Cache read", "cache_read"), ("write", "Cache write", "cache_write"),
+                                                      ("output", "Output", "output"), ("fresh", "Fresh input", "fresh_input"))
+             if key not in gone]                          # a field the host never records is left out, not a 0% slice
     if any(v is None for _, _, v in parts):            # a part is not measurable: no composition can be drawn
         return None
     total = sum(v for _, _, v in parts)
@@ -2770,14 +2806,15 @@ def token_parts(out):
 
 def metric_rows(out):
     """(id, label, value) rows; every value is computed here from the metrics run."""
-    t, rows = out["tokens"], []
+    t, rows, gone = out["tokens"], [], not_recorded_words(out)
+    tok = lambda k: gone[k] if k in gone else fmt_tokens(t[k])
     if "not_measurable" in t:
         rows.append(("tokens", "Tokens", "not measurable on this host"))
     else:
         rows += [("calls", "API calls", NOT_MEASURABLE if t["api_calls"] is None else str(t["api_calls"])),
-                 ("output", "Output tokens", fmt_tokens(t["output"])),
-                 ("cache", "Cache read / write", f"{fmt_tokens(t['cache_read'])} / {fmt_tokens(t['cache_write'])}"),
-                 ("fresh", "Fresh input", fmt_tokens(t["fresh_input"]))]
+                 ("output", "Output tokens", tok("output")),
+                 ("cache", "Cache read / write", f"{tok('cache_read')} / {tok('cache_write')}"),
+                 ("fresh", "Fresh input", tok("fresh_input"))]
         if t.get("context_at_invocation") is not None:
             rows.append(("context", "Context at invocation", fmt_tokens(t["context_at_invocation"])))
     tools = out["tools"]
@@ -3000,7 +3037,7 @@ def render_html(out, findings, now, inventory_names=None):
         h.append("</div>")
         h.append('<ul class="legend">' + "".join(
             f'<li><i style="background: var(--s-{k})"></i>{_esc(name)} <b>{fmt_tokens(v)}</b> ({fmt_pct(p)})</li>' for k, name, v, p in shown) + "</ul>")
-        small = " Output is too small to see on the bar." if shown[2][3] < 1 else ""
+        small = " Output is too small to see on the bar." if next(p for k, _, _, p in shown if k == "output") < 1 else ""
         h.append(f'<figcaption id="anatomy-cap">Where this window’s {fmt_tokens(total)} tokens went.{small}</figcaption>')
         h.append("</figure>")
     h += ['<section aria-labelledby="h-metrics">', '<h2 id="h-metrics">Metrics</h2>', '<table class="metrics">', "<tbody>"]
@@ -4774,6 +4811,7 @@ def main(argv=None):
             out["turns"] = cap_rows(all_turns, TOP_ROWS, "turn", "turns", "other")
             out["actors"] = cap_rows(actor_rows(window, mapping, args.verify_patterns, links, metas), TOP_ROWS,
                                      "actor", "actors", "other", keep="main")
+            null_unrecorded_numbers(out, mapping)
             out["skills"] = skills_summary(window, host, repo, offered_skills(events), raw_mapping.get("skill_folders"), mapping,
                                       (args.overlap_threshold, args.directive_threshold))
             if out["skills"].get("inventory_note"):

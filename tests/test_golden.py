@@ -36,7 +36,7 @@ def test_codex_desktop_parent_and_subagent(cli):
     assert out["verify"]["total"] == 1 and out["tools"]["errors"] == 1
     assert out["skills"]["used"] == ["hello", "explicit-only"]
     main, sub = out["actors"]
-    assert main["tokens"] == {"fresh_input": 29522, "output": 906, "cache_read": 193920, "cache_write": 0, "api_calls": 12}
+    assert main["tokens"] == {"fresh_input": 29522, "output": 906, "cache_read": 193920, "cache_write": None, "api_calls": 12}
     assert main["tool_calls"] == 7 and main["verify_runs"] == 1 and main["models"] and sub["models"]
     assert sub["link"] == "parent_thread_id" and sub["brief_bytes"] > 0
     assert (sub["history_from_ordinal"], sub["history_records_skipped"]) == (28, 28)

@@ -43,7 +43,7 @@ def test_normal_session(cli, tmp_path):
     assert out["tools"]["by_category"] == {"read": 2, "edit": 1, "shell": 1, "skill": 1}   # the skill's "command" field is not a shell command
     assert out["tools"]["errors"] == 0 and out["interruptions"]["count"] == 0
     assert out["tokens"]["api_calls"] == 6
-    assert (out["tokens"]["fresh_input"], out["tokens"]["cache_read"], out["tokens"]["output"], out["tokens"]["cache_write"]) == (510, 4900, 55, 0)
+    assert (out["tokens"]["fresh_input"], out["tokens"]["cache_read"], out["tokens"]["output"], out["tokens"]["cache_write"]) == (510, 4900, 55, None)
     assert out["actors"][0]["models"] == ["swe-test"]
 
 
@@ -152,12 +152,13 @@ def test_tool_time_comes_from_the_hosts_own_timing(cli, tmp_path):
 
 
 def test_cache_writes_are_not_read_because_devin_leaves_them_null(cli, tmp_path):
-    """Devin's cache_creation_tokens is null in every record seen, so the mapping does not declare it: never checked, never missing."""
+    """Devin's cache_creation_tokens is null in every record seen, so the mapping does not declare it: never checked, never
+    missing, and "not recorded" (null) rather than 0, even when a record happens to carry a number."""
     def fill(c):
         head(c)
         c.add(dv.assistant("ok", tokens=dv.metrics(10, 100, 1, cache_write=50, context=110)))
     code, out = run(cli, build(cli, tmp_path, fill))
-    assert code == 0 and out["tokens"]["cache_write"] == 0
+    assert code == 0 and out["tokens"]["cache_write"] is None and out["tokens"]["not_recorded"] == ["cache_write"]
 
 
 def test_the_search_tables_are_never_read(cli, tmp_path, monkeypatch, capsys):
