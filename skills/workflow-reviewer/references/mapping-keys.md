@@ -37,7 +37,7 @@ A mapping is a TOML file of declarative data (see `scripts/mappings/*.toml` for 
 - `not_a_turn_prefixes`: user records starting with one of these are injected context, not prompts.
 - `interruption_prefixes`: user records starting with one of these are interruptions.
 - `interrupt_on_repeated_prompt`: `true` counts a prompt repeated unchanged as an interruption.
-- `turnless_activity`: `"warn"` or `"broken"`: how serious assistant activity with no turn marker is.
+- `turnless_activity`: accepted for older mappings and ignored: assistant activity with no turn in the main session always means turns are missing (exit 2); in a subagent file it is a warning.
 - `token_method`: a sentence saying how tokens are counted; shown in the report.
 - `token_method_fallback`: the same, for the fallback counting.
 - `tool_time_source`: `"result_spans"` takes tool time from each result's own start and end.
@@ -103,7 +103,7 @@ Each `[[records]]` has a `match`, a `role` and any of these keys.
 - `result_error`: a path that is true when the result is an error.
 - `result_started`: the path of the host's own start time of a tool call (with `result_finished`, gives tool time when `tool_time_source = "result_spans"`).
 - `result_finished`: the path of its end time.
-- `usage_input`: the path of the input token count.
+- `usage_input`: the path of the input token count. Declare a usage field only if the host really records it: a declared field that no usage record in the window carries is a missing number (null, "not measurable", exit 2).
 - `usage_output`: the path of the output token count.
 - `usage_cache_read`: the path of the cache-read token count.
 - `usage_cache_write`: the path of the cache-write token count.
