@@ -507,3 +507,16 @@ def test_a_message_that_only_quotes_the_skills_heading_is_not_an_unparsed_list(c
 def test_the_skills_heading_must_start_a_line_to_count_as_a_listing(cli, tmp_path):
     out = listing_session(cli, tmp_path, QUOTING)
     assert "warnings" not in out["coverage"]
+
+
+UPDATE = ("<skills_instructions>\n## Host skills update\n### Skill roots\nThese mappings replace earlier mappings for the same aliases.\n"
+          "- `r5` = `/x/.agents/skills`\n### Added or updated skills:\n- newskill: Does a new thing. (file: r5/newskill/SKILL.md)\n"
+          "- hello: Say hello, updated. (file: r5/hello/SKILL.md)\n</skills_instructions>")
+
+
+def test_a_skills_update_message_adds_its_names_to_the_offered_list(cli, tmp_path):
+    """0.171 sends "## Host skills update" with "### Added or updated skills:" when skills change mid-session."""
+    path = session(cli, tmp_path, cx_developer(LISTING, 0), dx_task_started("t1", 1), dx_user("go", 2), dx_assistant("a", 3),
+                   cx_developer(UPDATE, 4), dx_task_started("t2", 5), dx_user("more", 6), dx_assistant("b", 7))
+    _, out = cli.json(path, "--host", "codex")
+    assert "warnings" not in out["coverage"] and out["skills"]["offered"]["total"] == 4

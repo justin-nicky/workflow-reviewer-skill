@@ -93,8 +93,8 @@ text = ["payload.message"]
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
 role = "meta"
 offered_from = ["payload.content[].text"]
-offered_block = "(?sm)^### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
-offered_section = "(?m)^### Available skills$|<skills_instructions>"       # a heading on its own line; prose that quotes it is not a listing
+offered_block = "(?sm)^### (?:Available skills|Added or updated skills:?)\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"      # 0.171 also sends "## Host skills update" with the skills added mid-session
+offered_section = "(?m)^### (?:Available skills|Added or updated skills:?)$|<skills_instructions>"       # a heading on its own line; prose that quotes it is not a listing
 offered_item = "(?m)^- ([\\w:.\\-]+): "
 offered_desc_item = "(?m)^- ([\\w:.\\-]+): (.*?)(?: \\(file: [^)]*\\))?$"
 
@@ -182,8 +182,8 @@ turn_start = true
 match = { type = "response_item", "payload.type" = "message", "payload.role" = "developer" }
 role = "meta"
 offered_from = ["payload.content[].text"]
-offered_block = "(?sm)^### Available skills\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"
-offered_section = "(?m)^### Available skills$|<skills_instructions>"       # a heading on its own line; prose that quotes it is not a listing
+offered_block = "(?sm)^### (?:Available skills|Added or updated skills:?)\\n(.*?)(?:\\n###? |\\n</skills_instructions>|\\Z)"      # 0.171 also sends "## Host skills update" with the skills added mid-session
+offered_section = "(?m)^### (?:Available skills|Added or updated skills:?)$|<skills_instructions>"       # a heading on its own line; prose that quotes it is not a listing
 offered_item = "(?m)^- ([\\w:.\\-]+): "
 offered_desc_item = "(?m)^- ([\\w:.\\-]+): (.*?)(?: \\(file: [^)]*\\))?$"
 
