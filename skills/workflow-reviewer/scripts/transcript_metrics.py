@@ -941,6 +941,12 @@ def coarse_time_summary(events, later=None):
             "tool_s": na, "waiting_s": na}
 
 
+def tool_timing_recorded(events):
+    """False when these events have tool results and none carries the host's own start and end (a span)."""
+    results = [r for e in events for r in e["results"]]
+    return not results or any(r.get("span") for r in results)
+
+
 def time_summary(events, idle, spans_only=False):
     stamped = [e for e in events if e["ts"] is not None]
     if not stamped:
@@ -955,6 +961,11 @@ def time_summary(events, idle, spans_only=False):
                 waiting += gap
         if not (e["role"] == "user" and e["non_turn"]):      # injected records are not agent activity
             prev = e["ts"]
+    if spans_only and not tool_timing_recorded(events):
+        # the mapping reads the host's own tool timing, but no result here carries it: tool time is unknown, not 0
+        return {"wall_s": round(wall), "waiting_s": round(waiting), "tool_s": None, "active_s": round(max(0.0, wall - waiting)),
+                "tool_note": "tool time not recorded: no tool result in the window carries the host's own tool timing; "
+                             "active time includes time in tools", "not_recorded": ["tool_s"]}
     return {"wall_s": round(wall), "waiting_s": round(waiting), "tool_s": round(tool),
             "active_s": round(max(0.0, wall - waiting - tool)),
             "tool_note": ("main agent only, from the host's own tool timing, overlapping calls merged; "
@@ -1612,12 +1623,13 @@ def null_unrecorded_numbers(out, mapping):
     """A number the host never records is null ("not recorded by <host>") everywhere, never 0. Expected, so not a failure:
     no health row, no exit code. The window's tokens name the fields in `not_recorded`."""
     t = out.get("tokens") or {}
-    if "not_measurable" in t:
-        return
-    gone = [TOKEN_KEY[k] for k in unrecorded_usage_fields(mapping)]
+    gone = [TOKEN_KEY[k] for k in unrecorded_usage_fields(mapping)] if "not_measurable" not in t else []
     if gone:
         t["not_recorded"] = gone
         null_token_keys(out, gone)
+    if "tool_s" in (out.get("time") or {}).get("not_recorded", []):      # tool time is unknown for every actor too
+        for row in out.get("actors", []):
+            row["tool_s"] = None
 
 
 def frozen_window(parsed, events, mapping, stats, lo, hi, whole_session):
@@ -1821,6 +1833,11 @@ def health_report(mapping, stats, events, records, drift, threshold, prior=(), w
     if declared_calls and not any(c["id"] is not None for c in declared_calls):
         n = len(declared_calls)
         add("tool_calls", f"call ids missing from all {n} tool call{'' if n == 1 else 's'}", "presence", 0, n, "at_least", False, "broken")
+    started = next((r["result_started"] for r in mapping.get("records", []) if r.get("result_started")), None)
+    if measurable["time"] and mapping.get("tool_time_source") == "result_spans" and started and not tool_timing_recorded(events):
+        n = sum(len(e["results"]) for e in events)          # tool time is not core: a warning naming the field, never a pause
+        add("time", f"tool timing missing from all {n} tool result{'' if n == 1 else 's'}: {started}", "presence", 0, n, "at_least",
+            False, "warn", field=started)
     if caps.get("has_tool_results") and calls > 1 and results == 0:         # one call may still be running
         add("tool_calls", "calls without any results", "presence", results, calls, "at_least", False, "broken")
     hints = {**UNSEEN_HINTS, **mapping.get("health_hints", {})}
@@ -2825,6 +2842,8 @@ def metric_rows(out):
     tm_ = out["time"]
     if "not_measurable" in tm_:
         value = "not measurable on this host"
+    elif "tool_s" in gone:
+        value = f"{fmt_secs(tm_['active_s'])} active (tools included), tool time {gone['tool_s']}, {fmt_secs(tm_['waiting_s'])} waiting on you"
     elif "active_s" in tm_:
         value = f"{fmt_secs(tm_['active_s'])} active, {fmt_secs(tm_['tool_s'])} in tools, {fmt_secs(tm_['waiting_s'])} waiting on you"
     else:

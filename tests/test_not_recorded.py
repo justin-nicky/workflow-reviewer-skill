@@ -3,9 +3,12 @@
 Two cases: a token field the mapping does not declare (Devin and Codex leave cache writes out), and tool time from a
 declared timing field that no tool result in the window carries."""
 import re
+import shutil
+import sqlite3
 
 from fixtures import devin as dv
 from test_golden import GOLDEN, one
+from test_health_mutations import edit_messages
 from test_missing_fields import run
 from test_devin import build, head
 
@@ -14,6 +17,10 @@ TIMING_FIELD = "metadata.extensions.chisel/tool_call_timing.started_at"
 
 def unchanged(conn):
     pass
+
+
+def drop_timing(conn):
+    edit_messages(conn, lambda m: m["metadata"]["extensions"].pop("chisel/tool_call_timing"), lambda m: m["role"] == "tool")
 
 
 def rows_of(out):
@@ -86,6 +93,22 @@ def test_the_unmutated_devin_golden_keeps_its_tool_time(cli, tmp_path):
     assert "5 s in tools" in md
 
 
+def test_devin_tool_time_is_not_recorded_when_no_result_carries_the_timing(cli, tmp_path):
+    for sub in ("base", "cut"):
+        (tmp_path / sub).mkdir()
+    base_code, _, _, _ = run(cli, tmp_path / "base", "devin", unchanged)
+    code, out, md, html = run(cli, tmp_path / "cut", "devin", drop_timing)
+    assert code == base_code == 0
+    assert out["time"]["tool_s"] is None and out["time"]["not_recorded"] == ["tool_s"]
+    assert all(a["tool_s"] is None for a in out["actors"])
+    row = health_row(out, "time")
+    failed = [c for c in row["checks"] if not c["passed"]]
+    assert row["status"] == "warn" and not row["core"]
+    assert any(c["layer"] == "presence" and c.get("field") == TIMING_FIELD and TIMING_FIELD in c["name"] for c in failed), failed
+    assert not any(r["status"] == "broken" for r in out["coverage"]["health"]["rows"])
+    assert re.search(r"Time: [^\n]*tool time not recorded by Devin", md), md
+    assert "0 s in tools" not in md and "tool time not recorded by Devin" in html
+    assert TIMING_FIELD in md and "None" not in md
 
 
 def test_a_window_without_tool_results_has_a_real_zero(cli, tmp_path):
@@ -95,3 +118,15 @@ def test_a_window_without_tool_results_has_a_real_zero(cli, tmp_path):
     code, out = cli.json(build(cli, tmp_path, fill), "--host", "devin")
     assert code == 0 and out["time"]["tool_s"] == 0 and "not_recorded" not in out["time"]
     assert not any(c.get("field") == TIMING_FIELD for c in health_row(out, "time")["checks"])
+
+
+def test_the_metrics_markdown_says_not_recorded(cli, tmp_path):
+    db = tmp_path / "sessions.db"
+    shutil.copy(GOLDEN / "devin-subagent" / "sessions.db", db)
+    conn = sqlite3.connect(db)
+    drop_timing(conn)
+    conn.commit()
+    conn.close()
+    md = cli.run(db, "--host", "devin", "--session-id", "golden-devin-subagent", fmt="md").stdout
+    assert "- tool_s: not recorded by Devin" in md and '"tool_s":"not recorded by Devin"' in md
+    assert "- cache_write: not recorded by Devin" in md and "None" not in md
