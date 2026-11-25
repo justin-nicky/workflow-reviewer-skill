@@ -283,15 +283,13 @@ def _findings():
 
 # ---- assistant activity with no turn: the mapping decides how serious it is ---------------------------------------------------
 
-def test_assistant_activity_with_no_turn_warns_unless_the_mapping_says_it_is_broken(cli, tmp_path):
+def test_assistant_activity_with_no_turn_in_the_main_session_is_missing_turns_on_every_host(cli, tmp_path):
     records = [assistant("m1", 3, ["c1"]), result("c1")]
-    code, out = run(cli, tmp_path, records, "", "--health-all")
-    assert code == 0 and rows(out)["turns"]["status"] == "warn"
-    path = write_jsonl(tmp_path / "s2.jsonl", records)
-    (tmp_path / "m2.toml").write_text(MAPPING.replace('type_path = "t"', 'type_path = "t"\nturnless_activity = "broken"'))
-    proc = cli.run(path, "--mapping", tmp_path / "m2.toml", "--health-all")
-    out = json.loads(proc.stdout)
-    assert proc.returncode == 2 and rows(out)["turns"]["status"] == "broken" and not out["coverage"]["drift"]["ok"]
+    for extra in ("", '\nturnless_activity = "warn"'):              # the old mapping key no longer softens it
+        path = write_jsonl(tmp_path / "s.jsonl", records)
+        (tmp_path / "m.toml").write_text(MAPPING.replace('type_path = "t"', 'type_path = "t"' + extra))
+        out = json.loads(cli.run(path, "--mapping", tmp_path / "m.toml", "--health-all").stdout)
+        assert rows(out)["turns"]["status"] == "broken" and out["window"]["turns_total"] is None
 
 
 def test_a_subagent_rollout_passed_alone_only_warns_even_where_the_mapping_breaks_on_it(cli):

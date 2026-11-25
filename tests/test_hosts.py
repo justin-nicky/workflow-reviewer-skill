@@ -90,7 +90,7 @@ def test_renamed_record_type_triggers_drift_warning_and_exit_code(cli, tmp_path)
     assert d["coverage_pct"] < 90
     assert d["unseen_types"] == {"assistant_v2": 7}
     assert "2.1.295 to 2.1.309, 2.1.321" in d["warning"]
-    assert out["tokens"]["api_calls"] == 0         # keeps going with what still parses
+    assert out["tokens"]["api_calls"] is None and out["tokens"]["output"] is None     # the numbers are missing, never 0
 
 
 def test_clean_transcript_has_no_drift(cli, tmp_path):

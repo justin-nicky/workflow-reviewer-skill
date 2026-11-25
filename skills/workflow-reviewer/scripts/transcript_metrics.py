@@ -304,6 +304,31 @@ def skill_descriptions_in(text, block_pattern, item_pattern):
     return {name: " ".join(desc.split()) for name, desc in re.findall(item_pattern, text)}
 
 
+USAGE_FIELDS = ("input", "output", "cache_read", "cache_write")
+USAGE_NOUN = {"input": "input token counts", "output": "output token counts", "cache_read": "cache-read token counts",
+              "cache_write": "cache-write token counts"}
+TOKEN_KEY = {"input": "fresh_input", "output": "output", "cache_read": "cache_read", "cache_write": "cache_write"}
+QUANTITIES_OF_FIELD = {"input": ("tokens_fresh", "tokens_input_incl_cache", "tokens_all", "context_counted"),
+                       "output": ("tokens_output", "tokens_all"),
+                       "cache_read": ("tokens_cache_read", "tokens_input_incl_cache", "tokens_all", "context_counted"),
+                       "cache_write": ("tokens_cache_write", "tokens_all")}
+
+
+def missing_usage_fields(events):
+    """{field: carrier records} for each usage field a mapping declares that no carrier record in these events has.
+
+    Carriers are the records a usage rule matched. Fallback carriers count only when no primary one exists."""
+    carriers = [e for e in events if e.get("usage_declared")]
+    if any(not e["usage_fallback"] for e in carriers):
+        carriers = [e for e in carriers if not e["usage_fallback"]]
+    missing = {}
+    for k in USAGE_FIELDS:
+        declared = [e for e in carriers if k in e["usage_declared"]]
+        if declared and not any(e["usage_declared"][k] for e in declared):
+            missing[k] = len(declared)
+    return missing
+
+
 def parse_lines(lines, mapping, actor="main"):
     """Return (events, stats). Each line is classified by the first matching rule."""
     fields = mapping.get("fields", {})
@@ -440,7 +465,11 @@ def parse_lines(lines, mapping, actor="main"):
                     span = (parse_ts(get_first(r, rule["result_started"])), parse_ts(get_first(r, rule.get("result_finished"))))
                     if None not in span:
                         ev["results"][-1]["span"] = span
+        if rule.get("call_id") and "calls" in rule:
+            ev["declares_call_id"] = True
         if "usage_output" in rule or "usage_input" in rule:
+            ev["usage_declared"] = {k: get_first(obj, rule[f"usage_{k}"]) is not None
+                                    for k in USAGE_FIELDS if rule.get(f"usage_{k}")}
             u = {k: _int(get_first(obj, rule.get(f"usage_{k}"))) for k in
                  ("input", "output", "cache_read", "cache_write")}
             if rule.get("usage_input_includes_cache"):
@@ -1543,6 +1572,25 @@ UNSEEN_HINTS = {"tokens": ("usage", "token", "assistant"), "tool_calls": ("tool"
                 "interruptions": ("interrupt", "abort", "cancel"), "skills": ("skill",), "subagents": ("agent", "spawn", "thread")}
 
 
+def null_missing_numbers(out):
+    """A number whose field is missing is null ("not measurable"), never 0: read from the broken presence checks."""
+    t = out.get("tokens") or {}
+    for row in out["coverage"]["health"].get("rows", []):
+        for c in row.get("checks", []):
+            if c.get("passed") or c.get("layer") != "presence":
+                continue
+            if row["metric"] == "tokens" and "not_measurable" not in t:
+                fields = [c["field"]] if c.get("field") else list(USAGE_FIELDS)
+                for k in fields:
+                    t[TOKEN_KEY[k]] = None
+                if c.get("field") is None:
+                    t["api_calls"] = None
+                if set(fields) & {"input", "cache_read", "cache_write"}:
+                    t["context_at_invocation"] = None
+            if row["metric"] == "turns" and c["name"] == "assistant activity without any turn":
+                out["window"]["turns_total"] = None
+
+
 def frozen_window(parsed, events, mapping, stats, lo, hi, whole_session):
     """The window's own stats and raw records, from the lines up to its last record.
 
@@ -1680,6 +1728,12 @@ def health_report(mapping, stats, events, records, drift, threshold, prior=(), w
     measurable = measurable_metrics(mapping)
     quantities = health_quantities(events)
     quantities["duplicate_calls"] = sum(e.get("dup_calls", 0) for e in events)
+    missing = missing_usage_fields(events) if measurable["tokens"] else {}
+    for k in missing:                         # a number that is gone is never compared: its checks are skipped, not failed
+        for q in QUANTITIES_OF_FIELD[k]:
+            for name in (q, q + "_main"):
+                if name in quantities:
+                    quantities[name] = None
     checks = {m: [] for m in HEALTH_METRICS}
 
     def add(metric, name, layer, first, second, relation, passed, severity, **extra):
@@ -1703,9 +1757,8 @@ def health_report(mapping, stats, events, records, drift, threshold, prior=(), w
     second_passed = {m: any(c["layer"] == "second count" and c["passed"] for c in checks[m]) for m in HEALTH_METRICS}
 
     if measurable["turns"] and quantities["turns"] == 0:
-        if any(e["role"] == "assistant" and e["actor"] == "main" for e in events):      # the mapping says how serious this is
-            add("turns", "assistant activity without any turn", "structure", 0, 1, "at_least", False,
-                mapping.get("turnless_activity", "warn"))
+        if any(e["role"] == "assistant" and e["actor"] == "main" for e in events):      # the turn marker is gone: turns are missing
+            add("turns", "assistant activity without any turn", "presence", 0, 1, "at_least", False, "broken")
         elif any(e["role"] == "assistant" for e in events):                            # only a subagent's records: legitimate
             add("turns", "subagent activity without a main turn", "structure", 0, 1, "at_least", False, "warn")
     pct = drift["coverage_pct"]                                              # layer 1: structure
@@ -1732,6 +1785,13 @@ def health_report(mapping, stats, events, records, drift, threshold, prior=(), w
         add("tokens", "no token usage found", "presence", 0, 1, "at_least", False, "broken")
     if results > 0 and calls == 0:
         add("tool_calls", "results without calls", "presence", calls, results, "at_least", False, "broken")
+    for k, n in missing.items():
+        add("tokens", f"{USAGE_NOUN[k]} missing from all {n} usage record{'' if n == 1 else 's'}", "presence", 0, n, "at_least",
+            False, "broken", field=k)
+    declared_calls = [c for e in events if e.get("declares_call_id") for c in e["calls"]]
+    if declared_calls and not any(c["id"] is not None for c in declared_calls):
+        n = len(declared_calls)
+        add("tool_calls", f"call ids missing from all {n} tool call{'' if n == 1 else 's'}", "presence", 0, n, "at_least", False, "broken")
     if caps.get("has_tool_results") and calls > 1 and results == 0:         # one call may still be running
         add("tool_calls", "calls without any results", "presence", results, calls, "at_least", False, "broken")
     hints = {**UNSEEN_HINTS, **mapping.get("health_hints", {})}
@@ -2634,7 +2694,12 @@ def read_findings(stream):
     return (None if errors else data), errors
 
 
+NOT_MEASURABLE = "not measurable"
+
+
 def fmt_tokens(n):
+    if n is None:                       # a missing number is never shown as 0
+        return NOT_MEASURABLE
     n = int(n)
     if n >= 1_000_000:
         return f"{n / 1e6:.2f}M"
@@ -2662,7 +2727,10 @@ def scope_line(out, now):
     cov, win = out["coverage"], out["window"]
     host = HOST_NAMES.get(cov["host"], str(cov["host"]).title())
     lo, total = win["from_turn"], win["turns_total"]
-    span = "No turns" if not total else f"Turn {lo}" if total == 1 else f"Turns {lo}–{lo + total - 1}"
+    if total is None:
+        span = f"Turns from {lo}, count not measurable,"
+    else:
+        span = "No turns" if not total else f"Turn {lo}" if total == 1 else f"Turns {lo}–{lo + total - 1}"
     label = f" ({cov['label']} adapter)" if cov.get("label") else ""
     return f"{span} of one {host} session{label}, reviewed on {now.day} {now:%b %Y}"
 
@@ -2673,6 +2741,8 @@ def token_parts(out):
         return None
     parts = [("read", "Cache read", t["cache_read"]), ("write", "Cache write", t["cache_write"]),
              ("output", "Output", t["output"]), ("fresh", "Fresh input", t["fresh_input"])]
+    if any(v is None for _, _, v in parts):            # a part is not measurable: no composition can be drawn
+        return None
     total = sum(v for _, _, v in parts)
     return [(k, label, v, 100.0 * v / total) for k, label, v in parts], total
 
@@ -2683,7 +2753,8 @@ def metric_rows(out):
     if "not_measurable" in t:
         rows.append(("tokens", "Tokens", "not measurable on this host"))
     else:
-        rows += [("calls", "API calls", str(t["api_calls"])), ("output", "Output tokens", fmt_tokens(t["output"])),
+        rows += [("calls", "API calls", NOT_MEASURABLE if t["api_calls"] is None else str(t["api_calls"])),
+                 ("output", "Output tokens", fmt_tokens(t["output"])),
                  ("cache", "Cache read / write", f"{fmt_tokens(t['cache_read'])} / {fmt_tokens(t['cache_write'])}"),
                  ("fresh", "Fresh input", fmt_tokens(t["fresh_input"]))]
         if t.get("context_at_invocation") is not None:
@@ -2722,7 +2793,7 @@ def health_phrases(row):
     for c in row.get("checks", []):
         if c.get("passed"):
             continue
-        num = lambda v: f"{v:,}" if isinstance(v, int) else (f"{v:,.1f}" if isinstance(v, float) else str(v))
+        num = lambda v: NOT_MEASURABLE if v is None else f"{v:,}" if isinstance(v, int) else (f"{v:,.1f}" if isinstance(v, float) else str(v))
         if c["layer"] == "second count":
             out.append(f"{noun} couldn't be cross-checked: {num(c['first'])} vs {num(c['second'])}")
         elif c["name"] == "unseen record type":
@@ -2730,6 +2801,8 @@ def health_phrases(row):
                        f"{'' if c['first'] == 1 else 's'}; may affect {noun})")
         elif c["name"] == "coverage":
             out.append(f"only {num(c['first'])}% of records recognised")
+        elif "missing" in c["name"]:
+            out.append(c["name"])
         else:
             out.append(f"{noun} missing: {c['name']}" if row["status"] == "broken" else f"{noun}: {c['name']}")
     return list(dict.fromkeys(out)) or [f"{noun}: {row['status']}"]
@@ -4711,6 +4784,8 @@ def main(argv=None):
             return 4
         emit({"replica": home_relative(folder), **summary, "note": "synthetic: text, ids, paths and names replaced; numbers, order and nesting kept"}, args.format, False)
         return 0
+    if "coverage" in out and "window" in out:
+        null_missing_numbers(out)
     code = 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
     inventory_names = out["skills"].pop("_inventory_names", None) if isinstance(out.get("skills"), dict) else None
     if findings is not None and "coverage" in out:
