@@ -158,7 +158,8 @@ call_raw = "metadata.extensions.chisel/tool_call_content.{id}.rawInput"
 usage_input = "metadata.metrics.input_tokens"
 usage_output = "metadata.metrics.output_tokens"
 usage_cache_read = "metadata.metrics.cache_read_tokens"
-usage_cache_write = "metadata.metrics.cache_creation_tokens"
+# cache_creation_tokens is always null in Devin's records (it does not report cache writes), so it is not declared:
+# a declared field that no record carries would be reported as missing.
 usage_context = "metadata.metrics.context_input_tokens"
 usage_present = "metadata.metrics"      # an interrupted reply has metrics with no tokens: still one call
 

@@ -151,12 +151,13 @@ def test_tool_time_comes_from_the_hosts_own_timing(cli, tmp_path):
     assert out["time"]["tool_s"] == 4 and out["coverage"]["capabilities"]["has_timestamps"]
 
 
-def test_cache_write_is_cache_creation_tokens(cli, tmp_path):
+def test_cache_writes_are_not_read_because_devin_leaves_them_null(cli, tmp_path):
+    """Devin's cache_creation_tokens is null in every record seen, so the mapping does not declare it: never checked, never missing."""
     def fill(c):
         head(c)
         c.add(dv.assistant("ok", tokens=dv.metrics(10, 100, 1, cache_write=50, context=110)))
-    _, out = run(cli, build(cli, tmp_path, fill))
-    assert out["tokens"]["cache_write"] == 50
+    code, out = run(cli, build(cli, tmp_path, fill))
+    assert code == 0 and out["tokens"]["cache_write"] == 0
 
 
 def test_the_search_tables_are_never_read(cli, tmp_path, monkeypatch, capsys):
