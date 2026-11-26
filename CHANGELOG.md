@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.6
+
+- **Claude Code 2.1.331.** Its new `data-flow-records` are recognised and ignored, so coverage is back to 100%. Two warn-level checks make sure the tool calls and responses they point at exist. Entries that name a tool without a matching call are counted in an info note. The tested range stays at 2.1.321: on real 2.1.331 sessions some response ids point at no message, so that check still warns.
+- **A coverage drop is reported once.** The report and the issue link say "only N% of records recognised" once, not once per health row.
+- **Rule files loaded mid-session.** A rule file is always-on only when the host loads it at the start of the session. A file that arrives later, for example when Devin adds a folder's `AGENTS.md` after a tool call looks in that folder, is marked as loaded on demand with its turn, and its bytes no longer count toward the always-on total.
+- **Cursor issue link.** The title says "cursor (version not recorded)", and the body lists what Cursor never records.
+
 ## v0.2.5
 
 - **Report a problem in one click.** When a review pauses or a health check needs attention, the output gives a link to a GitHub issue that is already filled in. It holds only allowlisted diagnostics: versions, exit code, host and adapter kind, health statuses and check names, coverage, OS family and Python version. No paths, prompts, commands, file names, model names or session ids. You read and edit it before submitting; nothing is sent automatically. The HTML report always has the link in its footer.
