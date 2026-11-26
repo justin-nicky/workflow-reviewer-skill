@@ -19,7 +19,6 @@ import hashlib
 import json
 import math
 import os
-import platform
 import re
 import sqlite3
 import subprocess
@@ -2091,6 +2090,17 @@ VERSION_TEXT_RE = re.compile(r"^(?=[^\d]*\d)[0-9A-Za-z][0-9A-Za-z.+_-]{0,39}$")
 ADAPTER_KIND = {"builtin": "built-in", "user": "user", "override": "override"}
 
 
+def os_family(plat=None):
+    """The OS family, named as platform.system() names it, from sys.platform alone: platform.system() would import socket
+    on Windows (platform.uname looks up the host name), and the script imports no network module."""
+    plat = plat or sys.platform
+    for prefix, name in (("win32", "Windows"), ("cygwin", "Windows"), ("darwin", "Darwin"), ("linux", "Linux"), ("freebsd", "FreeBSD"),
+                         ("openbsd", "OpenBSD"), ("netbsd", "NetBSD")):
+        if plat.startswith(prefix):
+            return name
+    return "other"
+
+
 def skill_version():
     """The version in SKILL.md's front matter, beside this script."""
     try:
@@ -2156,7 +2166,7 @@ def issue_url(out, code):
         nr = (out.get("tokens") or {}).get("not_recorded") or []
         block += [f"not_recorded: {', '.join(nr) or 'none'}", f"drift_coverage_pct: {drift.get('coverage_pct')}",
                   f"unseen_types_count: {len(unseen)}", f"unseen_types: {', '.join(types) or 'none'}",
-                  f"os: {platform.system() or 'unknown'}", f"python: {sys.version_info[0]}.{sys.version_info[1]}"]
+                  f"os: {os_family()}", f"python: {sys.version_info[0]}.{sys.version_info[1]}"]
         body = ("Diagnostics from workflow-reviewer: counts, statuses and check names only, with no paths, prompts, commands "
                 "or file names. Read and edit anything before you submit.\n\n```\n" + "\n".join(block) + "\n```\n\n"
                 "**What were you doing?**\n\n\n**What did you expect?**\n\n\n**Anything else?**\n")

@@ -299,3 +299,11 @@ def test_a_bare_schema_number_is_named_as_a_schema_in_the_title(cli):
     assert "transcript_version: 20\n" in body                       # the body keeps the value as the transcript writes it
     _, out = cli.json(*sorted(GOLDEN.glob("codex-desktop/rollout-*.jsonl")), "--host", "codex")
     assert "schema" not in decode(out["coverage"]["issue_url"])[0]  # a dotted version stays as it is
+
+
+@pytest.mark.parametrize("plat, family", [("win32", "Windows"), ("cygwin", "Windows"), ("darwin", "Darwin"), ("linux", "Linux"),
+                                          ("freebsd14", "FreeBSD"), ("sunos5", "other")])
+def test_the_os_family_comes_from_sys_platform(plat, family):
+    """platform.system() would import socket on Windows (platform.uname looks up the host name): the script never calls it."""
+    assert tm.os_family(plat) == family
+    assert "import platform" not in SCRIPT.read_text(encoding="utf-8")
