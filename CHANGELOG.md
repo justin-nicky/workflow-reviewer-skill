@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.5
+
+- **Report a problem in one click.** When a review pauses or a health check needs attention, the output gives a link to a GitHub issue that is already filled in. It holds only allowlisted diagnostics: versions, exit code, host and adapter kind, health statuses and check names, coverage, OS family and Python version. No paths, prompts, commands, file names, model names or session ids. You read and edit it before submitting; nothing is sent automatically. The HTML report always has the link in its footer.
+- **Partial token counts are a lower bound.** When some records carry a usage field and others don't, the total sums the ones that do, the report says "at least", and a warning names how many records lack it. It no longer counts the gaps as 0.
+- **Interrupted calls.** A call that recorded no token usage at all is named as interrupted in the warning, and the context cross-check skips it.
+- **Devin's nulls.** Devin writes some input and cache-read counts as null. These count as 0 only when the record's context size adds up with them as 0; otherwise they are a gap. Adapters can't extend this rule.
+
 ## v0.2.4
 
 - **"Not recorded", never 0.** A number the host never writes is now shown as "not recorded by <host>" instead of 0. Cache writes on Codex and Devin are null in every breakdown, named in `tokens.not_recorded`, and left out of the token bar and its legend. This is expected, so it never pauses a review.
