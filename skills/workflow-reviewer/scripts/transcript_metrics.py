@@ -2158,14 +2158,16 @@ def issue_url(out, code):
     tested = "none" if tested is None else str(tested) if builtin else str(tested) if VERSION_TEXT_RE.match(str(tested)) else "<user text>"
     health = cov.get("health") or {}
     order = {m: i for i, m in enumerate(HEALTH_METRICS)}
-    rows = sorted((r for r in health.get("rows", []) if r["status"] in SEVERITY),       # most important first
+    attention = [r for r in health.get("rows", []) if r["status"] in SEVERITY]
+    drift = cov.get("drift") or {}
+    low_coverage = any(c["name"] == "coverage" and not c.get("passed") for r in attention for c in r.get("checks", []))
+    own = lambda r: [c for c in r.get("checks", []) if not c.get("passed") and not (c["name"] == "coverage" and c.get("layer") == "structure")]
+    rows = sorted((r for r in attention if own(r) or not low_coverage),            # most important first
                   key=lambda r: (-SEVERITY[r["status"]], not r.get("core"), order.get(r["metric"], len(order))))
     names = []
     for r in rows:
         found = []
-        for c in r.get("checks", []):
-            if c.get("passed"):
-                continue
+        for c in own(r):
             name = c["name"]
             if not builtin and c.get("layer") == "second count":     # a check a user adapter named: its name is the user's text
                 name = "<adapter check>"
@@ -2173,11 +2175,10 @@ def issue_url(out, code):
                 name = name.split(": ", 1)[0]
             found.append(name)
         names.append(list(dict.fromkeys(found)))
-    drift = cov.get("drift") or {}
     unseen = drift.get("unseen_types") or {}
     shown_types = [t for t in unseen if plain_key(str(t))]
     summary = health.get("summary") or {}
-    worst = rows[0]["status"] if rows else "exit 2" if code == 2 else "ok"
+    worst = max((r["status"] for r in attention), key=SEVERITY.get) if attention else "exit 2" if code == 2 else "ok"
     title = f"Review problem: {host} {'schema ' + tv if tv.isdigit() else tv}, {worst}"      # a bare number is a schema (Devin)
 
     def make(names, types, truncated):
@@ -2185,7 +2186,9 @@ def issue_url(out, code):
                  f"adapter_kind: {ADAPTER_KIND.get(cov.get('mapping_source'), 'user')}", f"tested_range: {tested}",
                  f"transcript_version: {tv}", f"version_position: {(health.get('version') or {}).get('position', 'unknown')}",
                  "health_summary: " + (", ".join(f"{k} {summary[k]}" for k in sorted(summary)) or "none"),
-                 "health_rows:" + ("" if rows else " none")]
+                 "health_rows:" + ("" if rows or low_coverage else " none")]
+        if low_coverage:                         # one fact about every row: said once
+            block.append(f"  - coverage: {drift.get('coverage_pct')}% recognised (all rows)")
         for r, n in zip(rows, names):
             block.append(f"  - {r['metric']}: {r['status']}" + (f"; {' | '.join(n)}" if n else ""))
         if truncated:
@@ -3132,7 +3135,7 @@ def coverage_items(out):
     if cov.get("not_measurable"):
         host = HOST_NAMES.get(cov["host"], str(cov["host"]).title())
         items.append(f"{host} doesn't record: " + ", ".join(cov["not_measurable"]))
-    return items
+    return list(dict.fromkeys(items))          # a fact about the whole session (a coverage drop) is said once, not per row
 
 
 VERDICT_LABEL = {"keep": "Keep", "improve": "Improve", "merge": "Merge or cut", "gap": "Gap", "overlap": "Overlaps", "none": "No verdict"}
