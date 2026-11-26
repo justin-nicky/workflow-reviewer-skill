@@ -41,7 +41,7 @@ Add `--verify-pattern <regex>` for the project's own verify commands. Keep these
 ## Step 3: exit codes
 
 - `0` Continue.
-- `2` A core number is missing (the health table says which), or the mapping cannot be used. Say in one line which number is missing and why, then offer: degraded mode (the working tree and repo records only, confidence capped at medium), or stopping. Add that the user can report it at https://github.com/justin-nicky/workflow-reviewer-skill/issues. Never build or save an adapter during a review.
+- `2` A core number is missing (the health table says which), or the mapping cannot be used. Say in one line which number is missing and why, then offer: degraded mode (the working tree and repo records only, confidence capped at medium), or stopping. Give the "Report this problem" link from the output (`coverage.issue_url`) and say it opens a prefilled GitHub form the user can read and edit before submitting; nothing is sent until they submit it. Never build or save an adapter during a review.
 - `3` Several recent sessions. List them, ask which one, rerun with `--session-id <id>`. Never guess.
 - `4` Unsupported storage (a compressed rollout, or a file over 200 MB). Use degraded mode: the working tree and repo records only, confidence capped at medium; say what is missing.
 - `5` Python is older than 3.9. Say that 3.9 or newer is needed and retry with `python3.9` or a newer `python3.x` if present.
