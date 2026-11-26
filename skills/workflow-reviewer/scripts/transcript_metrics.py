@@ -19,6 +19,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import re
 import sqlite3
 import subprocess
@@ -26,6 +27,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote, urlencode      # builds a string only; the script never opens a URL
 
 try:
     import tomllib
@@ -1992,6 +1994,95 @@ def not_recorded_words(out):
     return {k: f"not recorded by {host}" for k in keys}
 
 
+ISSUE_NEW = "https://github.com/justin-nicky/workflow-reviewer-skill/issues/new"
+ISSUE_URL_LIMIT = 7000
+VERSION_TEXT_RE = re.compile(r"^(?=[^\d]*\d)[0-9A-Za-z][0-9A-Za-z.+_-]{0,39}$")
+ADAPTER_KIND = {"builtin": "built-in", "user": "user", "override": "override"}
+
+
+def skill_version():
+    """The version in SKILL.md's front matter, beside this script."""
+    try:
+        text = (Path(__file__).resolve().parent.parent / "SKILL.md").read_text(encoding="utf-8")
+    except OSError:
+        return "unknown"
+    m = re.search(r'^\s*version:\s*"?([0-9][0-9A-Za-z.+-]*)"?\s*$', text, re.M)
+    return m.group(1) if m else "unknown"
+
+
+def needs_issue(out):
+    """A review that paused (exit 2) or has a health row needing attention."""
+    cov = out.get("coverage") or {}
+    return (cov.get("drift") or {}).get("ok") is False or any(r["status"] in SEVERITY for r in (cov.get("health") or {}).get("rows", []))
+
+
+def issue_url(out, code):
+    """A prefilled "new issue" URL holding only allowlisted diagnostics. Built offline; only the user opens and submits it.
+
+    Never in it: paths, session ids, prompts, previews, commands, tool arguments, file names, model names, user adapter names,
+    per-turn token numbers. Values that come from a transcript or a user adapter pass a strict pattern or are replaced."""
+    cov = out["coverage"]
+    builtin = cov.get("mapping_source") == "builtin"
+    host = cov.get("host") if plain_key(str(cov.get("host"))) else "<user host>"
+    tv = cov.get("transcript_version")
+    tv = "none" if tv is None else str(tv) if VERSION_TEXT_RE.match(str(tv)) else "<unrecognised>"
+    tested = cov.get("tested_versions")
+    tested = "none" if tested is None else str(tested) if builtin else str(tested) if VERSION_TEXT_RE.match(str(tested)) else "<user text>"
+    health = cov.get("health") or {}
+    order = {m: i for i, m in enumerate(HEALTH_METRICS)}
+    rows = sorted((r for r in health.get("rows", []) if r["status"] in SEVERITY),       # most important first
+                  key=lambda r: (-SEVERITY[r["status"]], not r.get("core"), order.get(r["metric"], len(order))))
+    names = []
+    for r in rows:
+        found = []
+        for c in r.get("checks", []):
+            if c.get("passed"):
+                continue
+            name = c["name"]
+            if not builtin and c.get("layer") == "second count":     # a check a user adapter named: its name is the user's text
+                name = "<adapter check>"
+            elif not builtin and ": " in name:                         # a template naming a field of the user's mapping
+                name = name.split(": ", 1)[0]
+            found.append(name)
+        names.append(list(dict.fromkeys(found)))
+    drift = cov.get("drift") or {}
+    unseen = drift.get("unseen_types") or {}
+    shown_types = [t for t in unseen if plain_key(str(t))]
+    summary = health.get("summary") or {}
+    worst = rows[0]["status"] if rows else "exit 2" if code == 2 else "ok"
+    title = f"Review problem: {host} {tv}, {worst}"
+
+    def make(names, types, truncated):
+        block = [f"skill_version: {skill_version()}", f"exit_code: {code}", f"host: {host}", f"adapter_label: {cov.get('label')}",
+                 f"adapter_kind: {ADAPTER_KIND.get(cov.get('mapping_source'), 'user')}", f"tested_range: {tested}",
+                 f"transcript_version: {tv}", f"version_position: {(health.get('version') or {}).get('position', 'unknown')}",
+                 "health_summary: " + (", ".join(f"{k} {summary[k]}" for k in sorted(summary)) or "none"),
+                 "health_rows:" + ("" if rows else " none")]
+        for r, n in zip(rows, names):
+            block.append(f"  - {r['metric']}: {r['status']}" + (f"; {' | '.join(n)}" if n else ""))
+        if truncated:
+            block.append("  (truncated)")
+        nr = (out.get("tokens") or {}).get("not_recorded") or []
+        block += [f"not_recorded: {', '.join(nr) or 'none'}", f"drift_coverage_pct: {drift.get('coverage_pct')}",
+                  f"unseen_types_count: {len(unseen)}", f"unseen_types: {', '.join(types) or 'none'}",
+                  f"os: {platform.system() or 'unknown'}", f"python: {sys.version_info[0]}.{sys.version_info[1]}"]
+        body = ("Diagnostics from workflow-reviewer: counts, statuses and check names only, with no paths, prompts, commands "
+                "or file names. Read and edit anything before you submit.\n\n```\n" + "\n".join(block) + "\n```\n\n"
+                "**What were you doing?**\n\n\n**What did you expect?**\n\n\n**Anything else?**\n")
+        return ISSUE_NEW + "?" + urlencode({"title": title, "body": body}, quote_via=quote)
+
+    url, truncated = make(names, shown_types, False), False
+    for i in range(len(names) - 1, -1, -1):                 # over the limit: drop whole check lists, lowest-priority row first
+        if len(url) < ISSUE_URL_LIMIT:
+            break
+        if names[i]:
+            names[i], truncated = [], True
+            url = make(names, shown_types, True)
+    if len(url) >= ISSUE_URL_LIMIT:
+        url = make(names, ["(truncated)"], True)
+    return url
+
+
 def render_md(out):
     gone = not_recorded_words(out)
     lines = ["# workflow-reviewer metrics"]
@@ -2004,6 +2095,8 @@ def render_md(out):
         if key == "header":
             continue
         lines.append(f"## {key.replace('_', ' ').capitalize()}")
+        if key == "coverage" and isinstance(value, dict):
+            value = {k: v for k, v in value.items() if k != "issue_url"}       # the link gets its own line, only when needed
         if key == "time" and isinstance(value, dict) and "wall_range_s" in value:
             lines += [f"- {k}: {_fmt(v)}" for k, v in coarse_time_view(value).items()]
         elif isinstance(value, dict):
@@ -2012,6 +2105,8 @@ def render_md(out):
             lines += [f"- {_fmt(v, None, gone)}" for v in value]
         else:
             lines.append(str(value))
+    if (out.get("coverage") or {}).get("issue_url") and needs_issue(out):
+        lines.append(f"Report this problem: {out['coverage']['issue_url']}")
     return "\n".join(lines)
 
 
@@ -3032,6 +3127,8 @@ ul.skills li:last-child{border-bottom:0}
 .closing{margin:2rem 0 0;padding:1rem 1.2rem;border-radius:5px;background:var(--code-bg);font-size:.98rem}.closing p{margin:0}
 @media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none;padding:0}
 details>summary::before{content:"";width:0}details:not([open])>*:not(summary){display:block}ol.actions>li{break-inside:avoid}}
+.report-foot{margin:2.5rem 0 0;padding-top:1rem;border-top:1px solid var(--rule);font-size:.85rem}
+.report-problem{color:var(--ink-3)}.report-problem.prominent{color:var(--ink);font-weight:600}
 """
 
 
@@ -3105,6 +3202,11 @@ def render_html(out, findings, now, inventory_names=None):
         h += ["</ul>", "</section>"]
     if findings.get("closing_question"):
         h.append(f'<aside class="closing" aria-label="Next step"><p>{_inline(findings["closing_question"])}</p></aside>')
+    url = out["coverage"].get("issue_url")
+    if url:                       # a plain link: the user opens a prefilled form, reads it, and submits it themselves
+        cls = "report-problem prominent" if needs_issue(out) else "report-problem"
+        h.append(f'<footer class="report-foot"><a class="{cls}" href="{_esc(url)}" target="_blank" rel="noopener noreferrer">'
+                 "Report a problem with this review</a></footer>")
     h += ["</main>", "</body>", "</html>", ""]
     return "\n".join(h)
 
@@ -3118,6 +3220,8 @@ def render_report_md(out, findings, now, inventory_names=None):
     if parts and parts[1]:
         lines.append("- Token composition: " + ", ".join(f"{name.lower()} {fmt_tokens(v)} ({fmt_pct(p)})" for _, name, v, p in parts[0]))
     lines += [f"- Coverage: {c}" for c in coverage_items(out)]
+    if out["coverage"].get("issue_url") and needs_issue(out):
+        lines.append(f"Report this problem: {out['coverage']['issue_url']}")
     lines.append("## Do these, ranked by impact")
     if not findings["actions"]:
         lines.append("No changes recommended.")
@@ -3964,6 +4068,12 @@ TIME_KEY_RE = re.compile(r"(^|_|-)(ts|time|timestamp|date|at|created|updated|sta
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 
 
+def plain_key(key):
+    """The fixed part of the probe's <key> rule: a plain identifier or a namespaced extension key, not an id, nothing redact would
+    change. The probe adds rules that need many records; a single name (an unseen record type) gets this part only."""
+    return bool(KEY_RE.match(key) or NAMESPACED_KEY_RE.match(key)) and not id_like(key) and redact(key) == key
+
+
 def id_like(text):
     """Does this look like an id, token or number rather than a name? Such strings are never printed."""
     return bool(re.search(r"[0-9a-fA-F]{8,}", text) or re.search(r"\d{5,}", text) or re.search(r"\d.*\d.*\d.*\d", text)
@@ -4052,7 +4162,7 @@ class Structure:
             count = self.paths[path[:i + 1]][0]
             if key == "[]":
                 return "[]"
-            if id_like(key) or redact(key) != key:
+            if not plain_key(key):
                 return "<key>"
             if NAMESPACED_KEY_RE.match(key) and count >= 3:        # an extension key (chisel/tool_call_content) stays even in a varying object
                 return key
@@ -4865,6 +4975,8 @@ def main(argv=None):
     if "coverage" in out and "window" in out:
         null_missing_numbers(out)
     code = 2 if out.get("coverage", {}).get("drift", {}).get("ok") is False else 0
+    if "coverage" in out and "window" in out:
+        out["coverage"]["issue_url"] = issue_url(out, code)
     inventory_names = out["skills"].pop("_inventory_names", None) if isinstance(out.get("skills"), dict) else None
     if findings is not None and "coverage" in out:
         report_main(out, findings, args, redact_on, inventory_names)

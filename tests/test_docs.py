@@ -188,9 +188,10 @@ def render_sample(cli, tmp_path):
 
 def test_the_sample_report_is_the_render_of_the_golden_session_and_the_sample_findings(cli, tmp_path):
     sample = ROOT / "examples" / "sample-report.html"
-    strip = lambda s: re.sub(r"reviewed on [^<]*<", "reviewed on DATE<", s)
+    from test_report import normal_issue_link, without_issue_link
+    strip = lambda s: normal_issue_link(re.sub(r"reviewed on [^<]*<", "reviewed on DATE<", s))
     assert sample.is_file() and strip(text(sample)) == strip(render_sample(cli, tmp_path))
-    assert "http://" not in text(sample) and "https://" not in text(sample)
+    assert "http://" not in without_issue_link(text(sample)) and "https://" not in without_issue_link(text(sample))
     assert "this session only reads" not in text(sample)
 
 

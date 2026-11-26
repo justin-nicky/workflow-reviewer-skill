@@ -147,10 +147,27 @@ def test_two_reports_in_one_second_do_not_overwrite(cli, tmp_path):
     assert len(list((tmp_path / "tmp" / "workflow-reviewer").glob("review-*.html"))) == 2
 
 
+# The page's one link: the footer's prefilled GitHub issue, which the user opens and submits. Nothing else links anywhere.
+ISSUE_LINK = re.compile(r'<footer class="report-foot"><a class="report-problem(?: prominent)?" '
+                        r'href="https://github\.com/justin-nicky/workflow-reviewer-skill/issues/new\?[^"<>\s]*" '
+                        r'target="_blank" rel="noopener noreferrer">Report a problem with this review</a></footer>')
+
+
+def without_issue_link(text):
+    """The page with its one footer link taken out (there must be exactly one)."""
+    assert len(ISSUE_LINK.findall(text)) == 1
+    return ISSUE_LINK.sub("", text)
+
+
+def normal_issue_link(text):
+    """The page with the issue link's URL replaced: it carries the OS and Python version of the machine that rendered it."""
+    return re.sub(r'href="https://github\.com/justin-nicky/workflow-reviewer-skill/issues/new\?[^"]*"', 'href="ISSUE_URL"', text)
+
+
 class Tags(html.parser.HTMLParser):
     ALLOWED = {"html", "head", "meta", "title", "style", "body", "main", "header", "h1", "p", "strong", "code", "figure",
                "div", "span", "ul", "li", "figcaption", "section", "h2", "h3", "table", "tbody", "tr", "th", "td", "ol",
-               "details", "summary", "aside", "i", "b", "ul"}
+               "details", "summary", "aside", "i", "b", "ul", "footer", "a"}
 
     def __init__(self):
         super().__init__()
@@ -171,7 +188,7 @@ def parsed(text):
 
 def test_the_page_is_self_contained(cli, tmp_path):
     render(cli, tmp_path)
-    text = report_file(tmp_path).read_text(encoding="utf-8")
+    text = without_issue_link(report_file(tmp_path).read_text(encoding="utf-8"))
     assert "http://" not in text and "https://" not in text and "//" not in re.sub(r"/\*.*?\*/", "", text, flags=re.S).replace("<!--", "")
     assert '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'">' in text
     p = parsed(text)
@@ -212,6 +229,7 @@ def test_hostile_text_comes_out_inert(cli, tmp_path, payload):
     assert render(cli, tmp_path, data).returncode == 0
     text = report_file(tmp_path).read_text(encoding="utf-8")
     p = parsed(text)
+    assert p.tags.count("a") == 1 and len(ISSUE_LINK.findall(text)) == 1         # the footer's issue link, and no other
     assert p.tags.count("style") == 1 and "script" not in p.tags and "img" not in p.tags and p.opened == 0
     assert set(p.tags) <= Tags.ALLOWED and not [a for a in p.attrs if a[1].startswith("on")]
     assert payload not in text or payload == "javascript:alert(1)"
@@ -222,7 +240,7 @@ def test_only_backticks_format_text(cli, tmp_path):
     data = findings(bottom_line="Use `a<b>` and _not italic_ and [link](x).")
     render(cli, tmp_path, data)
     text = report_file(tmp_path).read_text(encoding="utf-8")
-    assert "<code>a&lt;b&gt;</code>" in text and "_not italic_" in text and "<a " not in text
+    assert "<code>a&lt;b&gt;</code>" in text and "_not italic_" in text and "<a " not in without_issue_link(text)
 
 
 SECRET = "API_KEY=sk_" "live_abcdefghijklmnop0123456789"
@@ -306,7 +324,7 @@ def test_a_clean_run_has_no_coverage_row(cli, tmp_path):
 def test_the_golden_report_html_is_stable(cli, tmp_path):
     render(cli, tmp_path)
     text = report_file(tmp_path).read_text(encoding="utf-8")
-    text = re.sub(r"reviewed on \d{1,2} \w{3} \d{4}", "reviewed on DATE", text)
+    text = normal_issue_link(re.sub(r"reviewed on \d{1,2} \w{3} \d{4}", "reviewed on DATE", text))
     assert text == (GOLDEN / "claude-code-report.html").read_text(encoding="utf-8")
 
 
@@ -378,7 +396,9 @@ def test_the_opener_never_uses_a_shell(monkeypatch):
 
 def test_the_script_still_imports_no_network_module():
     source = SCRIPT.read_text(encoding="utf-8")
-    assert not re.search(r"^\s*(import|from)\s+(socket|urllib|http|requests|ssl|ftplib|smtplib)\b", source, re.M)
+    # urllib.parse only builds strings (the issue link); every module that can open a connection stays out
+    assert not re.search(r"^\s*(import|from)\s+(socket|urllib(?!\.parse\b)|http|requests|ssl|ftplib|smtplib)\b", source, re.M)
+    assert re.findall(r"^\s*(?:import|from)\s+(urllib\S*)", source, re.M) == ["urllib.parse"]
 
 
 # ---- step 3b: visual-check fixes ---------------------------------------------------------------------------------------
