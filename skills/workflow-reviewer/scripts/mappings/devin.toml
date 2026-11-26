@@ -8,6 +8,10 @@ type_path = "role"
 
 # Tool time is the host's own start and end on each tool result, not the gap between records.
 tool_time_source = "result_spans"
+# Devin writes input and cache-read counts as null on some calls. Such a null counts as 0 only on a record whose context
+# size adds up with it as 0 (input + cache_read = context_input_tokens); otherwise it is a gap. A missing key is always a gap.
+# Evidence: tests/test_partial_usage.py checks every null on the goldens; user adapters may not add or widen this list.
+null_means_zero = ["fresh_input", "cache_read"]
 # A skill called by the model is a "skill tool call"; every way a skill was seen is reported with its turn.
 skill_tool_label = "skill tool call"
 skill_detections = "all"

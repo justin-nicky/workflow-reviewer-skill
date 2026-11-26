@@ -310,16 +310,73 @@ USAGE_FIELDS = ("input", "output", "cache_read", "cache_write")
 USAGE_NOUN = {"input": "input token counts", "output": "output token counts", "cache_read": "cache-read token counts",
               "cache_write": "cache-write token counts"}
 TOKEN_KEY = {"input": "fresh_input", "output": "output", "cache_read": "cache_read", "cache_write": "cache_write"}
+FIELD_OF_TOKEN_KEY = {v: k for k, v in TOKEN_KEY.items()}
 QUANTITIES_OF_FIELD = {"input": ("tokens_fresh", "tokens_input_incl_cache", "tokens_all", "context_counted"),
                        "output": ("tokens_output", "tokens_all"),
                        "cache_read": ("tokens_cache_read", "tokens_input_incl_cache", "tokens_all", "context_counted"),
                        "cache_write": ("tokens_cache_write", "tokens_all")}
 
 
+def explicit_null(obj, path):
+    """Does the record hold this dotted path with a null value (the key is written, the value is null)? A missing key, or a
+    path with alternatives or selectors, is not an explicit null."""
+    if not isinstance(path, str) or any(ch in path for ch in "[]{}|*"):
+        return False
+    node, keys = obj, path.split(".")
+    for key in keys[:-1]:
+        if not isinstance(node, dict) or not isinstance(node.get(key), dict):
+            return False
+        node = node[key]
+    return isinstance(node, dict) and keys[-1] in node and node[keys[-1]] is None
+
+
 def unrecorded_usage_fields(mapping):
     """Usage fields that no usage rule of the mapping reads: the host never records them, so they are null, never 0."""
     rules = [r for r in mapping.get("records", []) if "usage_output" in r or "usage_input" in r]
     return [k for k in USAGE_FIELDS if rules and not any(r.get(f"usage_{k}") for r in rules)]
+
+
+def usage_carriers(events):
+    """The records a usage rule matched. Fallback carriers count only when no primary one exists."""
+    carriers = [e for e in events if e.get("usage_declared")]
+    if any(not e["usage_fallback"] for e in carriers):
+        carriers = [e for e in carriers if not e["usage_fallback"]]
+    return carriers
+
+
+def usage_calls(events):
+    """One entry per call: a message id (its records together) or one record without an id. A call has a field if any of its
+    records does; it is interrupted if every record of it is (no token count at all, the context included)."""
+    calls = {}
+    for i, e in enumerate(usage_carriers(events)):
+        call = calls.setdefault(("id", e["msg_id"]) if e["msg_id"] is not None else ("record", i), {"fields": {}, "interrupted": True})
+        for k, present in e["usage_declared"].items():
+            call["fields"][k] = call["fields"].get(k, False) or bool(present)
+        call["interrupted"] = call["interrupted"] and bool(e.get("usage_interrupted"))
+    return list(calls.values())
+
+
+def usage_gaps(events):
+    """{field: (calls without it, of those the interrupted ones, calls declaring it)} for each declared usage field some call lacks."""
+    calls, out = usage_calls(events), {}
+    for k in USAGE_FIELDS:
+        have = [c for c in calls if k in c["fields"]]
+        lacking = [c for c in have if not c["fields"][k]]
+        if lacking:
+            out[k] = (len(lacking), sum(1 for c in lacking if c["interrupted"]), len(have))
+    return out
+
+
+def partial_usage_fields(events):
+    """{field: (calls without it, calls)} for fields some calls have and some lack, interrupted calls left out (they get
+    a warning of their own). A field no call has is a missing number instead."""
+    return {k: (m - i, n) for k, (m, i, n) in usage_gaps(events).items() if m < n and m - i}
+
+
+def interrupted_calls(events):
+    """(interrupted calls, calls) among the usage carriers."""
+    calls = usage_calls(events)
+    return sum(1 for c in calls if c["interrupted"]), len(calls)
 
 
 def missing_usage_fields(events):
@@ -344,6 +401,7 @@ def parse_lines(lines, mapping, actor="main"):
     stats = {"lines": 0, "classified": 0, "unseen_types": {}, "ignored_types": {},
              "truncated_last_line": False, "version": None, "skill_list_unparsed": 0}
     prefixes = mapping.get("not_a_turn_prefixes", [])
+    null_zero = set(mapping.get("null_means_zero", []))
     lines = [ln.strip() for ln in lines if ln.strip()]
     for n, raw in enumerate(lines):
         try:
@@ -476,12 +534,21 @@ def parse_lines(lines, mapping, actor="main"):
         if rule.get("call_id") and "calls" in rule:
             ev["declares_call_id"] = True
         if "usage_output" in rule or "usage_input" in rule:
-            ev["usage_declared"] = {k: get_first(obj, rule[f"usage_{k}"]) is not None
-                                    for k in USAGE_FIELDS if rule.get(f"usage_{k}")}
+            raw_usage = {k: get_first(obj, rule[f"usage_{k}"]) for k in USAGE_FIELDS if rule.get(f"usage_{k}")}
+            ev["usage_declared"] = {k: v is not None for k, v in raw_usage.items()}
             u = {k: _int(get_first(obj, rule.get(f"usage_{k}"))) for k in
                  ("input", "output", "cache_read", "cache_write")}
             if rule.get("usage_input_includes_cache"):
                 u["input"] = max(0, u["input"] - u["cache_read"])
+            context = get_first(obj, rule["usage_context"]) if rule.get("usage_context") else None
+            nulls = [k for k in raw_usage if raw_usage[k] is None and explicit_null(obj, rule[f"usage_{k}"])]
+            if rule.get("usage_context") and context is None and nulls and not any(raw_usage.values()):
+                ev["usage_interrupted"] = True      # no token count at all, the context included: an interrupted call
+            vouched = [k for k in nulls if TOKEN_KEY[k] in null_zero]
+            if vouched and isinstance(context, (int, float)) and not isinstance(context, bool) \
+                    and u["input"] + u["cache_read"] == _int(context):
+                for k in vouched:                       # the host's null is a 0: the context size adds up with it as 0
+                    ev["usage_declared"][k] = True
             key = rule.get("usage_dedupe_key")
             total = json.dumps(get_first(obj, key), sort_keys=True) if key else None
             if total is not None and total == last_total:
@@ -523,8 +590,10 @@ def token_summary(events):
     total = {k: sum(c[k] for c in calls) for k in ("input", "output", "cache_read", "cache_write")}
     check = {"calls": len(contexts), "context_input_total": sum(c for _, c in contexts.values()),
              "mismatches": sum(1 for a, c in contexts.values() if a != c)} if contexts else None
+    gaps = [TOKEN_KEY[k] for k, (m, _, n) in usage_gaps(events).items()]
     return {
         **({"context_check": check} if check else {}),
+        **({"lower_bound": gaps} if gaps else {}),        # some records lack these fields: the totals are at least this
         "fresh_input": total["input"], "output": total["output"],
         "cache_read": total["cache_read"], "cache_write": total["cache_write"],
         "api_calls": len(calls), "calls_without_id": len(no_id),
@@ -1005,6 +1074,8 @@ def row_tokens(events, mapping):
     if "not_measurable" in tokens:
         return tokens
     row = {k: tokens[k] for k in ROW_TOKEN_KEYS}
+    if "lower_bound" in tokens:
+        row["lower_bound"] = tokens["lower_bound"]
     if "context_check" in tokens:
         row["context_check"] = tokens["context_check"]
     return row
@@ -1022,6 +1093,9 @@ def merge_rows(rows, label):
         merged["tokens"] = rows[0]["tokens"]
     else:
         merged["tokens"] = {k: sum(r["tokens"][k] for r in rows) for k in ROW_TOKEN_KEYS}
+        gaps = [k for k in ROW_TOKEN_KEYS if any(k in r["tokens"].get("lower_bound", []) for r in rows)]
+        if gaps:
+            merged["tokens"]["lower_bound"] = gaps
     return {**label, **merged}
 
 
@@ -1619,6 +1693,10 @@ def null_token_keys(out, keys):
             for k in keys:
                 if k in tokens:
                     tokens[k] = None
+            if "lower_bound" in tokens:                     # a null number is not a lower bound of anything
+                tokens["lower_bound"] = [k for k in tokens["lower_bound"] if k not in keys]
+                if not tokens["lower_bound"]:
+                    del tokens["lower_bound"]
 
 
 def null_unrecorded_numbers(out, mapping):
@@ -1794,9 +1872,14 @@ def health_report(mapping, stats, events, records, drift, threshold, prior=(), w
             continue
         tol, slack = float(spec.get("tolerance_pct", 0)), int(spec.get("slack_first", 0))
         passed = check_passes(first, second, spec.get("relation", "equal"), tol, slack)
+        skipped = {}
+        if any(side in ("context_counted", "context_reported") for side in (spec["first"], spec["second"]) if isinstance(side, str)):
+            stopped = interrupted_calls(events)[0]          # an interrupted call has no context size: left out, said so
+            if stopped:
+                skipped = {"skipped": f"skipped for {stopped} interrupted call{'' if stopped == 1 else 's'}"}
         # a second count that disagrees is a warning with its two values, never a pause: the first count still stands
         add(metric, spec["name"], "second count", first, second, spec.get("relation", "equal"), passed, "warn",
-            **({"tolerance_pct": tol} if tol else {}))
+            **({"tolerance_pct": tol} if tol else {}), **skipped)
     second_passed = {m: any(c["layer"] == "second count" and c["passed"] for c in checks[m]) for m in HEALTH_METRICS}
 
     if measurable["turns"] and quantities["turns"] == 0:
@@ -1831,6 +1914,13 @@ def health_report(mapping, stats, events, records, drift, threshold, prior=(), w
     for k, n in missing.items():
         add("tokens", f"{USAGE_NOUN[k]} missing from all {n} usage record{'' if n == 1 else 's'}", "presence", 0, n, "at_least",
             False, "broken", field=k)
+    for k, (m, n) in (partial_usage_fields(events) if measurable["tokens"] else {}).items():
+        # some records lack the field: the total is a lower bound, a warning naming how many, never a pause
+        add("tokens", f"{USAGE_NOUN[k]} missing from {m} of {n} usage records", "partial", n - m, n, "equal", False, "warn", field=k)
+    stopped, n_calls = interrupted_calls(events) if measurable["tokens"] else (0, 0)
+    if stopped and stopped < n_calls:
+        add("tokens", f"{stopped} of {n_calls} calls {'was' if stopped == 1 else 'were'} interrupted; "
+                      f"{'its' if stopped == 1 else 'their'} token usage wasn't recorded", "partial", n_calls - stopped, n_calls, "equal", False, "warn")
     declared_calls = [c for e in events if e.get("declares_call_id") for c in e["calls"]]
     if declared_calls and not any(c["id"] is not None for c in declared_calls):
         n = len(declared_calls)
@@ -1963,7 +2053,8 @@ def _md_value(v, key=None, gone=None):
     if v is None:
         return gone[key] if key in gone else NOT_MEASURABLE if key in MISSING_NUMBER_KEYS else "none"
     if isinstance(v, dict):
-        return {k: _md_value(x, k, gone) for k, x in v.items()}
+        lower = set(v.get("lower_bound") or []) if isinstance(v.get("lower_bound"), list) else set()
+        return {k: f"at least {fmt_tokens(x)}" if k in lower and isinstance(x, int) else _md_value(x, k, gone) for k, x in v.items()}
     if isinstance(v, list):
         return [_md_value(x, key, gone) for x in v]
     return v
@@ -2100,7 +2191,9 @@ def render_md(out):
         if key == "time" and isinstance(value, dict) and "wall_range_s" in value:
             lines += [f"- {k}: {_fmt(v)}" for k, v in coarse_time_view(value).items()]
         elif isinstance(value, dict):
-            lines += [f"- {k}: {_fmt(v, k, gone)}" for k, v in value.items()]
+            lower = set(value.get("lower_bound") or []) if isinstance(value.get("lower_bound"), list) else set()
+            lines += [f"- {k}: " + (f"at least {fmt_tokens(v)}" if k in lower and isinstance(v, int) else _fmt(v, k, gone))
+                      for k, v in value.items()]
         elif isinstance(value, list):
             lines += [f"- {_fmt(v, None, gone)}" for v in value]
         else:
@@ -2902,6 +2995,14 @@ def scope_line(out, now):
     return f"{span} of one {host} session{label}, reviewed on {now.day} {now:%b %Y}"
 
 
+def at_least(n, lower):
+    """A token count, marked "at least" when some records lacked its field (the total is a lower bound)."""
+    return f"at least {fmt_tokens(n)}" if lower and n is not None else fmt_tokens(n)
+
+
+BAR_KEY = {"read": "cache_read", "write": "cache_write", "output": "output", "fresh": "fresh_input"}
+
+
 def token_parts(out):
     t = out["tokens"]
     if "not_measurable" in t:
@@ -2919,7 +3020,8 @@ def token_parts(out):
 def metric_rows(out):
     """(id, label, value) rows; every value is computed here from the metrics run."""
     t, rows, gone = out["tokens"], [], not_recorded_words(out)
-    tok = lambda k: gone[k] if k in gone else fmt_tokens(t[k])
+    lower = set(t.get("lower_bound", []))
+    tok = lambda k: gone[k] if k in gone else at_least(t[k], k in lower)
     if "not_measurable" in t:
         rows.append(("tokens", "Tokens", "not measurable on this host"))
     else:
@@ -3145,6 +3247,7 @@ def render_html(out, findings, now, inventory_names=None):
     parts = token_parts(out)
     if parts and parts[1]:
         shown, total = parts
+        lower = set(out["tokens"].get("lower_bound", []))
         h.append('<figure class="anatomy" aria-labelledby="anatomy-cap">')
         label = ", ".join(f"{name.lower()} {fmt_pct(p)}" for _, name, _, p in shown)
         h.append(f'<div class="bar" role="img" aria-label="Token composition: {_esc(label)}">')
@@ -3152,7 +3255,8 @@ def render_html(out, findings, now, inventory_names=None):
               for k, name, v, p in shown if v]
         h.append("</div>")
         h.append('<ul class="legend">' + "".join(
-            f'<li><i style="background: var(--s-{k})"></i>{_esc(name)} <b>{fmt_tokens(v)}</b> ({fmt_pct(p)})</li>' for k, name, v, p in shown) + "</ul>")
+            f'<li><i style="background: var(--s-{k})"></i>{_esc(name)} <b>{at_least(v, BAR_KEY[k] in lower)}</b> ({fmt_pct(p)})</li>'
+            for k, name, v, p in shown) + "</ul>")
         small = " Output is too small to see on the bar." if next(p for k, _, _, p in shown if k == "output") < 1 else ""
         h.append(f'<figcaption id="anatomy-cap">Where this window’s {fmt_tokens(total)} tokens went.{small}</figcaption>')
         h.append("</figure>")
@@ -3218,7 +3322,9 @@ def render_report_md(out, findings, now, inventory_names=None):
     lines += [f"- {label}: {value}" + (f" ({notes[rid]})" if rid in notes else "") for rid, label, value in metric_rows(out)]
     parts = token_parts(out)
     if parts and parts[1]:
-        lines.append("- Token composition: " + ", ".join(f"{name.lower()} {fmt_tokens(v)} ({fmt_pct(p)})" for _, name, v, p in parts[0]))
+        lower = set(out["tokens"].get("lower_bound", []))
+        lines.append("- Token composition: " + ", ".join(f"{name.lower()} {at_least(v, BAR_KEY[k] in lower)} ({fmt_pct(p)})"
+                                                         for k, name, v, p in parts[0]))
     lines += [f"- Coverage: {c}" for c in coverage_items(out)]
     if out["coverage"].get("issue_url") and needs_issue(out):
         lines.append(f"Report this problem: {out['coverage']['issue_url']}")
@@ -3637,7 +3743,7 @@ def open_sqlite_session(args, repo, raw):
 TOP_KEYS = frozenset("""call_categories call_name_categories capabilities checks container detect fields health_hints hook_files hooks_format
 host interrupt_on_repeated_prompt interruption_prefixes made_by replica made_from_version not_a_turn_prefixes plugin_skill_folders records requires schema_version
 skill_detections skill_folders skill_tool_label subagent_marker subagents tested_versions token_method token_method_fallback
-stability tool_time_source turnless_activity type_path variant variants versions""".split())
+null_means_zero stability tool_time_source turnless_activity type_path variant variants versions""".split())
 RULE_KEYS = frozenset("""call_command_name call_command_regex call_id call_input call_kind call_name call_raw calls event_id
 instruction_always_on instruction_bytes instruction_items instruction_paths interrupt match model msg_id non_turn_reason offered_block
 offered_desc_from offered_desc_item offered_desc_pairs offered_each offered_from offered_item offered_section offered_skills prompt_time
@@ -3670,6 +3776,10 @@ def mapping_problems(raw):
     error, _ = schema_check(raw)
     if error:
         errors.append(error)
+    for v in resolve_variants(raw):
+        bad = [f for f in v.get("null_means_zero", []) if f not in FIELD_OF_TOKEN_KEY]
+        if not isinstance(v.get("null_means_zero", []), list) or bad:
+            errors.append(f"null_means_zero must list token fields ({', '.join(FIELD_OF_TOKEN_KEY)}); got {bad or v.get('null_means_zero')!r}")
     host = raw.get("host")
     if not isinstance(host, str) or not HOST_NAME_RE.match(host):
         errors.append("host name must be lowercase letters, digits, - or _ (up to 41 characters)")
@@ -3763,13 +3873,15 @@ def registry():
         if host in hosts and hosts[host]["builtin"]:                       # extra variants for a built-in host; never a replacement
             base = hosts[host]["raw"]
             variants = list(base.get("variants") or [{"name": base.get("variant") or "default", "label": "verified"}])
+            allowed = set(base.get("null_means_zero", []))
             for v in (raw.get("variants") or [raw]):
                 variants.append({**{k: x for k, x in v.items() if k not in ("host", "schema_version", "made_by", "made_from_version")},
                                  "name": v.get("name") or v.get("variant") or Path(file).stem, "label": "unproven",
-                                 "checks": v.get("checks", [])})
+                                 "checks": v.get("checks", []),
+                                 **({"null_means_zero": [f for f in v["null_means_zero"] if f in allowed]} if "null_means_zero" in v else {})})
             base["variants"] = variants
         elif host not in hosts:
-            hosts[host] = {"raw": raw, "builtin": False}
+            hosts[host] = {"raw": restrict_null_zero(raw, None), "builtin": False}      # no built-in check vouches for a null
     return hosts, notes
 
 
@@ -3804,6 +3916,31 @@ def weakened_checks(raw, builtin):
             if c.get("scope", "window") != b.get("scope", "window"):
                 problems.append(f"{where}changes the scope of check '{name}'")
     return problems
+
+
+def widened_null_zero(raw, builtin):
+    """How a user mapping adds or widens null_means_zero: every variant may list only fields the built-in mapping of the
+    same host lists (`builtin` is None for a host with no built-in mapping, which may list none)."""
+    allowed = set((builtin or {}).get("null_means_zero", []))
+    problems = []
+    for variant in resolve_variants(raw):
+        where = f"variant '{variant['variant']}': " if raw.get("variants") else ""
+        extra = [f for f in variant.get("null_means_zero", []) if f not in allowed]
+        if extra:
+            problems.append(f"{where}null_means_zero adds {', '.join(extra)}, which no built-in check vouches for")
+    return problems
+
+
+def restrict_null_zero(raw, builtin):
+    """A mapping that is not built in keeps only the null_means_zero fields its host's built-in mapping lists."""
+    allowed = set((builtin or {}).get("null_means_zero", []))
+    raw = dict(raw)
+    if "null_means_zero" in raw:
+        raw["null_means_zero"] = [f for f in raw["null_means_zero"] if f in allowed]
+    if raw.get("variants"):
+        raw["variants"] = [{**v, "null_means_zero": [f for f in v["null_means_zero"] if f in allowed]} if "null_means_zero" in v else v
+                           for v in raw["variants"]]
+    return raw
 
 
 def mapping_label(mapping, source):
@@ -4703,8 +4840,10 @@ def main(argv=None):
             emit({"error": ("the mapping cannot be used: " + problems[0]) if save_text is not None else problems[0], "errors": problems}
                  if save_text is not None else {"error": problems[0]}, args.format, redact_on)
             return 2
-        if save_text is not None and override.get("host") in BUILTIN_NAMES and override.get("host") != "kiro":
-            weaker = weakened_checks(override, load_mapping(BUILTIN_NAMES[override["host"]]))
+        if save_text is not None:
+            builtin = load_mapping(BUILTIN_NAMES[override["host"]]) if override.get("host") in BUILTIN_NAMES else None
+            weaker = (weakened_checks(override, builtin) if builtin is not None and override.get("host") != "kiro" else []) \
+                + widened_null_zero(override, builtin)
             if weaker:
                 emit({"error": WEAKEN_ERROR, "problems": weaker}, args.format, redact_on)
                 return 2
@@ -4766,7 +4905,7 @@ def main(argv=None):
         elif override is not None:
             host = override.get("host", "unknown")
     if override is not None:
-        raw_mapping, source = override, "override"
+        raw_mapping, source = restrict_null_zero(override, load_mapping(BUILTIN_NAMES[host]) if host in BUILTIN_NAMES else None), "override"
     elif host in hosts:
         raw_mapping, source = hosts[host]["raw"], "builtin" if hosts[host]["builtin"] else "user"
     else:

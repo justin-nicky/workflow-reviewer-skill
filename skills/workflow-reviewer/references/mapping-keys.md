@@ -40,6 +40,7 @@ A mapping is a TOML file of declarative data (see `scripts/mappings/*.toml` for 
 - `turnless_activity`: accepted for older mappings and ignored: assistant activity with no turn in the main session always means turns are missing (exit 2); in a subagent file it is a warning.
 - `token_method`: a sentence saying how tokens are counted; shown in the report.
 - `token_method_fallback`: the same, for the fallback counting.
+- `null_means_zero`: token fields (`fresh_input`, `cache_read`, `output`, `cache_write`) the host writes as null when it means 0. A null counts as 0 only on a record whose context size adds up with it as 0 (`usage_context`); otherwise, or when the key is missing, it is a gap. Built-in mappings only, each with a test showing it on the goldens; a user adapter may not add or widen it.
 - `tool_time_source`: `"result_spans"` takes tool time from each result's own start and end. When no tool result in the window carries them, tool time is null ("not recorded by <host>") with a warning, never 0.
 - `health_hints`: a table of metric = list of words; an unseen record type containing a word is tied to that metric (extends the defaults).
 - `subagent_marker`: a path whose presence in a file's first record marks the file as a subagent's.
