@@ -307,3 +307,28 @@ def test_the_os_family_comes_from_sys_platform(plat, family):
     """platform.system() would import socket on Windows (platform.uname looks up the host name): the script never calls it."""
     assert tm.os_family(plat) == family
     assert "import platform" not in SCRIPT.read_text(encoding="utf-8")
+
+
+def cursor_link(cli):
+    _, out = cli.json(next(p for p in (GOLDEN / "cursor-chat1").iterdir() if p.is_dir()), "--host", "cursor")
+    return out, decode(out["coverage"]["issue_url"])
+
+
+def test_a_host_with_no_version_says_so_in_the_title(cli):
+    out, (title, body) = cursor_link(cli)
+    assert out["coverage"]["transcript_version"] is None
+    assert title.startswith("Review problem: cursor (version not recorded), ") and "cursor none" not in title
+
+
+def test_not_recorded_in_the_body_lists_what_the_host_never_records(cli):
+    out, (title, body) = cursor_link(cli)
+    line = next(ln for ln in block_of(body).split("\n") if ln.startswith("not_recorded:"))
+    assert line == "not_recorded: " + ", ".join(out["coverage"]["not_measurable"])
+    assert out["coverage"]["not_measurable"] == ["tokens", "tool timing", "tool results", "message ids"]
+    assert "not_recorded" not in out["tokens"]                         # the JSON keeps its own field as it was
+
+
+def test_codex_lists_its_unrecorded_token_field_and_nothing_else(cli):
+    _, out = cli.json(*sorted(GOLDEN.glob("codex-desktop/rollout-*.jsonl")), "--host", "codex")
+    line = next(ln for ln in block_of(decode(out["coverage"]["issue_url"])[1]).split("\n") if ln.startswith("not_recorded:"))
+    assert out["coverage"]["not_measurable"] == [] and line == "not_recorded: cache_write"

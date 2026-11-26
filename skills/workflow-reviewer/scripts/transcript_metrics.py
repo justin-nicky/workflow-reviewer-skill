@@ -2179,7 +2179,8 @@ def issue_url(out, code):
     shown_types = [t for t in unseen if plain_key(str(t))]
     summary = health.get("summary") or {}
     worst = max((r["status"] for r in attention), key=SEVERITY.get) if attention else "exit 2" if code == 2 else "ok"
-    title = f"Review problem: {host} {'schema ' + tv if tv.isdigit() else tv}, {worst}"      # a bare number is a schema (Devin)
+    shown = "(version not recorded)" if tv == "none" else "schema " + tv if tv.isdigit() else tv     # a bare number is a schema (Devin)
+    title = f"Review problem: {host} {shown}, {worst}"
 
     def make(names, types, truncated):
         block = [f"skill_version: {skill_version()}", f"exit_code: {code}", f"host: {host}", f"adapter_label: {cov.get('label')}",
@@ -2193,7 +2194,8 @@ def issue_url(out, code):
             block.append(f"  - {r['metric']}: {r['status']}" + (f"; {' | '.join(n)}" if n else ""))
         if truncated:
             block.append("  (truncated)")
-        nr = (out.get("tokens") or {}).get("not_recorded") or []
+        # token fields the mapping leaves out, then what the host never records at all (the report's coverage line)
+        nr = list((out.get("tokens") or {}).get("not_recorded") or []) + [str(c) for c in cov.get("not_measurable") or []]
         block += [f"not_recorded: {', '.join(nr) or 'none'}", f"drift_coverage_pct: {drift.get('coverage_pct')}",
                   f"unseen_types_count: {len(unseen)}", f"unseen_types: {', '.join(types) or 'none'}",
                   f"os: {os_family()}", f"python: {sys.version_info[0]}.{sys.version_info[1]}"]
