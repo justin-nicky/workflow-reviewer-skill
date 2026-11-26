@@ -12,6 +12,7 @@ types, order, nesting and counts. Nothing in them comes from a real conversation
 | Folder | Replicates | Pass to the script |
 |---|---|---|
 | `claude-code/` | a Claude Code session with one subagent | the `<id>` folder (main transcript beside it) |
+| `claude-code-2.1.331/` | the same session as written by Claude Code 2.1.331, with made-up `data-flow-records` | the `<id>` folder |
 | `codex-desktop/` | a Codex Desktop parent rollout and its subagent rollout | both `rollout-*.jsonl` files |
 | `cursor-chat1/` | a Cursor chat with one subagent | the `<id>` folder |
 | `cursor-chat2/` | a Cursor chat that reads a skill without attaching it | the `<id>` folder |

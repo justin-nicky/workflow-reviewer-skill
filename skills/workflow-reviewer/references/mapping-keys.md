@@ -5,7 +5,7 @@ A mapping is a TOML file of declarative data (see `scripts/mappings/*.toml` for 
 ## Paths and matches
 
 - **Path:** dotted names into a JSON record (`message.content`), `[]` for every item of a list (`calls[]`), `[k=v]` to keep only the items whose `k` equals `v`. A rule field may also list several alternative paths (`["a.b", "c"]`): the first that exists wins.
-- **`match`:** a table of path = value, all equal to select a record (`match = { type = "user" }`). A value may be a list (any of them). The value `"$present"` means "the path exists".
+- **`match`:** a table of path = value, all equal to select a record (`match = { type = "user" }`). A value may be a list (any of them). The value `"$present"` means "the path exists"; `"$absent"` means it does not (or is null).
 - **Rules** (`[[records]]`) are tried in file order; the first whose `match` fits classifies the record. A record that no rule matches is an unseen type (drift). Role `ignore` lists a record type on purpose, so a new type still shows up as drift.
 - **Paths starting `$row.`** read the database row; `$session.model` reads the session's model (sqlite hosts).
 
@@ -41,6 +41,7 @@ A mapping is a TOML file of declarative data (see `scripts/mappings/*.toml` for 
 - `token_method`: a sentence saying how tokens are counted; shown in the report.
 - `token_method_fallback`: the same, for the fallback counting.
 - `null_means_zero`: token fields (`fresh_input`, `cache_read`, `output`, `cache_write`) the host writes as null when it means 0. A null counts as 0 only on a record whose context size adds up with it as 0 (`usage_context`); otherwise, or when the key is missing, it is a gap. Built-in mappings only, each with a test showing it on the goldens; a user adapter may not add or widen it.
+- `coverage_notes`: info lines counted from the records (see Coverage notes below).
 - `tool_time_source`: `"result_spans"` takes tool time from each result's own start and end. When no tool result in the window carries them, tool time is null ("not recorded by <host>") with a warning, never 0.
 - `health_hints`: a table of metric = list of words; an unseen record type containing a word is tied to that metric (extends the defaults).
 - `subagent_marker`: a path whose presence in a file's first record marks the file as a subagent's.
@@ -147,7 +148,17 @@ Each `[[checks]]` counts one metric a second, independent way. Two keys name the
 - `scope`: `session` when the second side is a whole-session total (it cannot be split by turn); the check then runs only when the review covers the whole session. The default compares the window only.
 - `severity`: `warn` or `broken` when the check fails; the default is `broken` for a core metric (turns, tool calls, tokens) and `warn` otherwise.
 
-A side taken from raw records is a table: `match` (which records), `actors` (`all`, or `main` for the main session only) and one of `count` (the default), `distinct` (distinct values of a path), `sum` (a path's total), `last` (a path's last value), or `const` (a fixed number).
+A side taken from raw records is a table: `match` (which records), `actors` (`all`, or `main` for the main session only) and one of `count` (the default), `distinct` (distinct values of a path), `sum` (a path's total), `last` (a path's last value), or `const` (a fixed number). A `distinct` side may add `found_in = { match, path, actors }`: only the values that also appear at that path of those records count (ids that point at something that exists).
+
+## Coverage notes
+
+Each `[[coverage_notes]]` counts entries for an info line in `coverage.notes`: never a metric, never a warning, only numbers.
+
+- `match`: which records.
+- `each`: a path to the entries inside each record (the record itself when absent).
+- `where`: which entries count (a match table; `"$absent"` means the field is not there).
+- `split`: a table of name = match table, each counting a subset.
+- `text`: the line, with `{count}` and each split name in braces.
 
 ## Subagents
 

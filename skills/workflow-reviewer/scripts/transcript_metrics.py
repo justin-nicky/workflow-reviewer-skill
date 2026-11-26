@@ -112,6 +112,10 @@ def _matches(obj, match):
             if got is None:
                 return False
             continue
+        if want == "$absent":                        # the field is not there (or is null)
+            if got is not None:
+                return False
+            continue
         wants = want if isinstance(want, list) else [want]
         if got is None or _norm(got) not in [_norm(w) for w in wants]:
             return False
@@ -1804,12 +1808,35 @@ def side_value(spec, quantities, records, prior=()):
         start = at(prior)
         return end - start if start is not None else end
     if "distinct" in spec:
-        return len({json.dumps(v, sort_keys=True) for v in (get_first(o, spec["distinct"]) for o in chosen) if v is not None})
+        values = {json.dumps(v, sort_keys=True) for o in chosen for v in get_all(o, spec["distinct"]) if v is not None}
+        if "found_in" in spec:            # only the values that also appear at another path of other records
+            other = spec["found_in"]
+            seen = {json.dumps(v, sort_keys=True) for actor, o in records
+                    if (other.get("actors", "all") == "all" or actor == "main") and _matches(o, other.get("match", {}))
+                    for v in get_all(o, other["path"]) if v is not None}
+            values &= seen
+        return len(values)
     if "sum" in spec or "last" in spec:
         values = [v for v in (get_first(o, spec.get("sum") or spec["last"]) for o in chosen)
                   if isinstance(v, (int, float)) and not isinstance(v, bool)]
         return (sum(values) if "sum" in spec else values[-1] if values else None) if values or "sum" in spec else None
     return len(chosen)
+
+
+def coverage_notes(mapping, records):
+    """Info notes a mapping declares: entries of the window's records that are counted, never metrics, never warnings.
+
+    Each [[coverage_notes]] names records (`match`), the entries inside them (`each`, a path) and which entries count
+    (`where`); `split` counts subsets by name. `text` takes {count} and each split name. Only numbers, never content."""
+    notes = []
+    for spec in mapping.get("coverage_notes", []):
+        entries = [e for _, o in records if _matches(o, spec.get("match", {}))
+                   for e in (get_all(o, spec["each"]) if spec.get("each") else [o]) if isinstance(e, dict)]
+        entries = [e for e in entries if _matches(e, spec.get("where", {}))]
+        if entries:
+            counts = {name: sum(1 for e in entries if _matches(e, m)) for name, m in spec.get("split", {}).items()}
+            notes.append(spec["text"].format(count=len(entries), **counts))
+    return notes
 
 
 def check_passes(first, second, relation, tolerance_pct=0.0, slack_first=0):
@@ -3753,7 +3780,7 @@ def open_sqlite_session(args, repo, raw):
 TOP_KEYS = frozenset("""call_categories call_name_categories capabilities checks container detect fields health_hints hook_files hooks_format
 host interrupt_on_repeated_prompt interruption_prefixes made_by replica made_from_version not_a_turn_prefixes plugin_skill_folders records requires schema_version
 skill_detections skill_folders skill_tool_label subagent_marker subagents tested_versions token_method token_method_fallback
-null_means_zero stability tool_time_source turnless_activity type_path variant variants versions""".split())
+coverage_notes null_means_zero stability tool_time_source turnless_activity type_path variant variants versions""".split())
 RULE_KEYS = frozenset("""call_command_name call_command_regex call_id call_input call_kind call_name call_raw calls event_id
 instruction_always_on instruction_bytes instruction_items instruction_paths interrupt match model msg_id non_turn_reason offered_block
 offered_desc_from offered_desc_item offered_desc_pairs offered_each offered_from offered_item offered_section offered_skills prompt_time
@@ -3763,6 +3790,7 @@ usage_fallback usage_input usage_input_includes_cache usage_output usage_present
 FIELD_KEYS = frozenset("version msg_id model timestamp event_id".split())
 CAPABILITY_KEYS = frozenset("has_tokens has_timestamps has_tool_results has_ids".split())
 CHECK_KEYS = frozenset("name metric first second relation tolerance_pct slack_first skip_if_second_zero severity scope".split())
+NOTE_KEYS = frozenset("match each where split text".split())
 SUBAGENT_KEYS = frozenset("""agent_path brief_key call_id file_prefix forked_from history_start link_regex meta_file model ordinal
 parent_id self_id spawn_key""".split())
 REGEX_KEYS = frozenset("call_command_regex result_exit_code_regex turn_regex offered_block offered_item offered_section offered_desc_item link_regex".split())
@@ -3821,6 +3849,13 @@ def mapping_problems(raw):
     keys("subagents", raw.get("subagents"), SUBAGENT_KEYS)
     for n, check in enumerate(raw.get("checks", [])):
         keys(f"checks[{n}]", check, CHECK_KEYS)
+    for n, note in enumerate(raw.get("coverage_notes", [])):
+        keys(f"coverage_notes[{n}]", note, NOTE_KEYS)
+        if isinstance(note, dict):
+            try:
+                str(note.get("text", "")).format(count=0, **dict.fromkeys(note.get("split", {}), 0))
+            except (KeyError, IndexError, ValueError):
+                errors.append(f"coverage_notes[{n}].text may use only {{count}} and its split names")
     rules(raw.get("records"), "")
     for n, variant in enumerate(raw.get("variants", [])):
         keys(f"variants[{n}]", variant, TOP_KEYS | {"name"})
@@ -5042,6 +5077,7 @@ def main(argv=None):
                                "capabilities": mapping["capabilities"], "last_record_ts": iso(last_ts),
                                "lag_note": lag, "window_note": window_note,
                                "truncated_last_line": stats["truncated_last_line"]}
+            notes = notes + coverage_notes(mapping, records)
             if notes:
                 out["coverage"]["notes"] = notes
             if reader.kind != "jsonl":
