@@ -7,6 +7,10 @@
 - **Interrupted calls.** A call that recorded no token usage at all is named as interrupted in the warning, and the context cross-check skips it.
 - **Devin's nulls.** Devin writes some input and cache-read counts as null. These count as 0 only when the record's context size adds up with them as 0; otherwise they are a gap. Adapters can't extend this rule.
 
+Known issues:
+
+- Devin reports `version_position` as unknown, because its tested range ("Devin desktop app 3000.12.43 (database schema 20)") isn't a version range.
+
 ## v0.2.4
 
 - **"Not recorded", never 0.** A number the host never writes is now shown as "not recorded by <host>" instead of 0. Cache writes on Codex and Devin are null in every breakdown, named in `tokens.not_recorded`, and left out of the token bar and its legend. This is expected, so it never pauses a review.

@@ -289,3 +289,13 @@ def test_a_user_adapter_is_named_only_by_kind():
     title, body = decode(tm.issue_url(out, 0))
     assert "adapter_kind: user" in body and "adapter_label: unproven" in body
     assert "my-secret" not in body and "/Users" not in body
+
+
+def test_a_bare_schema_number_is_named_as_a_schema_in_the_title(cli):
+    _, out = cli.json(GOLDEN / "devin-subagent" / "sessions.db", "--host", "devin", "--session-id", "golden-devin-subagent")
+    title, body = decode(out["coverage"]["issue_url"])
+    assert out["coverage"]["transcript_version"] == "20"
+    assert title == "Review problem: devin schema 20, ok"
+    assert "transcript_version: 20\n" in body                       # the body keeps the value as the transcript writes it
+    _, out = cli.json(*sorted(GOLDEN.glob("codex-desktop/rollout-*.jsonl")), "--host", "codex")
+    assert "schema" not in decode(out["coverage"]["issue_url"])[0]  # a dotted version stays as it is

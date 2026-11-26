@@ -2141,7 +2141,7 @@ def issue_url(out, code):
     shown_types = [t for t in unseen if plain_key(str(t))]
     summary = health.get("summary") or {}
     worst = rows[0]["status"] if rows else "exit 2" if code == 2 else "ok"
-    title = f"Review problem: {host} {tv}, {worst}"
+    title = f"Review problem: {host} {'schema ' + tv if tv.isdigit() else tv}, {worst}"      # a bare number is a schema (Devin)
 
     def make(names, types, truncated):
         block = [f"skill_version: {skill_version()}", f"exit_code: {code}", f"host: {host}", f"adapter_label: {cov.get('label')}",
