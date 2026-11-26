@@ -195,6 +195,16 @@ def test_the_sample_report_is_the_render_of_the_golden_session_and_the_sample_fi
     assert "this session only reads" not in text(sample)
 
 
+def test_the_sample_reports_issue_link_carries_the_skills_version():
+    """A version bump that leaves the published sample's issue link on the old version fails here."""
+    import html
+    from urllib.parse import parse_qs, urlsplit
+    href = re.search(r'<a class="report-problem[^"]*" href="([^"]+)"', text(ROOT / "examples" / "sample-report.html")).group(1)
+    body = parse_qs(urlsplit(html.unescape(href)).query)["body"][0]
+    linked = re.search(r"^skill_version: (\S+)$", body, re.M).group(1)
+    assert linked == re.search(r'^\s*version: "([^"]+)"', text(SKILL_DIR / "SKILL.md"), re.M).group(1)
+
+
 # ---- the mapping reference: an agent never needs the script's source ----------------------------------------------------------------------
 
 MAPPING_KEYS_DOC = SKILL_DIR / "references" / "mapping-keys.md"
