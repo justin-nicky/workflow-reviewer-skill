@@ -159,6 +159,7 @@ Each `[[coverage_notes]]` counts entries for an info line in `coverage.notes`: n
 - `where`: which entries count (a match table; `"$absent"` means the field is not there).
 - `split`: a table of name = match table, each counting a subset.
 - `text`: the line, with `{count}` and each split name in braces.
+- `text_one`: the same line in the singular, used when the count is 1.
 - `distinct` and `not_found_in = { match, path, actors }`: instead of entries, count the distinct values at this path of the entries that do not appear at that path of those records (references to things the transcript doesn't hold).
 
 ## Subagents

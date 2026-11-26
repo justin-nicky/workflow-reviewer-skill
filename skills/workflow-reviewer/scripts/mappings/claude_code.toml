@@ -189,6 +189,7 @@ each = "records[]"
 where = { tool_name = "$present", tool_use_id = "$absent" }
 split = { plugins = { plugin_id = "$present" } }
 text = "{count} data-flow entries name a tool with no matching call ({plugins} from plugins)"
+text_one = "{count} data-flow entry names a tool with no matching call ({plugins} from plugins)"
 
 # Responses they name that the transcript doesn't hold (the host's own side calls): a note, since the token totals
 # count the transcript's calls and nothing is missing from them.
@@ -199,3 +200,4 @@ where = { response_id = "$present" }
 distinct = "response_id"
 not_found_in = { match = { type = "assistant" }, path = "message.id" }
 text = "{count} model responses are referenced but not in the transcript (likely the host's side calls); token totals cover the transcript's calls only."
+text_one = "{count} model response is referenced but not in the transcript (likely the host's side calls); token totals cover the transcript's calls only."

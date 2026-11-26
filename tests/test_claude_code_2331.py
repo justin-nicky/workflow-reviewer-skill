@@ -10,6 +10,9 @@ RESPONSE_CHECK = "tokens: data-flow response_ids vs assistant messages"     # an
 SIDE_CALLS = ("{n} model responses are referenced but not in the transcript (likely the host's side calls); "
               "token totals cover the transcript's calls only.")
 NOTE = "4 data-flow entries name a tool with no matching call (3 from plugins)"
+NOTE_ONE = "1 data-flow entry names a tool with no matching call (0 from plugins)"
+SIDE_CALL_ONE = ("1 model response is referenced but not in the transcript (likely the host's side calls); "
+                 "token totals cover the transcript's calls only.")
 
 
 def session(folder=G2331):
@@ -93,7 +96,7 @@ def test_a_response_id_with_no_message_is_an_info_note_not_a_warning(cli, tmp_pa
     rewrite(folder, change)
     code, out = cli.json(session(folder), "--host", "claude-code", "--health-all")
     _, clean = cli.json(session(), "--host", "claude-code", "--health-all")
-    assert code == 0 and SIDE_CALLS.format(n=1) in out["coverage"]["notes"]
+    assert code == 0 and SIDE_CALL_ONE in out["coverage"]["notes"]           # a count of 1 reads in the singular
     assert RESPONSE_CHECK not in checks(out)
     assert out["coverage"]["health"] == clean["coverage"]["health"]           # no warning, nothing else moves
     assert out["tokens"] == clean["tokens"] and "lower_bound" not in out["tokens"]
@@ -104,3 +107,30 @@ def test_a_session_without_data_flow_records_is_unchanged(cli):
     c = checks(out)
     assert TOOL_CHECK not in c and RESPONSE_CHECK not in c       # skipped: nothing to compare
     assert "notes" not in out["coverage"] or not any("data-flow" in n for n in out["coverage"]["notes"])
+
+
+def test_one_tool_name_with_no_call_reads_in_the_singular(cli, tmp_path):
+    folder = copy(tmp_path)
+
+    def change(r):                        # keep only the built-in entry that names a tool with no call
+        r["records"] = [e for e in r["records"] if not ("tool_name" in e and "tool_use_id" not in e and "plugin_id" in e)]
+    rewrite(folder, change)
+    code, out = cli.json(session(folder), "--host", "claude-code")
+    notes = [n for n in out["coverage"]["notes"] if "data-flow" in n]
+    assert code == 0 and notes == [NOTE_ONE], notes
+
+
+def test_two_responses_with_no_message_read_in_the_plural(cli, tmp_path):
+    folder = copy(tmp_path)
+    n = []
+
+    def change(r):
+        for e in r["records"]:
+            if "tool_use_id" in e:
+                r["records"].append({"response_id": f"msg_side_call_{len(n)}", "listed": ["Read"]})
+                n.append(1)
+                break
+    rewrite(folder, change)
+    _, out = cli.json(session(folder), "--host", "claude-code")
+    assert len(n) == 2 and SIDE_CALLS.format(n=2) in out["coverage"]["notes"]
+

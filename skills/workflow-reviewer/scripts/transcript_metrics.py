@@ -1823,6 +1823,11 @@ def side_value(spec, quantities, records, prior=()):
     return len(chosen)
 
 
+def note_text(spec, count, counts=None):
+    """A note's line: its singular form (`text_one`) when the count is 1, else `text`."""
+    return spec.get("text_one" if count == 1 and spec.get("text_one") else "text").format(count=count, **(counts or {}))
+
+
 def coverage_notes(mapping, records):
     """Info notes a mapping declares: entries of the window's records that are counted, never metrics, never warnings.
 
@@ -1841,10 +1846,10 @@ def coverage_notes(mapping, records):
                            if (other.get("actors", "all") == "all" or actor == "main") and _matches(o, other.get("match", {}))
                            for v in get_all(o, other["path"]) if v is not None}
             if values:
-                notes.append(spec["text"].format(count=len(values)))
+                notes.append(note_text(spec, len(values)))
         elif entries:
             counts = {name: sum(1 for e in entries if _matches(e, m)) for name, m in spec.get("split", {}).items()}
-            notes.append(spec["text"].format(count=len(entries), **counts))
+            notes.append(note_text(spec, len(entries), counts))
     return notes
 
 
@@ -3814,7 +3819,7 @@ usage_fallback usage_input usage_input_includes_cache usage_output usage_present
 FIELD_KEYS = frozenset("version msg_id model timestamp event_id".split())
 CAPABILITY_KEYS = frozenset("has_tokens has_timestamps has_tool_results has_ids".split())
 CHECK_KEYS = frozenset("name metric first second relation tolerance_pct slack_first skip_if_second_zero severity scope".split())
-NOTE_KEYS = frozenset("match each where split text distinct not_found_in".split())
+NOTE_KEYS = frozenset("match each where split text text_one distinct not_found_in".split())
 SUBAGENT_KEYS = frozenset("""agent_path brief_key call_id file_prefix forked_from history_start link_regex meta_file model ordinal
 parent_id self_id spawn_key""".split())
 REGEX_KEYS = frozenset("call_command_regex result_exit_code_regex turn_regex offered_block offered_item offered_section offered_desc_item link_regex".split())
@@ -3876,10 +3881,11 @@ def mapping_problems(raw):
     for n, note in enumerate(raw.get("coverage_notes", [])):
         keys(f"coverage_notes[{n}]", note, NOTE_KEYS)
         if isinstance(note, dict):
-            try:
-                str(note.get("text", "")).format(count=0, **dict.fromkeys(note.get("split", {}), 0))
-            except (KeyError, IndexError, ValueError):
-                errors.append(f"coverage_notes[{n}].text may use only {{count}} and its split names")
+            for key in ("text", "text_one"):
+                try:
+                    str(note.get(key, "")).format(count=0, **dict.fromkeys(note.get("split", {}), 0))
+                except (KeyError, IndexError, ValueError):
+                    errors.append(f"coverage_notes[{n}].{key} may use only {{count}} and its split names")
     rules(raw.get("records"), "")
     for n, variant in enumerate(raw.get("variants", [])):
         keys(f"variants[{n}]", variant, TOP_KEYS | {"name"})
