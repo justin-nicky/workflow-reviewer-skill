@@ -6,7 +6,9 @@ from test_golden import GOLDEN
 
 G2331 = GOLDEN / "claude-code-2.1.331"
 TOOL_CHECK = "tool calls: data-flow tool_use_ids vs tool calls"
-RESPONSE_CHECK = "tokens: data-flow response_ids vs assistant messages"
+RESPONSE_CHECK = "tokens: data-flow response_ids vs assistant messages"     # an info note now, never a check
+SIDE_CALLS = ("{n} model responses are referenced but not in the transcript (likely the host's side calls); "
+              "token totals cover the transcript's calls only.")
 NOTE = "4 data-flow entries name a tool with no matching call (3 from plugins)"
 
 
@@ -43,7 +45,8 @@ def test_the_2331_golden_is_fully_recognised_with_no_warning(cli):
     assert not [r["metric"] for r in cov["health"]["rows"] if r["status"] in ("warn", "broken")]
     c = checks(out)
     assert c[TOOL_CHECK]["passed"] and (c[TOOL_CHECK]["first"], c[TOOL_CHECK]["second"]) == (2, 2)
-    assert c[RESPONSE_CHECK]["passed"] and (c[RESPONSE_CHECK]["first"], c[RESPONSE_CHECK]["second"]) == (1, 1)
+    assert RESPONSE_CHECK not in c
+    assert not any("model responses" in n for n in cov.get("notes", []))       # every response it names is in the transcript
 
 
 def test_the_numbers_match_the_2321_golden(cli):
@@ -79,17 +82,20 @@ def test_a_data_flow_tool_use_id_with_no_call_is_a_warning(cli, tmp_path):
     assert next(r for r in out["coverage"]["health"]["rows"] if r["metric"] == "tool_calls")["status"] == "warn"
 
 
-def test_a_data_flow_response_id_with_no_message_is_a_warning(cli, tmp_path):
+def test_a_response_id_with_no_message_is_an_info_note_not_a_warning(cli, tmp_path):
     folder = copy(tmp_path)
 
     def change(r):
         for e in r["records"]:
             if "response_id" in e:
-                e["response_id"] = "msg_nowhere"
+                e["response_id"] = "msg_side_call"
     rewrite(folder, change)
     code, out = cli.json(session(folder), "--host", "claude-code", "--health-all")
-    c = checks(out)[RESPONSE_CHECK]
-    assert code == 0 and not c["passed"] and (c["first"], c["second"]) == (0, 1)
+    _, clean = cli.json(session(), "--host", "claude-code", "--health-all")
+    assert code == 0 and SIDE_CALLS.format(n=1) in out["coverage"]["notes"]
+    assert RESPONSE_CHECK not in checks(out)
+    assert out["coverage"]["health"] == clean["coverage"]["health"]           # no warning, nothing else moves
+    assert out["tokens"] == clean["tokens"] and "lower_bound" not in out["tokens"]
 
 
 def test_a_session_without_data_flow_records_is_unchanged(cli):

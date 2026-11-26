@@ -1833,7 +1833,16 @@ def coverage_notes(mapping, records):
         entries = [e for _, o in records if _matches(o, spec.get("match", {}))
                    for e in (get_all(o, spec["each"]) if spec.get("each") else [o]) if isinstance(e, dict)]
         entries = [e for e in entries if _matches(e, spec.get("where", {}))]
-        if entries:
+        if spec.get("distinct"):          # distinct values of a path, less those found at another path of other records
+            values = {json.dumps(v, sort_keys=True) for e in entries for v in get_all(e, spec["distinct"]) if v is not None}
+            other = spec.get("not_found_in")
+            if other:
+                values -= {json.dumps(v, sort_keys=True) for actor, o in records
+                           if (other.get("actors", "all") == "all" or actor == "main") and _matches(o, other.get("match", {}))
+                           for v in get_all(o, other["path"]) if v is not None}
+            if values:
+                notes.append(spec["text"].format(count=len(values)))
+        elif entries:
             counts = {name: sum(1 for e in entries if _matches(e, m)) for name, m in spec.get("split", {}).items()}
             notes.append(spec["text"].format(count=len(entries), **counts))
     return notes
@@ -3805,7 +3814,7 @@ usage_fallback usage_input usage_input_includes_cache usage_output usage_present
 FIELD_KEYS = frozenset("version msg_id model timestamp event_id".split())
 CAPABILITY_KEYS = frozenset("has_tokens has_timestamps has_tool_results has_ids".split())
 CHECK_KEYS = frozenset("name metric first second relation tolerance_pct slack_first skip_if_second_zero severity scope".split())
-NOTE_KEYS = frozenset("match each where split text".split())
+NOTE_KEYS = frozenset("match each where split text distinct not_found_in".split())
 SUBAGENT_KEYS = frozenset("""agent_path brief_key call_id file_prefix forked_from history_start link_regex meta_file model ordinal
 parent_id self_id spawn_key""".split())
 REGEX_KEYS = frozenset("call_command_regex result_exit_code_regex turn_regex offered_block offered_item offered_section offered_desc_item link_regex".split())

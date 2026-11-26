@@ -172,7 +172,7 @@ role = "ignore"
 
 
 # Claude Code 2.1.331 writes data-flow-records: entries that point at tool calls and responses already in the transcript.
-# They carry no metric (ignored above); these checks make sure what they point at exists. A session without them skips both.
+# They carry no metric (ignored above); this check makes sure the tool calls they point at exist. A session without them skips it.
 [[checks]]
 name = "tool calls: data-flow tool_use_ids vs tool calls"
 metric = "tool_calls"
@@ -181,13 +181,6 @@ second = { match = { type = "data-flow-records" }, distinct = "records[].tool_us
 skip_if_second_zero = true
 severity = "warn"
 
-[[checks]]
-name = "tokens: data-flow response_ids vs assistant messages"
-metric = "tokens"
-first = { match = { type = "data-flow-records" }, distinct = "records[].response_id", found_in = { match = { type = "assistant" }, path = "message.id" } }
-second = { match = { type = "data-flow-records" }, distinct = "records[].response_id" }
-skip_if_second_zero = true
-severity = "warn"
 
 # Entries that name a tool but point at no tool call (plugin and hook events): counted as a note, never as tool calls.
 [[coverage_notes]]
@@ -196,3 +189,13 @@ each = "records[]"
 where = { tool_name = "$present", tool_use_id = "$absent" }
 split = { plugins = { plugin_id = "$present" } }
 text = "{count} data-flow entries name a tool with no matching call ({plugins} from plugins)"
+
+# Responses they name that the transcript doesn't hold (the host's own side calls): a note, since the token totals
+# count the transcript's calls and nothing is missing from them.
+[[coverage_notes]]
+match = { type = "data-flow-records" }
+each = "records[]"
+where = { response_id = "$present" }
+distinct = "response_id"
+not_found_in = { match = { type = "assistant" }, path = "message.id" }
+text = "{count} model responses are referenced but not in the transcript (likely the host's side calls); token totals cover the transcript's calls only."
