@@ -95,7 +95,9 @@ def plant_tree(src, dst, host, counts):
     for root, dirs, files in os.walk(dst, topdown=False):
         for name in files:
             p = Path(root) / name
-            p.write_text(plant_text(p.read_text(encoding="utf-8"), host, counts), encoding="utf-8", newline="\n")
+            text = plant_text(p.read_text(encoding="utf-8"), host, counts)
+            with open(p, "w", encoding="utf-8", newline="\n") as f:       # Path.write_text has no newline on Python 3.9
+                f.write(text)
             new = plant_text(name, host, {})
             if new != name:
                 p.rename(p.with_name(new))
