@@ -2,7 +2,7 @@
 host = "claude-code"
 schema_version = 1
 variant = "default"
-tested_versions = "2.1.295 to 2.1.309, 2.1.321"
+tested_versions = "2.1.295 to 2.1.309, 2.1.321, 2.1.331"
 type_path = "type"
 # Claude Code sets CLAUDECODE in the environment of everything it runs (name only; verified in a live session).
 detect = { env = ["CLAUDECODE"] }

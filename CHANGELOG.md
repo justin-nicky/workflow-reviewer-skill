@@ -2,7 +2,7 @@
 
 ## v0.2.6
 
-- **Claude Code 2.1.331.** Its new `data-flow-records` are recognised and ignored, so coverage is back to 100%. Two warn-level checks make sure the tool calls and responses they point at exist. Entries that name a tool without a matching call are counted in an info note. The tested range stays at 2.1.321: on real 2.1.331 sessions some response ids point at no message, so that check still warns.
+- **Claude Code 2.1.331.** Tested and supported. Its new `data-flow-records` are recognised and ignored, so coverage is back to 100%. A warn-level check makes sure the tool calls they point at exist. Two info notes count what they name that the transcript doesn't hold: tools with no matching call, and model responses that are likely the host's side calls (the token totals cover the transcript's calls).
 - **A coverage drop is reported once.** The report and the issue link say "only N% of records recognised" once, not once per health row.
 - **Rule files loaded mid-session.** A rule file is always-on only when the host loads it at the start of the session. A file that arrives later, for example when Devin adds a folder's `AGENTS.md` after a tool call looks in that folder, is marked as loaded on demand with its turn, and its bytes no longer count toward the always-on total.
 - **Cursor issue link.** The title says "cursor (version not recorded)", and the body lists what Cursor never records.

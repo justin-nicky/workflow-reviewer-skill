@@ -40,6 +40,7 @@ def test_the_2331_golden_is_fully_recognised_with_no_warning(cli):
     code, out = cli.json(session(), "--host", "claude-code", "--health-all")
     cov = out["coverage"]
     assert code == 0 and cov["transcript_version"] == "2.1.331"
+    assert cov["health"]["version"]["position"] == "within" and cov["version_note"] is None      # 2.1.331 is tested
     assert cov["drift"]["coverage_pct"] == 100.0 and cov["drift"]["unseen_types"] == {}
     assert cov["ignored_types"]["data-flow-records"] == 2
     assert not [r["metric"] for r in cov["health"]["rows"] if r["status"] in ("warn", "broken")]

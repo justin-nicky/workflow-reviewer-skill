@@ -89,7 +89,7 @@ def test_renamed_record_type_triggers_drift_warning_and_exit_code(cli, tmp_path)
     assert d["ok"] is False
     assert d["coverage_pct"] < 90
     assert d["unseen_types"] == {"assistant_v2": 7}
-    assert "2.1.295 to 2.1.309, 2.1.321" in d["warning"]
+    assert "2.1.295 to 2.1.309, 2.1.321, 2.1.331" in d["warning"]
     assert out["tokens"]["api_calls"] is None and out["tokens"]["output"] is None     # the numbers are missing, never 0
 
 
@@ -313,7 +313,7 @@ def test_tested_versions_and_observed_version_per_host(cli, tmp_path):
     cc_rec["version"] = "2.1.309"
     cc = write_jsonl(tmp_path / "a.jsonl", [cc_user("go", 0), cc_rec])
     _, out = cli.json(cc, "--host", "claude-code")
-    assert out["coverage"]["tested_versions"] == "2.1.295 to 2.1.309, 2.1.321"
+    assert out["coverage"]["tested_versions"] == "2.1.295 to 2.1.309, 2.1.321, 2.1.331"
     assert out["coverage"]["transcript_version"] == "2.1.309"
     cx = write_jsonl(tmp_path / "rollout-x.jsonl", [cx_meta("i", cli.repo, cli_version="0.142.2"), cx_user("go", 1)])
     _, out = cli.json(cx, "--host", "codex")
@@ -365,7 +365,7 @@ def test_older_than_tested_version_is_noted_when_checks_pass(cli, tmp_path):
 
 
 def test_versions_inside_the_tested_range_get_no_note(cli, tmp_path):
-    for v in ("2.1.295", "2.1.300", "2.1.309", "2.1.321"):
+    for v in ("2.1.295", "2.1.300", "2.1.309", "2.1.321", "2.1.325", "2.1.331"):
         _, out = cli.json(cc_versioned(tmp_path, v), "--host", "claude-code")
         assert out["coverage"]["version_note"] is None, v
 
