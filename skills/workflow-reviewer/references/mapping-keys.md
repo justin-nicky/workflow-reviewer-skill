@@ -130,7 +130,7 @@ A usage field no rule declares is one the host never records: it is null in ever
 - `offered_desc_pairs`: `{ list, name, description }`; a list of name and description entries.
 - `instruction_paths`: paths of always-on instruction files the host reports loading.
 - `instruction_bytes`: the reported byte total of those files.
-- `instruction_always_on`: a path that is true when they are always loaded.
+- `instruction_always_on`: a path that is true when they are always loaded. A file the host loads after the first turn or after the first tool call is reported as loaded on demand (`on_demand_turn`) whatever this says.
 - `instruction_items`: `{ list, path, content }`; loaded instruction files whose content the record carries.
 
 ## Checks

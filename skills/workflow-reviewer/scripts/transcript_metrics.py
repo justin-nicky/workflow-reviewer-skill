@@ -2723,17 +2723,27 @@ def overlaps_summary(events, mapping, repo, loaded, offered, thresholds):
 
 
 def host_instruction_files(events):
-    """Always-on rule files the host says it loaded (paths masked), and the bytes it reports for them."""
-    files, seen, total = [], set(), 0
+    """Rule files the host says it loaded (paths masked), and the bytes it reports for the always-on ones.
+
+    A file is always-on only when it arrives at the start: in the first turn (or before it) and before the agent's first
+    tool call. A file first seen later (Devin injects a folder's rule files once a tool call touches it) is loaded on
+    demand, with the turn it arrived in; its bytes are not part of the always-on total."""
+    files, seen, total, acted = [], set(), 0, False
     for ev in events:
-        info = ev.get("instruction")
-        if ev["actor"] != "main" or not info:
+        if ev["actor"] != "main":
             continue
-        total = max(total, info["bytes"])
-        for path in info["paths"]:
-            if path not in seen:
-                seen.add(path)
-                files.append({"path": mask_home(path), "bytes": None, "always_on": info["always_on"]})
+        info = ev.get("instruction")
+        if info:
+            at_start = not acted and (ev.get("turn") or 0) <= 1
+            if at_start and info["always_on"]:
+                total = max(total, info["bytes"])
+            for path in info["paths"]:
+                if path not in seen:
+                    seen.add(path)
+                    files.append({"path": mask_home(path), "bytes": None, "always_on": info["always_on"] and at_start,
+                                  **({} if at_start else {"on_demand_turn": ev.get("turn")})})
+        if ev["calls"]:
+            acted = True
     return {"files": files, "bytes": total} if files else None
 
 
